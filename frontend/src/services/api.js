@@ -53,3 +53,22 @@ export const createSale = async (saleData) => {
     throw error;
   }
 };
+
+export const fetchVehicles = async () => {
+  try {
+    const response = await axios.get(`${API_URL}/vehicles/`); // Ensure you have this endpoint in Django
+    return response.data;
+  } catch (error) {
+    console.error("Error fetching vehicles:", error);
+    return [];
+  }
+};
+
+export const createVehicle = async (vehicleData) => {
+  try {
+    const response = await axios.post(`${API_URL}/vehicles/add/`, vehicleData);
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
+};

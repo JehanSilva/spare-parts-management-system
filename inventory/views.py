@@ -4,6 +4,26 @@ from rest_framework import status
 from django.db.models import Sum, F
 from .models import Part, Supplier, Sale, SaleItem
 from .serializers import PartSerializer, SupplierSerializer, SaleSerializer
+from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
+from .serializers import VehicleSerializer # <--- Make sure this is imported too!
+
+
+# --- VEHICLE VIEWS ---
+@api_view(['GET'])
+def get_vehicles(request):
+    """List all vehicles"""
+    vehicles = Vehicle.objects.all().order_by('make', 'model', 'year')
+    serializer = VehicleSerializer(vehicles, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+def add_vehicle(request):
+    """Add a new vehicle"""
+    serializer = VehicleSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # --- SUPPLIER VIEWS ---
 @api_view(['GET', 'POST'])

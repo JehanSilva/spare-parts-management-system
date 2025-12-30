@@ -1,33 +1,78 @@
 import React, { useState, useEffect } from "react";
-import { fetchSuppliers, createPart } from "../../services/api";
+import { fetchSuppliers, createPart, fetchVehicles } from "../../services/api"; // <--- Import fetchVehicles
+import { X, Plus, Car } from "lucide-react";
 
 const AddPartForm = ({ onPartAdded }) => {
   const [suppliers, setSuppliers] = useState([]);
+  const [vehicles, setVehicles] = useState([]); // <--- All available vehicles
+
+  // Form State
   const [formData, setFormData] = useState({
     name: "",
     part_number: "",
     brand: "",
-    supplier: "", // This will send the Supplier ID
+    supplier: "",
     buy_price: "",
     sell_price: "",
     stock_qty: "",
     min_stock_level: 5,
     rack_location: "",
     description: "",
-    image_url: "", // For now, we paste a link
+    image_url: "",
+    compatible_vehicles: [], // <--- Stores the IDs of selected vehicles
   });
 
-  // Load suppliers when the form opens
+  // Temporary state for the dropdown selection
+  const [selectedVehicleId, setSelectedVehicleId] = useState("");
+
   useEffect(() => {
-    const loadSuppliers = async () => {
-      const data = await fetchSuppliers();
-      setSuppliers(data);
+    const loadData = async () => {
+      const suppData = await fetchSuppliers();
+      const vehData = await fetchVehicles();
+      setSuppliers(suppData);
+      setVehicles(vehData);
     };
-    loadSuppliers();
+    loadData();
   }, []);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  // --- NEW: Handle Adding Vehicle to the List ---
+  const addVehicleToPart = () => {
+    if (!selectedVehicleId) return;
+
+    // Prevent duplicates
+    if (formData.compatible_vehicles.includes(selectedVehicleId)) {
+      alert("This vehicle is already added!");
+      return;
+    }
+
+    setFormData({
+      ...formData,
+      compatible_vehicles: [
+        ...formData.compatible_vehicles,
+        parseInt(selectedVehicleId),
+      ],
+    });
+    setSelectedVehicleId(""); // Reset dropdown
+  };
+
+  // --- NEW: Handle Removing Vehicle from List ---
+  const removeVehicle = (idToRemove) => {
+    setFormData({
+      ...formData,
+      compatible_vehicles: formData.compatible_vehicles.filter(
+        (id) => id !== idToRemove
+      ),
+    });
+  };
+
+  // Helper to get name from ID
+  const getVehicleName = (id) => {
+    const v = vehicles.find((v) => v.id === id);
+    return v ? `${v.year} ${v.make} ${v.model}` : "Unknown";
   };
 
   const handleSubmit = async (e) => {
@@ -35,174 +80,213 @@ const AddPartForm = ({ onPartAdded }) => {
     try {
       await createPart(formData);
       alert("Part added successfully!");
-      // Reset form
-      setFormData({
-        name: "",
-        part_number: "",
-        brand: "",
-        supplier: "",
-        buy_price: "",
-        sell_price: "",
-        stock_qty: "",
-        min_stock_level: 5,
-        rack_location: "",
-        description: "",
-        image_url: "",
-      });
-      // Refresh the main list
       if (onPartAdded) onPartAdded();
     } catch (error) {
-      alert("Failed to add part. Check console for details.");
+      alert("Failed to add part.");
     }
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border border-gray-200">
-      <h2 className="text-2xl font-bold mb-4 text-gray-800">
+    <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-red-600">
+      <h2 className="text-2xl font-bold mb-6 text-gray-800">
         Add New Spare Part
       </h2>
 
       <form
         onSubmit={handleSubmit}
-        className="grid grid-cols-1 md:grid-cols-2 gap-4"
+        className="grid grid-cols-1 md:grid-cols-2 gap-6"
       >
-        {/* Row 1 */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Part Name
-          </label>
-          <input
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-            placeholder="e.g. Brake Pad"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Part Number (OEM)
-          </label>
-          <input
-            name="part_number"
-            value={formData.part_number}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-          />
+        {/* --- BASIC DETAILS --- */}
+        <div className="space-y-4">
+          <h3 className="font-bold text-gray-500 border-b pb-1">
+            Basic Details
+          </h3>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Part Name *
+            </label>
+            <input
+              name="name"
+              onChange={handleChange}
+              required
+              className="w-full p-2 border rounded"
+              placeholder="e.g. Brake Pad"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Part Number (OEM) *
+            </label>
+            <input
+              name="part_number"
+              onChange={handleChange}
+              required
+              className="w-full p-2 border rounded"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Brand
+              </label>
+              <input
+                name="brand"
+                onChange={handleChange}
+                className="w-full p-2 border rounded"
+                placeholder="Toyota Genuine"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Supplier *
+              </label>
+              <select
+                name="supplier"
+                onChange={handleChange}
+                required
+                className="w-full p-2 border rounded bg-white"
+              >
+                <option value="">Select...</option>
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
         </div>
 
-        {/* Row 2 */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Brand
-          </label>
-          <input
-            name="brand"
-            value={formData.brand}
-            onChange={handleChange}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-            placeholder="e.g. Toyota Genuine"
-          />
+        {/* --- PRICING & STOCK --- */}
+        <div className="space-y-4">
+          <h3 className="font-bold text-gray-500 border-b pb-1">
+            Inventory Data
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Buy Price
+              </label>
+              <input
+                type="number"
+                name="buy_price"
+                onChange={handleChange}
+                required
+                className="w-full p-2 border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Sell Price
+              </label>
+              <input
+                type="number"
+                name="sell_price"
+                onChange={handleChange}
+                required
+                className="w-full p-2 border rounded"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Initial Stock
+              </label>
+              <input
+                type="number"
+                name="stock_qty"
+                onChange={handleChange}
+                required
+                className="w-full p-2 border rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Location
+              </label>
+              <input
+                name="rack_location"
+                onChange={handleChange}
+                required
+                className="w-full p-2 border rounded"
+                placeholder="Aisle 1"
+              />
+            </div>
+          </div>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Supplier
-          </label>
-          <select
-            name="supplier"
-            value={formData.supplier}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white"
-          >
-            <option value="">Select a Supplier...</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
+
+        {/* --- COMPATIBILITY SECTION (NEW) --- */}
+        <div className="md:col-span-2 bg-gray-50 p-4 rounded border border-gray-200">
+          <h3 className="font-bold text-gray-700 mb-2 flex items-center gap-2">
+            <Car size={20} /> Compatible Vehicles
+          </h3>
+
+          {/* Selection Area */}
+          <div className="flex gap-2 mb-3">
+            <select
+              value={selectedVehicleId}
+              onChange={(e) => setSelectedVehicleId(e.target.value)}
+              className="flex-1 p-2 border rounded bg-white"
+            >
+              <option value="">-- Choose a Vehicle Model --</option>
+              {vehicles.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.year} {v.make} {v.model}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={addVehicleToPart}
+              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-1"
+            >
+              <Plus size={18} /> Add
+            </button>
+          </div>
+
+          {/* Selected List */}
+          <div className="flex flex-wrap gap-2">
+            {formData.compatible_vehicles.length === 0 && (
+              <span className="text-gray-400 text-sm italic">
+                No vehicles linked yet.
+              </span>
+            )}
+
+            {formData.compatible_vehicles.map((id) => (
+              <span
+                key={id}
+                className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm flex items-center gap-2 shadow-sm"
+              >
+                {getVehicleName(id)}
+                <button
+                  type="button"
+                  onClick={() => removeVehicle(id)}
+                  className="text-blue-500 hover:text-red-600"
+                >
+                  <X size={14} />
+                </button>
+              </span>
             ))}
-          </select>
+          </div>
         </div>
 
-        {/* Row 3 - Prices */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Buy Price
-          </label>
-          <input
-            type="number"
-            name="buy_price"
-            value={formData.buy_price}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Sell Price
-          </label>
-          <input
-            type="number"
-            name="sell_price"
-            value={formData.sell_price}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-          />
-        </div>
-
-        {/* Row 4 - Inventory */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Initial Stock
-          </label>
-          <input
-            type="number"
-            name="stock_qty"
-            value={formData.stock_qty}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Rack Location
-          </label>
-          <input
-            name="rack_location"
-            value={formData.rack_location}
-            onChange={handleChange}
-            required
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-            placeholder="e.g. Aisle 3, Shelf B"
-          />
-        </div>
-
-        {/* Row 5 - Image (Full Width) */}
+        {/* --- SUBMIT --- */}
         <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
             Image URL
           </label>
           <input
             name="image_url"
-            value={formData.image_url}
             onChange={handleChange}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
-            placeholder="https://example.com/part-image.jpg"
+            className="w-full p-2 border rounded mb-4"
           />
-        </div>
 
-        {/* Submit Button */}
-        <div className="md:col-span-2">
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white font-bold py-2 px-4 rounded hover:bg-blue-700 transition"
+            className="w-full bg-red-600 text-white font-bold py-3 rounded hover:bg-red-700 transition shadow-lg"
           >
-            Save Part
+            Save Part to Inventory
           </button>
         </div>
       </form>

@@ -14,4 +14,8 @@ urlpatterns = [
 
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),
+
+    # Vehicles
+    path('vehicles/', views.get_vehicles, name='get_vehicles'),
+    path('vehicles/add/', views.add_vehicle, name='add_vehicle'),
 ]

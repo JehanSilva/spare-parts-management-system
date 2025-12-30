@@ -5,6 +5,11 @@
 venv\Scripts\activate
 python manage.py runserver
 
+## database changes
+
+python manage.py migrate
+
 ## run the frontend
 
+cd frontend
 npm start

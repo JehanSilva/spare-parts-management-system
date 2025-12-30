@@ -2,20 +2,10 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import HomePage from "./pages/HomePage";
-import InventoryPage from "./pages/InventoryPage"; // You will move your old App.js logic here
+import InventoryPage from "./pages/InventoryPage";
 import AddVehicleForm from "./components/forms/AddVehicleForm";
-
-// Placeholder pages for now
-const POSPage = () => (
-  <div className="p-8 text-2xl font-bold text-gray-600">
-    POS Window Under Construction 🚧
-  </div>
-);
-const SupplierPage = () => (
-  <div className="p-8 text-2xl font-bold text-gray-600">
-    Supplier Management Under Construction 🚧
-  </div>
-);
+import SupplierPage from "./pages/SupplierPage";
+import POSPage from "./pages/POSPage";
 
 function App() {
   return (

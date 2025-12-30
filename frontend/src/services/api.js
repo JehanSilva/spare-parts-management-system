@@ -33,3 +33,23 @@ export const createPart = async (partData) => {
     throw error;
   }
 };
+
+export const createSupplier = async (supplierData) => {
+  try {
+    const response = await axios.post(`${API_URL}/suppliers/`, supplierData);
+    return response.data;
+  } catch (error) {
+    console.error("Error creating supplier:", error);
+    throw error;
+  }
+};
+
+export const createSale = async (saleData) => {
+  try {
+    const response = await axios.post(`${API_URL}/sales/create/`, saleData);
+    return response.data;
+  } catch (error) {
+    console.error("Error creating sale:", error);
+    throw error;
+  }
+};

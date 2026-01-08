@@ -3,6 +3,8 @@ import { Link, useLocation } from "react-router-dom";
 import { ShoppingCart, Package, Truck, Car, Home, Menu, X } from "lucide-react";
 import logoImg from "../assets/logo.png";
 import { FileText } from "lucide-react";
+import { logoutUser } from "../services/api";
+import { LogOut } from "lucide-react";
 
 const Navbar = () => {
   const location = useLocation();
@@ -83,6 +85,12 @@ const Navbar = () => {
             >
               <FileText size={18} /> Sales History
             </Link>
+            <button
+              onClick={logoutUser}
+              className="ml-4 flex items-center gap-2 bg-red-800 hover:bg-red-900 px-4 py-2 rounded transition"
+            >
+              <LogOut size={18} /> Logout
+            </button>
           </div>
 
           {/* Mobile Hamburger Button */}

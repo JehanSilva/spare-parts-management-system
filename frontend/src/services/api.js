@@ -2,141 +2,69 @@ import axios from "axios";
 
 const API_URL = "http://127.0.0.1:8000/api";
 
-// Parts API Calls
-export const createPart = async (partData) => {
+// Create a customized axios instance
+const API = axios.create({ baseURL: API_URL });
+
+// --- INTERCEPTOR: Automatically add Token to every request ---
+API.interceptors.request.use((req) => {
+  const token = localStorage.getItem("access_token");
+  if (token) {
+    req.headers.Authorization = `Bearer ${token}`;
+  }
+  return req;
+});
+
+// --- AUTH SERVICES ---
+export const loginUser = async (username, password) => {
   try {
-    const response = await axios.post(`${API_URL}/parts/add/`, partData);
+    const response = await axios.post(`${API_URL}/token/`, {
+      username,
+      password,
+    });
+    // Save tokens to browser storage
+    localStorage.setItem("access_token", response.data.access);
+    localStorage.setItem("refresh_token", response.data.refresh);
     return response.data;
   } catch (error) {
-    console.error("Error creating part:", error);
-    throw error;
+    throw error.response?.data?.detail || "Login failed";
   }
 };
 
-export const fetchParts = async (filters = {}) => {
-  try {
-    // Builds a query string like ?search=toyota&brand=genuine
-    const params = new URLSearchParams(filters).toString();
-    const response = await axios.get(`${API_URL}/parts/?${params}`);
-    return response.data;
-  } catch (error) {
-    console.error("Error fetching parts:", error);
-    return [];
-  }
+export const logoutUser = () => {
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("refresh_token");
+  window.location.href = "/login";
 };
 
-export const updatePart = async (id, data) => {
-  const response = await axios.put(`${API_URL}/parts/${id}/update/`, data);
-  return response.data;
-};
+// --- DATA SERVICES (Updated to use the 'API' instance) ---
+export const fetchParts = async () => (await API.get("/parts/")).data;
+export const createPart = async (data) =>
+  (await API.post("/parts/add/", data)).data;
+export const updatePart = async (id, data) =>
+  (await API.put(`/parts/${id}/update/`, data)).data;
+export const deletePart = async (id) =>
+  await API.delete(`/parts/${id}/delete/`);
 
-export const deletePart = async (id) => {
-  try {
-    await axios.delete(`${API_URL}/parts/${id}/delete/`);
-  } catch (error) {
-    // Pass backend error message (e.g., "Cannot delete part with sales")
-    throw error.response?.data?.error || "Delete failed";
-  }
-};
+export const fetchSuppliers = async () => (await API.get("/suppliers/")).data;
+export const createSupplier = async (data) =>
+  (await API.post("/suppliers/add/", data)).data;
+export const updateSupplier = async (id, data) =>
+  (await API.put(`/suppliers/${id}/update/`, data)).data;
+export const deleteSupplier = async (id) =>
+  await API.delete(`/suppliers/${id}/delete/`);
 
-// Suppliers API Calls
-export const createSupplier = async (supplierData) => {
-  try {
-    const response = await axios.post(`${API_URL}/suppliers/`, supplierData);
-    return response.data;
-  } catch (error) {
-    console.error("Error creating supplier:", error);
-    throw error;
-  }
-};
+export const fetchVehicles = async () => (await API.get("/vehicles/")).data;
+export const createVehicle = async (data) =>
+  (await API.post("/vehicles/add/", data)).data;
+export const updateVehicle = async (id, data) =>
+  (await API.put(`/vehicles/${id}/update/`, data)).data;
+export const deleteVehicle = async (id) =>
+  await API.delete(`/vehicles/${id}/delete/`);
 
-export const fetchSuppliers = async () => {
-  try {
-    const response = await axios.get(`${API_URL}/suppliers/`);
-    return response.data;
-  } catch (error) {
-    console.error("Error fetching suppliers:", error);
-    return [];
-  }
-};
+export const createSale = async (data) =>
+  (await API.post("/sales/create/", data)).data;
+export const fetchSales = async () => (await API.get("/sales/")).data;
+export const fetchDashboardStats = async () =>
+  (await API.get("/dashboard/stats/")).data;
 
-export const updateSupplier = async (id, data) => {
-  const response = await axios.put(`${API_URL}/suppliers/${id}/update/`, data);
-  return response.data;
-};
-
-export const deleteSupplier = async (id) => {
-  await axios.delete(`${API_URL}/suppliers/${id}/delete/`);
-};
-
-// Sales API Calls
-export const createSale = async (saleData) => {
-  try {
-    const response = await axios.post(`${API_URL}/sales/create/`, saleData);
-    return response.data;
-  } catch (error) {
-    console.error("Error creating sale:", error);
-    throw error;
-  }
-};
-
-export const fetchSales = async () => {
-  try {
-    const response = await axios.get(`${API_URL}/sales/`);
-    return response.data;
-  } catch (error) {
-    console.error("Error fetching sales:", error);
-    return [];
-  }
-};
-
-// Vehicles API Calls
-export const fetchVehicles = async () => {
-  try {
-    const response = await axios.get(`${API_URL}/vehicles/`); // Ensure you have this endpoint in Django
-    return response.data;
-  } catch (error) {
-    console.error("Error fetching vehicles:", error);
-    return [];
-  }
-};
-
-export const createVehicle = async (vehicleData) => {
-  try {
-    const response = await axios.post(`${API_URL}/vehicles/add/`, vehicleData);
-    return response.data;
-  } catch (error) {
-    throw error;
-  }
-};
-
-export const updateVehicle = async (id, vehicleData) => {
-  try {
-    const response = await axios.put(
-      `${API_URL}/vehicles/${id}/update/`,
-      vehicleData
-    );
-    return response.data;
-  } catch (error) {
-    throw error;
-  }
-};
-
-export const deleteVehicle = async (id) => {
-  try {
-    await axios.delete(`${API_URL}/vehicles/${id}/delete/`);
-  } catch (error) {
-    throw error;
-  }
-};
-
-// Dashboard Stats API Call
-export const fetchDashboardStats = async () => {
-  try {
-    const response = await axios.get(`${API_URL}/dashboard/stats/`);
-    return response.data;
-  } catch (error) {
-    console.error("Error fetching stats:", error);
-    return null;
-  }
-};
+export default API;

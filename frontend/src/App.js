@@ -1,27 +1,94 @@
 import React from "react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  useLocation,
+} from "react-router-dom";
 import Navbar from "./components/Navbar";
 import HomePage from "./pages/HomePage";
 import InventoryPage from "./pages/InventoryPage";
-import AddVehicleForm from "./components/forms/AddVehicleForm";
+import VehiclePage from "./pages/VehiclePage";
 import SupplierPage from "./pages/SupplierPage";
 import POSPage from "./pages/POSPage";
+import SalesHistoryPage from "./pages/SalesHistoryPage";
+import LoginPage from "./pages/LoginPage"; // Import Login
+import PrivateRoute from "./components/PrivateRoute"; // Import PrivateRoute
+
+// Helper component to hide Navbar on Login page
+const Layout = ({ children }) => {
+  const location = useLocation();
+  // Don't show Navbar if we are on /login
+  if (location.pathname === "/login") {
+    return children;
+  }
+  return (
+    <div className="min-h-screen bg-gray-50 font-sans">
+      <Navbar />
+      <div className="container mx-auto">{children}</div>
+    </div>
+  );
+};
 
 function App() {
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50 font-sans">
-        <Navbar />
-        <div className="container mx-auto">
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/pos" element={<POSPage />} />
-            <Route path="/inventory" element={<InventoryPage />} />
-            <Route path="/suppliers" element={<SupplierPage />} />
-            <Route path="/vehicles" element={<AddVehicleForm />} />
-          </Routes>
-        </div>
-      </div>
+      <Layout>
+        <Routes>
+          {/* Public Route */}
+          <Route path="/login" element={<LoginPage />} />
+
+          {/* Protected Routes */}
+          <Route
+            path="/"
+            element={
+              <PrivateRoute>
+                <HomePage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/pos"
+            element={
+              <PrivateRoute>
+                <POSPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/inventory"
+            element={
+              <PrivateRoute>
+                <InventoryPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/suppliers"
+            element={
+              <PrivateRoute>
+                <SupplierPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/vehicles"
+            element={
+              <PrivateRoute>
+                <VehiclePage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/sales-history"
+            element={
+              <PrivateRoute>
+                <SalesHistoryPage />
+              </PrivateRoute>
+            }
+          />
+        </Routes>
+      </Layout>
     </Router>
   );
 }

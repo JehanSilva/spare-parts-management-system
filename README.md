@@ -7,6 +7,7 @@ python manage.py runserver
 
 ## database changes
 
+python manage.py makemigrations
 python manage.py migrate
 
 ## run the frontend

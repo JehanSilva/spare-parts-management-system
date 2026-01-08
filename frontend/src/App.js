@@ -3,9 +3,10 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import HomePage from "./pages/HomePage";
 import InventoryPage from "./pages/InventoryPage";
-import AddVehicleForm from "./components/forms/AddVehicleForm";
+import VehiclePage from "./pages/VehiclePage"; // <--- ADD THIS
 import SupplierPage from "./pages/SupplierPage";
 import POSPage from "./pages/POSPage";
+import SalesHistoryPage from "./pages/SalesHistoryPage";
 
 function App() {
   return (
@@ -18,7 +19,8 @@ function App() {
             <Route path="/pos" element={<POSPage />} />
             <Route path="/inventory" element={<InventoryPage />} />
             <Route path="/suppliers" element={<SupplierPage />} />
-            <Route path="/vehicles" element={<AddVehicleForm />} />
+            <Route path="/vehicles" element={<VehiclePage />} />
+            <Route path="/sales-history" element={<SalesHistoryPage />} />
           </Routes>
         </div>
       </div>

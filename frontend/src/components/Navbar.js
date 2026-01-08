@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { ShoppingCart, Package, Truck, Car, Home, Menu, X } from "lucide-react";
 import logoImg from "../assets/logo.png";
+import { FileText } from "lucide-react";
 
 const Navbar = () => {
   const location = useLocation();
@@ -73,6 +74,14 @@ const Navbar = () => {
               )}`}
             >
               <Car size={18} /> Vehicles
+            </Link>
+            <Link
+              to="/sales-history"
+              className={`px-3 py-2 rounded flex items-center gap-2 ${isActive(
+                "/sales-history"
+              )}`}
+            >
+              <FileText size={18} /> Sales History
             </Link>
           </div>
 

@@ -8,13 +8,18 @@ import {
   Minus,
   CheckCircle,
   Printer,
+  Car, // Imported Car icon
 } from "lucide-react";
 
 const POSPage = () => {
   const [parts, setParts] = useState([]);
   const [cart, setCart] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Form States
   const [customerName, setCustomerName] = useState("");
+  const [vehicleNumber, setVehicleNumber] = useState(""); // <--- New State
+
   const [loading, setLoading] = useState(false);
   const [saleSuccess, setSaleSuccess] = useState(null);
 
@@ -87,7 +92,6 @@ const POSPage = () => {
   );
 
   // 7. Handle Checkout
-  // Replace the existing handleCheckout function with this one:
   const handleCheckout = async () => {
     if (!customerName) return alert("Please enter Customer Name");
     if (cart.length === 0) return alert("Cart is empty");
@@ -95,10 +99,13 @@ const POSPage = () => {
     setLoading(true);
     const salePayload = {
       customer_name: customerName,
+      vehicle_number: vehicleNumber,
       items: cart.map((item) => ({
         part_id: item.id,
-        quantity: parseInt(item.quantity), // <--- Force number format
-        unit_price: parseFloat(item.sell_price), // <--- Force decimal format
+        quantity: parseInt(item.quantity),
+        unit_price: parseFloat(item.sell_price),
+        // Send as 'warranty' (matches what our View expects in Step 3)
+        // OR change to 'warranty_period_months' if you want to match the model directly.
         warranty: item.warranty || 0,
       })),
     };
@@ -106,15 +113,15 @@ const POSPage = () => {
     try {
       const result = await createSale(salePayload);
       setSaleSuccess(result);
+      // Reset Form
       setCart([]);
       setCustomerName("");
+      setVehicleNumber(""); // <--- Reset Vehicle Number
 
-      // Refresh parts to show new stock levels immediately
       const updatedParts = await fetchParts();
       setParts(updatedParts);
     } catch (error) {
       console.error("Sale Error:", error);
-      // Show the exact error message from Django
       const serverMessage =
         error.response?.data?.error || "Connection to server failed.";
       alert(`Sale Failed: ${serverMessage}`);
@@ -127,17 +134,25 @@ const POSPage = () => {
       <div className="flex flex-col items-center justify-center h-screen bg-gray-50">
         <CheckCircle className="text-green-600 w-20 h-20 mb-4" />
         <h1 className="text-3xl font-bold text-gray-800">Sale Completed!</h1>
-        <p className="text-gray-600 mb-6">
+        <p className="text-gray-600 mb-2">
           Invoice #{saleSuccess.id.substring(0, 8)}
         </p>
+
+        {/* Display Vehicle Number on Success Screen if it exists */}
+        {saleSuccess.vehicle_number && (
+          <p className="text-gray-500 mb-6 flex items-center gap-2">
+            <Car size={16} /> Vehicle: {saleSuccess.vehicle_number}
+          </p>
+        )}
+
         <div className="flex gap-4">
           <button
             onClick={() => setSaleSuccess(null)}
-            className="bg-red-600 text-white px-6 py-2 rounded shadow"
+            className="bg-red-600 text-white px-6 py-2 rounded shadow hover:bg-red-700"
           >
             New Sale
           </button>
-          <button className="bg-gray-800 text-white px-6 py-2 rounded shadow flex items-center gap-2">
+          <button className="bg-gray-800 text-white px-6 py-2 rounded shadow flex items-center gap-2 hover:bg-gray-900">
             <Printer size={18} /> Print Invoice
           </button>
         </div>
@@ -173,7 +188,7 @@ const POSPage = () => {
               <p className="text-xs text-gray-500 mb-2">{part.part_number}</p>
               <div className="flex justify-between items-center">
                 <span className="text-red-700 font-bold">
-                  ${part.sell_price}
+                  LKR{part.sell_price}
                 </span>
                 <span
                   className={`text-xs px-2 py-1 rounded ${
@@ -216,7 +231,7 @@ const POSPage = () => {
                     {item.name}
                   </h4>
                   <p className="text-xs text-gray-500">
-                    ${item.sell_price} x {item.quantity}
+                    LKR{item.sell_price} x {item.quantity}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -251,21 +266,36 @@ const POSPage = () => {
 
         {/* Footer / Checkout */}
         <div className="p-4 bg-gray-50 border-t border-gray-200">
-          <div className="mb-4">
-            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
-              Customer Name
-            </label>
-            <input
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              className="w-full p-2 border border-gray-300 rounded focus:ring-red-500 outline-none"
-              placeholder="Enter Customer Name"
-            />
+          {/* --- Customer & Vehicle Details (Grid Layout) --- */}
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                Customer Name *
+              </label>
+              <input
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded focus:ring-red-500 outline-none text-sm"
+                placeholder="John Doe"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">
+                Vehicle No. (Opt)
+              </label>
+              <input
+                value={vehicleNumber}
+                onChange={(e) => setVehicleNumber(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded focus:ring-red-500 outline-none text-sm"
+                placeholder="ABC-1234"
+              />
+            </div>
           </div>
+
           <div className="flex justify-between items-center mb-4">
             <span className="text-lg font-bold text-gray-700">Total:</span>
             <span className="text-2xl font-bold text-red-700">
-              ${totalAmount.toFixed(2)}
+              LKR{totalAmount.toFixed(2)}
             </span>
           </div>
           <button

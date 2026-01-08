@@ -6,47 +6,73 @@ import {
   AlertTriangle,
   Package,
   MapPin,
+  Edit2,
+  Trash2,
 } from "lucide-react";
-import { fetchParts, fetchSuppliers } from "../services/api"; // Ensure api.js is in src/services/
+import { fetchParts, deletePart } from "../services/api";
 import AddPartForm from "../components/forms/AddPartForm";
 
 const InventoryPage = () => {
   const [parts, setParts] = useState([]);
-  const [suppliers, setSuppliers] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [editingPart, setEditingPart] = useState(null); // Track which part is being edited
 
   // Filter States
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("");
-  const [selectedSupplier, setSelectedSupplier] = useState("");
 
   // Load initial data
-  useEffect(() => {
-    loadData();
-  }, []);
-
   const loadData = async () => {
     setLoading(true);
-    const partsData = await fetchParts();
-    const suppliersData = await fetchSuppliers();
-    setParts(partsData);
-    setSuppliers(suppliersData);
+    try {
+      // Note: If you want to keep filters active after refresh, pass them here
+      const partsData = await fetchParts({
+        search: searchTerm,
+        brand: selectedBrand,
+      });
+      setParts(partsData);
+    } catch (error) {
+      console.error("Failed to load parts", error);
+    }
     setLoading(false);
   };
 
-  // Handle Search/Filter
+  useEffect(() => {
+    loadData();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- ACTIONS ---
+
   const handleSearch = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    const filters = {
-      search: searchTerm,
-      brand: selectedBrand,
-      supplier: selectedSupplier,
-    };
-    const filteredParts = await fetchParts(filters);
-    setParts(filteredParts);
-    setLoading(false);
+    loadData();
+  };
+
+  const handleEdit = (part) => {
+    setEditingPart(part); // Populate form with this part
+    setShowForm(true); // Open the form
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const handleDelete = async (id) => {
+    if (
+      window.confirm(
+        "Are you sure you want to delete this part? This cannot be undone."
+      )
+    ) {
+      try {
+        await deletePart(id);
+        loadData(); // Refresh list
+      } catch (error) {
+        alert(error); // Show backend error message
+      }
+    }
+  };
+
+  const handleFormClose = () => {
+    setShowForm(false);
+    setEditingPart(null); // Reset edit state
   };
 
   return (
@@ -62,29 +88,38 @@ const InventoryPage = () => {
           </p>
         </div>
         <button
-          onClick={() => setShowForm(!showForm)}
-          className="w-full md:w-auto bg-red-600 text-white px-6 py-2 rounded-lg shadow hover:bg-red-700 transition flex items-center justify-center gap-2 font-bold"
+          onClick={() => {
+            if (showForm) handleFormClose();
+            else setShowForm(true);
+          }}
+          className={`w-full md:w-auto px-6 py-2 rounded-lg shadow transition flex items-center justify-center gap-2 font-bold text-white ${
+            showForm
+              ? "bg-gray-500 hover:bg-gray-600"
+              : "bg-red-600 hover:bg-red-700"
+          }`}
         >
-          {showForm ? (
-            "Close Form"
-          ) : (
-            <>
-              <Plus size={20} /> Add New Part
-            </>
-          )}
+          <Plus
+            size={20}
+            className={
+              showForm
+                ? "rotate-45 transition-transform"
+                : "transition-transform"
+            }
+          />
+          {showForm ? "Close Form" : "Add New Part"}
         </button>
       </div>
 
-      {/* Add Part Form (Collapsible) */}
+      {/* Add/Edit Part Form */}
       {showForm && (
-        <div className="mb-8 animate-fade-in-down">
-          <AddPartForm
-            onPartAdded={() => {
-              setShowForm(false);
-              loadData();
-            }}
-          />
-        </div>
+        <AddPartForm
+          onPartAdded={() => {
+            loadData();
+            handleFormClose();
+          }}
+          onCancel={handleFormClose}
+          editingPart={editingPart}
+        />
       )}
 
       {/* Search & Filter Bar */}
@@ -92,7 +127,6 @@ const InventoryPage = () => {
         onSubmit={handleSearch}
         className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-8 grid grid-cols-1 md:grid-cols-4 gap-4"
       >
-        {/* Text Search */}
         <div className="relative md:col-span-2">
           <Search className="absolute left-3 top-3 text-gray-400" size={20} />
           <input
@@ -103,17 +137,13 @@ const InventoryPage = () => {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-
-        {/* Brand Filter */}
         <input
           type="text"
-          placeholder="Filter by Brand (e.g. Toyota)"
+          placeholder="Filter by Brand"
           className="p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
           value={selectedBrand}
           onChange={(e) => setSelectedBrand(e.target.value)}
         />
-
-        {/* Submit Button */}
         <button
           type="submit"
           className="bg-gray-800 text-white p-2 rounded hover:bg-gray-900 flex items-center justify-center gap-2"
@@ -122,13 +152,12 @@ const InventoryPage = () => {
         </button>
       </form>
 
-      {/* Loading State */}
+      {/* Parts Grid */}
       {loading ? (
         <div className="text-center py-20 text-gray-500">
           Loading Inventory...
         </div>
       ) : (
-        /* Parts Grid */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
           {parts.length === 0 ? (
             <div className="col-span-full text-center py-10 bg-white rounded shadow">
@@ -141,8 +170,26 @@ const InventoryPage = () => {
             parts.map((part) => (
               <div
                 key={part.id}
-                className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-xl transition-shadow duration-300 overflow-hidden flex flex-col"
+                className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-xl transition-shadow duration-300 overflow-hidden flex flex-col relative group"
               >
+                {/* --- Action Buttons (Edit/Delete) --- */}
+                <div className="absolute top-2 right-2 flex gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={() => handleEdit(part)}
+                    className="bg-white p-1.5 rounded-full shadow text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                    title="Edit Part"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(part.id)}
+                    className="bg-white p-1.5 rounded-full shadow text-red-500 hover:text-red-700 hover:bg-red-50"
+                    title="Delete Part"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+
                 {/* Image Section */}
                 <div className="h-48 bg-gray-100 relative">
                   {part.image_url ? (
@@ -156,8 +203,8 @@ const InventoryPage = () => {
                       <Package size={48} opacity={0.2} />
                     </div>
                   )}
-                  {/* Stock Badge */}
-                  <div className="absolute top-2 right-2">
+                  {/* Stock Badge (Bottom Left of Image) */}
+                  <div className="absolute bottom-2 left-2">
                     {part.stock_qty <= part.min_stock_level ? (
                       <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow">
                         <AlertTriangle size={12} /> Low Stock
@@ -172,21 +219,21 @@ const InventoryPage = () => {
 
                 {/* Content Section */}
                 <div className="p-5 flex-1 flex flex-col">
-                  <div className="flex justify-between items-start mb-1">
+                  <div className="mb-2">
                     <h2 className="text-lg font-bold text-gray-800 leading-tight">
                       {part.name}
                     </h2>
+                    <p className="text-xs text-gray-400 font-mono mt-1">
+                      {part.part_number}
+                    </p>
                   </div>
+
                   <div className="flex gap-2 mb-3">
                     <span className="bg-red-50 text-red-800 text-xs font-semibold px-2 py-0.5 rounded border border-red-100">
                       {part.brand || "No Brand"}
                     </span>
-                    <span className="bg-gray-100 text-gray-600 text-xs font-mono px-2 py-0.5 rounded border border-gray-200">
-                      {part.part_number}
-                    </span>
                   </div>
 
-                  {/* Location & Supplier */}
                   <div className="space-y-1 mb-4 flex-1">
                     <p className="text-xs text-gray-500 flex items-center gap-1">
                       <MapPin size={12} /> {part.rack_location}
@@ -203,10 +250,10 @@ const InventoryPage = () => {
                   <div className="flex justify-between items-end border-t border-gray-100 pt-3 mt-auto">
                     <div>
                       <p className="text-xs text-gray-400">
-                        Buying: ${part.buy_price}
+                        Buying: LKR {part.buy_price}
                       </p>
                       <p className="text-xl font-bold text-red-700">
-                        ${part.sell_price}
+                        LKR {part.sell_price}
                       </p>
                     </div>
                     <div className="text-right">

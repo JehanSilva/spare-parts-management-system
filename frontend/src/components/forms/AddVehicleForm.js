@@ -1,93 +1,108 @@
-import React, { useState } from "react";
-import { createVehicle } from "../../services/api"; // Ensure correct import path
-import { Car, Save, AlertCircle } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { createVehicle, updateVehicle } from "../../services/api";
+import { Car, Save, AlertCircle, X } from "lucide-react";
 
-const AddVehicleForm = () => {
-  const [data, setData] = useState({ make: "", model: "", year: "" });
-  const [error, setError] = useState("");
+const AddVehicleForm = ({ onVehicleSaved, onCancel, editingVehicle }) => {
+  // Initialize state. If editingVehicle exists, use its data.
+  const [data, setData] = useState({
+    make: "",
+    model: "",
+    year: "",
+  });
+
+  useEffect(() => {
+    if (editingVehicle) {
+      setData({
+        make: editingVehicle.make,
+        model: editingVehicle.model,
+        year: editingVehicle.year,
+      });
+    }
+  }, [editingVehicle]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(""); // Clear previous errors
     try {
-      await createVehicle(data);
-      alert("Vehicle Added Successfully!");
-      setData({ make: "", model: "", year: "" }); // Reset form
-    } catch (err) {
-      console.error(err);
-      // Handle duplicate error specific to "unique_together" constraint
-      if (err.response?.data?.non_field_errors) {
-        setError("This vehicle (Make + Model + Year) already exists.");
+      if (editingVehicle) {
+        // UPDATE Mode
+        await updateVehicle(editingVehicle.id, data);
+        alert("Vehicle Updated!");
       } else {
-        setError("Failed to add vehicle. Please try again.");
+        // CREATE Mode
+        await createVehicle(data);
+        alert("Vehicle Added!");
       }
+      onVehicleSaved(); // Refresh parent list
+    } catch (err) {
+      alert("Operation failed. Check if vehicle already exists.");
     }
   };
 
   return (
-    <div className="flex justify-center items-start min-h-screen pt-10">
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white p-8 rounded-lg shadow-md max-w-md w-full border-t-4 border-red-600"
-      >
-        <div className="flex items-center gap-2 mb-6 text-red-900">
+    <form
+      onSubmit={handleSubmit}
+      className="bg-white p-6 rounded-lg shadow-md border-t-4 border-red-600 mb-8 animate-fade-in-down"
+    >
+      <div className="flex justify-between items-center mb-4">
+        <div className="flex items-center gap-2 text-red-900">
           <Car className="w-6 h-6" />
-          <h2 className="text-2xl font-bold">Add Vehicle Model</h2>
+          <h2 className="text-xl font-bold">
+            {editingVehicle
+              ? `Edit ${editingVehicle.make} ${editingVehicle.model}`
+              : "Add New Vehicle"}
+          </h2>
         </div>
-
-        {error && (
-          <div className="bg-red-50 text-red-600 p-3 rounded mb-4 text-sm flex items-center gap-2">
-            <AlertCircle size={16} /> {error}
-          </div>
-        )}
-
-        <div className="space-y-5">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Make
-            </label>
-            <input
-              placeholder="e.g. Toyota"
-              value={data.make}
-              onChange={(e) => setData({ ...data, make: e.target.value })}
-              className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-red-500 outline-none"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Model
-            </label>
-            <input
-              placeholder="e.g. Corolla"
-              value={data.model}
-              onChange={(e) => setData({ ...data, model: e.target.value })}
-              className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-red-500 outline-none"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Year
-            </label>
-            <input
-              type="number"
-              placeholder="e.g. 2024"
-              value={data.year}
-              onChange={(e) => setData({ ...data, year: e.target.value })}
-              className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-red-500 outline-none"
-              required
-            />
-          </div>
-
-          <button className="w-full bg-red-600 text-white py-3 rounded-lg font-bold hover:bg-red-700 transition flex justify-center items-center gap-2 shadow-md">
-            <Save size={18} /> Save Vehicle
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-gray-400 hover:text-red-600"
+          >
+            <X size={24} />
           </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Make
+          </label>
+          <input
+            value={data.make}
+            onChange={(e) => setData({ ...data, make: e.target.value })}
+            className="w-full border p-2 rounded"
+            required
+          />
         </div>
-      </form>
-    </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Model
+          </label>
+          <input
+            value={data.model}
+            onChange={(e) => setData({ ...data, model: e.target.value })}
+            className="w-full border p-2 rounded"
+            required
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Year
+          </label>
+          <input
+            type="number"
+            value={data.year}
+            onChange={(e) => setData({ ...data, year: e.target.value })}
+            className="w-full border p-2 rounded"
+            required
+          />
+        </div>
+        <button className="bg-red-600 text-white py-2 px-4 rounded font-bold hover:bg-red-700 transition flex items-center justify-center gap-2 h-10">
+          <Save size={18} /> {editingVehicle ? "Update" : "Add"}
+        </button>
+      </div>
+    </form>
   );
 };
 

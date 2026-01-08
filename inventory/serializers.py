@@ -1,6 +1,5 @@
 from rest_framework import serializers
-from .models import Part, Vehicle, Supplier, Sale, SaleItem
-
+from .models import Supplier, Part, Vehicle, Sale, SaleItem
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
@@ -30,11 +29,12 @@ class SaleItemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SaleItem
-        fields = ['part', 'part_name', 'part_brand', 'quantity', 'unit_price', 'warranty_period_months']
+        # CHANGE 'warranty' TO 'warranty_period_months'
+        fields = ['id', 'part', 'part_name', 'part_brand', 'quantity', 'unit_price', 'warranty_period_months']
 
 class SaleSerializer(serializers.ModelSerializer):
     items = SaleItemSerializer(many=True, read_only=True)
 
     class Meta:
         model = Sale
-        fields = ['id', 'customer_name', 'created_at', 'total_amount', 'items']
+        fields = ['id', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items']

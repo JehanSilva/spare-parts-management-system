@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { fetchParts, createSale } from "../services/api";
+import { useReactToPrint } from "react-to-print"; // <--- Import Library
+import Receipt from "../components/Receipt"; // <--- Import Receipt Component
 import {
   Search,
   ShoppingCart,
@@ -8,7 +10,7 @@ import {
   Minus,
   CheckCircle,
   Printer,
-  Car, // Imported Car icon
+  Car,
 } from "lucide-react";
 
 const POSPage = () => {
@@ -18,10 +20,19 @@ const POSPage = () => {
 
   // Form States
   const [customerName, setCustomerName] = useState("");
-  const [vehicleNumber, setVehicleNumber] = useState(""); // <--- New State
+  const [vehicleNumber, setVehicleNumber] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [saleSuccess, setSaleSuccess] = useState(null);
+
+  // --- PRINTING LOGIC ---
+  const receiptRef = useRef();
+
+  const handlePrint = useReactToPrint({
+    contentRef: receiptRef,
+    documentTitle: `Invoice-${saleSuccess?.id || "New"}`,
+  });
+  // ----------------------
 
   // 1. Load Parts for Searching
   useEffect(() => {
@@ -104,8 +115,6 @@ const POSPage = () => {
         part_id: item.id,
         quantity: parseInt(item.quantity),
         unit_price: parseFloat(item.sell_price),
-        // Send as 'warranty' (matches what our View expects in Step 3)
-        // OR change to 'warranty_period_months' if you want to match the model directly.
         warranty: item.warranty || 0,
       })),
     };
@@ -116,7 +125,7 @@ const POSPage = () => {
       // Reset Form
       setCart([]);
       setCustomerName("");
-      setVehicleNumber(""); // <--- Reset Vehicle Number
+      setVehicleNumber("");
 
       const updatedParts = await fetchParts();
       setParts(updatedParts);
@@ -152,9 +161,19 @@ const POSPage = () => {
           >
             New Sale
           </button>
-          <button className="bg-gray-800 text-white px-6 py-2 rounded shadow flex items-center gap-2 hover:bg-gray-900">
+
+          {/* PRINT BUTTON */}
+          <button
+            onClick={handlePrint}
+            className="bg-gray-800 text-white px-6 py-2 rounded shadow flex items-center gap-2 hover:bg-gray-900"
+          >
             <Printer size={18} /> Print Invoice
           </button>
+        </div>
+
+        {/* HIDDEN RECEIPT COMPONENT (Visible only to printer) */}
+        <div className="hidden">
+          <Receipt ref={receiptRef} sale={saleSuccess} />
         </div>
       </div>
     );

@@ -37,7 +37,12 @@ export const logoutUser = () => {
 };
 
 // --- DATA SERVICES (Updated to use the 'API' instance) ---
-export const fetchParts = async () => (await API.get("/parts/")).data;
+export const fetchParts = async (params) => {
+  // 'params' will be { search: '...', brand: '...' }
+  // axios automatically turns this into ?search=...&brand=...
+  const response = await API.get("/parts/", { params });
+  return response.data;
+};
 export const createPart = async (data) =>
   (await API.post("/parts/add/", data)).data;
 export const updatePart = async (id, data) =>

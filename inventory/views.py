@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404 # Ensure this is imported
 from django.db.models import Sum, F
 from .models import Sale # Ensure Sale is imported
 from django.db import transaction
+from django.db.models import Q
 
 # --- VEHICLE VIEWS ---
 @api_view(['PUT'])
@@ -83,36 +84,70 @@ def delete_supplier(request, pk):
 @api_view(['GET'])
 def get_parts(request):
     """
-    GET parts with optional filtering.
-    Usage: /api/parts/?search=Toyota&brand=Genuine
+    List parts with optional search and brand filtering
     """
-    parts = Part.objects.all()
+    # 1. Get parameters from the URL (e.g., /api/parts/?search=brake&brand=toyota)
+    search_query = request.query_params.get('search', '')
+    brand_filter = request.query_params.get('brand', '')
 
-    # Filter by general search term (Name or Part Number)
-    search_query = request.query_params.get('search', None)
+    # 2. Start with all parts
+    parts = Part.objects.all().order_by('-id')
+
+    # 3. Apply Search Filter (Name OR Part Number OR Description)
     if search_query:
-        parts = parts.filter(name__icontains=search_query) | \
-                parts.filter(part_number__icontains=search_query)
+        parts = parts.filter(
+            Q(name__icontains=search_query) | 
+            Q(part_number__icontains=search_query) |
+            Q(description__icontains=search_query)
+        )
 
-    # Filter by Brand
-    brand_query = request.query_params.get('brand', None)
-    if brand_query:
-        parts = parts.filter(brand__icontains=brand_query)
+    # 4. Apply Brand Filter (Exact match or partial)
+    if brand_filter:
+        parts = parts.filter(brand__icontains=brand_filter)
 
-    # Filter by Supplier ID
-    supplier_id = request.query_params.get('supplier', None)
-    if supplier_id:
-        parts = parts.filter(supplier_id=supplier_id)
-
+    # 5. Serialize and return
     serializer = PartSerializer(parts, many=True)
     return Response(serializer.data)
 
 @api_view(['POST'])
 def add_part(request):
-    serializer = PartSerializer(data=request.data)
+    """
+    Add a new part OR update stock if part_number already exists.
+    """
+    data = request.data
+    part_number = data.get('part_number')
+    
+    # 1. Check if a part with this Part Number already exists
+    # We use .filter().first() to avoid crashing if it doesn't exist
+    existing_part = Part.objects.filter(part_number=part_number).first()
+    
+    if existing_part:
+        # --- SMART UPDATE MODE ---
+        new_qty = int(data.get('stock_qty', 0))
+        
+        # Update Quantity
+        existing_part.stock_qty += new_qty
+        
+        # Update Prices (Optional: Remove these lines if you don't want to overwrite prices)
+        if 'buy_price' in data:
+            existing_part.buy_price = data['buy_price']
+        if 'sell_price' in data:
+            existing_part.sell_price = data['sell_price']
+            
+        existing_part.save()
+        
+        return Response({
+            "message": f"Part exists. Stock increased by {new_qty}. Total: {existing_part.stock_qty}",
+            "id": existing_part.id,
+            "stock_qty": existing_part.stock_qty
+        }, status=status.HTTP_200_OK)
+
+    # --- CREATE NEW MODE ---
+    serializer = PartSerializer(data=data)
     if serializer.is_valid():
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['PUT'])

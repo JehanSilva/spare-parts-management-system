@@ -98,13 +98,26 @@ const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
     e.preventDefault();
     try {
       if (editingPart) {
+        // Explicit Edit Mode (Clicked "Edit" button)
         await updatePart(editingPart.id, formData);
         alert("Part Updated Successfully!");
       } else {
-        await createPart(formData);
-        alert("Part Added Successfully!");
+        // Add New / Restock Mode
+        // The backend now decides if it creates new or updates stock
+        const response = await createPart(formData);
+
+        // Check if we got a specific message from the Smart Update
+        if (response.message) {
+          alert(response.message); // e.g. "Part exists. Stock increased..."
+        } else {
+          alert("New Part Added Successfully!");
+        }
       }
       if (onPartAdded) onPartAdded();
+
+      // Optional: Clear form only if it was a new add,
+      // or clear it always depending on your preference.
+      setFormData({ ...formData, part_number: "", name: "", stock_qty: "" }); // Clear key fields
     } catch (error) {
       console.error(error);
       alert("Operation Failed. Check console for details.");

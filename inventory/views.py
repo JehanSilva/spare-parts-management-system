@@ -47,23 +47,25 @@ def add_vehicle(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # --- SUPPLIER VIEWS ---
-@api_view(['GET', 'POST'])
-def supplier_list(request):
+@api_view(['GET'])
+def get_suppliers(request):
     """
-    GET: List all suppliers.
-    POST: Add a new supplier.
+    List all suppliers
     """
-    if request.method == 'GET':
-        suppliers = Supplier.objects.all()
-        serializer = SupplierSerializer(suppliers, many=True)
-        return Response(serializer.data)
-    
-    elif request.method == 'POST':
-        serializer = SupplierSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    suppliers = Supplier.objects.all()
+    serializer = SupplierSerializer(suppliers, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+def add_supplier(request):
+    """
+    Add a new supplier
+    """
+    serializer = SupplierSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['PUT'])
 def update_supplier(request, pk):

@@ -3,10 +3,11 @@ from . import views
 
 urlpatterns = [
     # Suppliers
-    path('suppliers/', views.supplier_list, name='supplier_list'),
+    path('suppliers/', views.get_suppliers, name='get_suppliers'),      # GET only
+    path('suppliers/add/', views.add_supplier, name='add_supplier'),    # POST only
     path('suppliers/<int:pk>/update/', views.update_supplier, name='update_supplier'),
     path('suppliers/<int:pk>/delete/', views.delete_supplier, name='delete_supplier'),
-
+    
     # Parts
     path('parts/', views.get_parts, name='get_parts'),
     path('parts/add/', views.add_part, name='add_part'),

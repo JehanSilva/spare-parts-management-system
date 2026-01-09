@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { createSupplier, updateSupplier } from "../../services/api";
-import { Save, X, Truck } from "lucide-react";
+import { Save, X, Truck, User, Phone, Mail, MapPin } from "lucide-react";
 
-const AddSupplierForm = ({ onSupplierAdded, onCancel, editingSupplier }) => {
+const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier }) => {
   const [formData, setFormData] = useState({
     name: "",
     contact_person: "",
@@ -11,100 +10,164 @@ const AddSupplierForm = ({ onSupplierAdded, onCancel, editingSupplier }) => {
     address: "",
   });
 
+  // Populate form if editing
   useEffect(() => {
     if (editingSupplier) {
       setFormData({
-        name: editingSupplier.name,
-        contact_person: editingSupplier.contact_person,
-        phone: editingSupplier.phone,
-        email: editingSupplier.email,
-        address: editingSupplier.address,
+        name: editingSupplier.name || "",
+        contact_person: editingSupplier.contact_person || "",
+        phone: editingSupplier.phone || "",
+        email: editingSupplier.email || "",
+        address: editingSupplier.address || "",
       });
     }
   }, [editingSupplier]);
 
-  const handleSubmit = async (e) => {
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = (e) => {
     e.preventDefault();
-    try {
-      if (editingSupplier) {
-        await updateSupplier(editingSupplier.id, formData);
-        alert("Supplier Updated!");
-      } else {
-        await createSupplier(formData);
-        alert("Supplier Added!");
-      }
-      onSupplierAdded();
-    } catch (error) {
-      alert("Operation failed.");
-    }
+    // CRITICAL CHANGE: We do NOT call the API here.
+    // We pass the data up to SupplierPage.js via the onSubmit prop.
+    onSubmit(formData);
   };
 
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-red-600 mb-6 animate-fade-in-down">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-bold text-red-900 flex items-center gap-2">
-          <Truck size={24} />{" "}
+    <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-red-600 relative">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+          {editingSupplier ? (
+            <Truck className="text-blue-600" />
+          ) : (
+            <Truck className="text-red-600" />
+          )}
           {editingSupplier ? "Edit Supplier" : "Add New Supplier"}
-        </h3>
-        <button onClick={onCancel} className="text-gray-400 hover:text-red-600">
+        </h2>
+        <button
+          onClick={onCancel}
+          className="text-gray-400 hover:text-gray-600"
+        >
           <X size={24} />
         </button>
       </div>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <input
-            name="name"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            placeholder="Company Name"
-            className="p-2 border rounded"
-            required
-          />
-          <input
-            name="contact_person"
-            value={formData.contact_person}
-            onChange={(e) =>
-              setFormData({ ...formData, contact_person: e.target.value })
-            }
-            placeholder="Contact Person"
-            className="p-2 border rounded"
-          />
-          <input
-            name="phone"
-            value={formData.phone}
-            onChange={(e) =>
-              setFormData({ ...formData, phone: e.target.value })
-            }
-            placeholder="Phone"
-            className="p-2 border rounded"
-          />
-          <input
-            name="email"
-            value={formData.email}
-            onChange={(e) =>
-              setFormData({ ...formData, email: e.target.value })
-            }
-            placeholder="Email"
-            className="p-2 border rounded"
-          />
+
+      <form
+        onSubmit={handleSubmit}
+        className="grid grid-cols-1 md:grid-cols-2 gap-6"
+      >
+        {/* Supplier Name (Required) */}
+        <div className="col-span-1 md:col-span-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Company / Supplier Name *
+          </label>
+          <div className="relative">
+            <Truck className="absolute left-3 top-3 text-gray-400" size={18} />
+            <input
+              type="text"
+              name="name"
+              required
+              value={formData.name}
+              onChange={handleChange}
+              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
+              placeholder="e.g. Toyota Lanka (Pvt) Ltd"
+            />
+          </div>
         </div>
-        <textarea
-          name="address"
-          value={formData.address}
-          onChange={(e) =>
-            setFormData({ ...formData, address: e.target.value })
-          }
-          placeholder="Address"
-          className="w-full p-2 border rounded"
-          rows="2"
-        />
-        <button
-          type="submit"
-          className="bg-red-600 text-white px-6 py-2 rounded font-bold hover:bg-red-700 w-full md:w-auto"
-        >
-          <Save size={18} className="inline mr-2" />{" "}
-          {editingSupplier ? "Update" : "Save"}
-        </button>
+
+        {/* Contact Person */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Contact Person
+          </label>
+          <div className="relative">
+            <User className="absolute left-3 top-3 text-gray-400" size={18} />
+            <input
+              type="text"
+              name="contact_person"
+              value={formData.contact_person}
+              onChange={handleChange}
+              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
+              placeholder="e.g. Mr. Perera"
+            />
+          </div>
+        </div>
+
+        {/* Phone */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Phone Number
+          </label>
+          <div className="relative">
+            <Phone className="absolute left-3 top-3 text-gray-400" size={18} />
+            <input
+              type="text"
+              name="phone"
+              value={formData.phone}
+              onChange={handleChange}
+              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
+              placeholder="e.g. 0771234567"
+            />
+          </div>
+        </div>
+
+        {/* Email */}
+        <div className="col-span-1 md:col-span-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Email Address
+          </label>
+          <div className="relative">
+            <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
+            <input
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
+              placeholder="e.g. sales@toyota.lk (Leave empty if none)"
+            />
+          </div>
+          <p className="text-xs text-gray-500 mt-1 ml-1">
+            Leave empty if unknown. Do not type "null".
+          </p>
+        </div>
+
+        {/* Address */}
+        <div className="col-span-1 md:col-span-2">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Address
+          </label>
+          <div className="relative">
+            <MapPin className="absolute left-3 top-3 text-gray-400" size={18} />
+            <textarea
+              name="address"
+              rows="2"
+              value={formData.address}
+              onChange={handleChange}
+              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
+              placeholder="e.g. No 123, High Level Road, Colombo"
+            />
+          </div>
+        </div>
+
+        {/* Buttons */}
+        <div className="col-span-1 md:col-span-2 flex justify-end gap-3 mt-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-5 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition font-medium"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-bold flex items-center gap-2"
+          >
+            <Save size={18} />
+            {editingSupplier ? "Update Supplier" : "Save Supplier"}
+          </button>
+        </div>
       </form>
     </div>
   );

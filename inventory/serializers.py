@@ -17,11 +17,17 @@ class PartSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Part
-        fields = [
-            'id', 'name', 'part_number', 'brand', 'supplier', 'supplier_details',
-            'description', 'buy_price', 'sell_price', 'stock_qty', 
-            'min_stock_level', 'rack_location', 'image_url', 'compatible_vehicles'
-        ]
+        fields = '__all__'
+
+    # --- ADD THIS METHOD ---
+    def to_representation(self, instance):
+        # Get the standard data (ids)
+        data = super().to_representation(instance)
+        
+        # Replace the list of IDs with the list of actual Vehicle objects
+        data['compatible_vehicles'] = VehicleSerializer(instance.compatible_vehicles.all(), many=True).data
+        
+        return data
 
 class SaleItemSerializer(serializers.ModelSerializer):
     part_name = serializers.ReadOnlyField(source='part.name')

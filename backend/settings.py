@@ -33,7 +33,9 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
+    'cloudinary_storage',  # Must be above staticfiles
     'django.contrib.staticfiles',
+    'cloudinary',          # Must be included
     
     # Third party apps
     'rest_framework',
@@ -76,22 +78,20 @@ TEMPLATES = [
 WSGI_APPLICATION = 'backend.wsgi.application'
 
 
-# --- DATABASE CONFIGURATION (UPDATED) ---
+# --- DATABASE CONFIGURATION ---
 if IS_ON_RENDER:
     # PRODUCTION (Render)
-    # Uses the DATABASE_URL environment variable provided by Render
     DATABASES = {
         'default': dj_database_url.config(conn_max_age=600, ssl_require=True)
     }
 else:
     # LOCAL (Your Laptop)
-    # Uses your local PostgreSQL setup (pgAdmin)
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': 'nss-auto-db',  # Your Database Name
             'USER': 'postgres',     # Your Username
-            'PASSWORD': 'root',     # Your Password (Check if this matches yours!)
+            'PASSWORD': 'root',     # Your Password
             'HOST': 'localhost',
             'PORT': '5432',
         }
@@ -117,12 +117,9 @@ USE_TZ = True
 # --- STATIC FILES CONFIGURATION ---
 STATIC_URL = '/static/'
 
-# Only use WhiteNoise storage in Production (Render)
 if IS_ON_RENDER:
     STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 else:
-    # Local development: Just store static files in a local folder if needed
     STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 
 
@@ -147,4 +144,24 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+}
+
+# CLOUDINARY CONFIGURATION
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME': 'dklcexfun', 
+    'API_KEY': '451238826942912', 
+    'API_SECRET': 'Br1yLjNH_dg413bYVFsdLugb_7E',
+}
+
+# --- DJANGO 6.0 STORAGES CONFIGURATION ---
+# This replaces the old DEFAULT_FILE_STORAGE and STATICFILES_STORAGE settings
+STORAGES = {
+    # 1. Media (Images/Uploads) -> Cloudinary
+    "default": {
+        "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
+    },
+    # 2. Static Files (CSS/JS) -> WhiteNoise
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
 }

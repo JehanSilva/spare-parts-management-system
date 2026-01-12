@@ -1,16 +1,14 @@
 import React, { useState, useEffect } from "react";
-import {
-  fetchSuppliers,
-  fetchVehicles,
-  createPart,
-  updatePart,
-} from "../../services/api";
-import { X, Plus, Car, Save, AlertCircle } from "lucide-react";
+import { fetchSuppliers, fetchVehicles } from "../../services/api";
+import { X, Plus, Car, Save, Upload, Image as ImageIcon } from "lucide-react";
 
-const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
+const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const [suppliers, setSuppliers] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
+
+  // Image Preview State
+  const [previewUrl, setPreviewUrl] = useState(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -24,38 +22,36 @@ const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
     min_stock_level: 5,
     rack_location: "",
     description: "",
-    image_url: "",
+    image: null, // <--- Now stores the actual File object
     compatible_vehicles: [],
   });
 
-  // 1. Load Dropdown Data (Suppliers & Vehicles)
+  // Load Data
   useEffect(() => {
     const loadDropdowns = async () => {
-      const suppData = await fetchSuppliers();
-      const vehData = await fetchVehicles();
-      setSuppliers(suppData);
-      setVehicles(vehData);
+      const s = await fetchSuppliers();
+      const v = await fetchVehicles();
+      setSuppliers(s);
+      setVehicles(v);
     };
     loadDropdowns();
   }, []);
 
-  // 2. Populate Form if Editing
+  // Populate Edit Data
   useEffect(() => {
     if (editingPart) {
       setFormData({
-        name: editingPart.name,
-        part_number: editingPart.part_number,
-        brand: editingPart.brand || "",
-        supplier: editingPart.supplier || "", // Uses ID
-        buy_price: editingPart.buy_price,
-        sell_price: editingPart.sell_price,
-        stock_qty: editingPart.stock_qty,
-        min_stock_level: editingPart.min_stock_level,
-        rack_location: editingPart.rack_location,
-        description: editingPart.description || "",
-        image_url: editingPart.image_url || "",
-        compatible_vehicles: editingPart.compatible_vehicles || [], // Array of IDs
+        ...editingPart,
+        supplier: editingPart.supplier || "",
+        compatible_vehicles: editingPart.compatible_vehicles
+          ? editingPart.compatible_vehicles.map((v) =>
+              typeof v === "object" ? v.id : v
+            )
+          : [],
+        image: null, // Reset file input (we don't re-upload unless user picks new one)
       });
+      // Set existing image as preview
+      setPreviewUrl(editingPart.image || null);
     }
   }, [editingPart]);
 
@@ -63,80 +59,80 @@ const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // --- Vehicle Compatibility Logic ---
+  // --- NEW: Handle Image Selection ---
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setFormData({ ...formData, image: file });
+      // Create local preview URL
+      setPreviewUrl(URL.createObjectURL(file));
+    }
+  };
+
   const addVehicleToPart = () => {
     if (!selectedVehicleId) return;
     const vehId = parseInt(selectedVehicleId);
-
-    if (formData.compatible_vehicles.includes(vehId)) {
-      alert("This vehicle is already added!");
-      return;
+    if (!formData.compatible_vehicles.includes(vehId)) {
+      setFormData({
+        ...formData,
+        compatible_vehicles: [...formData.compatible_vehicles, vehId],
+      });
     }
-    setFormData({
-      ...formData,
-      compatible_vehicles: [...formData.compatible_vehicles, vehId],
-    });
     setSelectedVehicleId("");
   };
 
-  const removeVehicle = (idToRemove) => {
+  const removeVehicle = (id) => {
     setFormData({
       ...formData,
       compatible_vehicles: formData.compatible_vehicles.filter(
-        (id) => id !== idToRemove
+        (vId) => vId !== id
       ),
     });
   };
 
   const getVehicleName = (id) => {
-    const v = vehicles.find((v) => v.id === id);
-    return v ? `${v.year} ${v.make} ${v.model}` : "Unknown Vehicle";
+    const v = vehicles.find((vh) => vh.id === id);
+    return v ? `${v.year} ${v.make} ${v.model}` : "Unknown";
   };
 
-  // --- Submit Logic (Create or Update) ---
-  const handleSubmit = async (e) => {
+  // --- NEW: Submit Logic with FormData ---
+  const handleSubmit = (e) => {
     e.preventDefault();
-    try {
-      if (editingPart) {
-        // Explicit Edit Mode (Clicked "Edit" button)
-        await updatePart(editingPart.id, formData);
-        alert("Part Updated Successfully!");
-      } else {
-        // Add New / Restock Mode
-        // The backend now decides if it creates new or updates stock
-        const response = await createPart(formData);
 
-        // Check if we got a specific message from the Smart Update
-        if (response.message) {
-          alert(response.message); // e.g. "Part exists. Stock increased..."
-        } else {
-          alert("New Part Added Successfully!");
+    // 1. Create FormData object
+    const dataToSend = new FormData();
+
+    // 2. Append simple fields
+    Object.keys(formData).forEach((key) => {
+      if (key === "compatible_vehicles") {
+        // Append each ID separately for arrays
+        formData[key].forEach((id) =>
+          dataToSend.append("compatible_vehicles", id)
+        );
+      } else if (key === "image") {
+        // Only append image if a new file is selected
+        if (formData.image instanceof File) {
+          dataToSend.append("image", formData.image);
         }
+      } else if (formData[key] !== null && formData[key] !== undefined) {
+        dataToSend.append(key, formData[key]);
       }
-      if (onPartAdded) onPartAdded();
+    });
 
-      // Optional: Clear form only if it was a new add,
-      // or clear it always depending on your preference.
-      setFormData({ ...formData, part_number: "", name: "", stock_qty: "" }); // Clear key fields
-    } catch (error) {
-      console.error(error);
-      alert("Operation Failed. Check console for details.");
-    }
+    // 3. Pass FormData up
+    onSubmit(dataToSend);
   };
 
   return (
     <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-red-600 animate-fade-in-down">
-      {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-2xl font-bold text-gray-800">
-          {editingPart
-            ? `Edit Part: ${editingPart.name}`
-            : "Add New Spare Part"}
+          {editingPart ? "Edit Part" : "Add New Part"}
         </h2>
         {onCancel && (
           <button
             onClick={onCancel}
-            className="text-gray-400 hover:text-red-600 transition"
+            className="text-gray-400 hover:text-red-600"
           >
             <X size={28} />
           </button>
@@ -147,59 +143,76 @@ const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
         onSubmit={handleSubmit}
         className="grid grid-cols-1 md:grid-cols-2 gap-6"
       >
-        {/* --- BASIC DETAILS --- */}
+        {/* --- IMAGE UPLOAD SECTION (NEW) --- */}
+        <div className="md:col-span-2 flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-300 rounded-lg hover:bg-gray-50 transition">
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageChange}
+            className="hidden"
+            id="image-upload"
+          />
+          <label
+            htmlFor="image-upload"
+            className="cursor-pointer flex flex-col items-center gap-2"
+          >
+            {previewUrl ? (
+              <img
+                src={previewUrl}
+                alt="Preview"
+                className="h-48 object-contain rounded-md shadow-sm"
+              />
+            ) : (
+              <div className="h-32 w-32 bg-gray-100 rounded-full flex items-center justify-center text-gray-400">
+                <ImageIcon size={48} />
+              </div>
+            )}
+            <span className="text-blue-600 font-bold flex items-center gap-2 mt-2">
+              <Upload size={18} />{" "}
+              {previewUrl ? "Change Image" : "Upload Part Image"}
+            </span>
+          </label>
+        </div>
+
+        {/* Basic Details */}
         <div className="space-y-4">
-          <h3 className="font-bold text-gray-500 border-b pb-1 text-sm uppercase">
-            Basic Details
-          </h3>
           <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Part Name *
-            </label>
+            <label className="block text-sm font-medium">Part Name *</label>
             <input
               name="name"
               value={formData.name}
               onChange={handleChange}
               required
-              className="w-full p-2 border rounded focus:ring-red-500"
-              placeholder="e.g. Brake Pad"
+              className="w-full p-2 border rounded"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Part Number (OEM) *
-            </label>
+            <label className="block text-sm font-medium">Part Number *</label>
             <input
               name="part_number"
               value={formData.part_number}
               onChange={handleChange}
               required
-              className="w-full p-2 border rounded focus:ring-red-500"
+              className="w-full p-2 border rounded"
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Brand
-              </label>
+              <label className="block text-sm font-medium">Brand</label>
               <input
                 name="brand"
                 value={formData.brand}
                 onChange={handleChange}
-                className="w-full p-2 border rounded focus:ring-red-500"
-                placeholder="Toyota Genuine"
+                className="w-full p-2 border rounded"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Supplier *
-              </label>
+              <label className="block text-sm font-medium">Supplier</label>
               <select
                 name="supplier"
                 value={formData.supplier}
                 onChange={handleChange}
-                required
-                className="w-full p-2 border rounded bg-white focus:ring-red-500"
+                className="w-full p-2 border rounded bg-white"
               >
                 <option value="">Select...</option>
                 {suppliers.map((s) => (
@@ -212,82 +225,69 @@ const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
           </div>
         </div>
 
-        {/* --- PRICING & STOCK --- */}
+        {/* Inventory Data */}
         <div className="space-y-4">
-          <h3 className="font-bold text-gray-500 border-b pb-1 text-sm uppercase">
-            Inventory Data
-          </h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Buy Price
-              </label>
+              <label className="block text-sm font-medium">Buy Price</label>
               <input
                 type="number"
                 name="buy_price"
                 value={formData.buy_price}
                 onChange={handleChange}
                 required
-                className="w-full p-2 border rounded focus:ring-red-500"
+                className="w-full p-2 border rounded"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Sell Price
-              </label>
+              <label className="block text-sm font-medium">Sell Price</label>
               <input
                 type="number"
                 name="sell_price"
                 value={formData.sell_price}
                 onChange={handleChange}
                 required
-                className="w-full p-2 border rounded focus:ring-red-500"
+                className="w-full p-2 border rounded"
               />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Stock Qty
-              </label>
+              <label className="block text-sm font-medium">Stock Qty</label>
               <input
                 type="number"
                 name="stock_qty"
                 value={formData.stock_qty}
                 onChange={handleChange}
                 required
-                className="w-full p-2 border rounded focus:ring-red-500"
+                className="w-full p-2 border rounded"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Location
-              </label>
+              <label className="block text-sm font-medium">Location</label>
               <input
                 name="rack_location"
                 value={formData.rack_location}
                 onChange={handleChange}
                 required
-                className="w-full p-2 border rounded focus:ring-red-500"
-                placeholder="Aisle 1"
+                className="w-full p-2 border rounded"
               />
             </div>
           </div>
         </div>
 
-        {/* --- COMPATIBILITY SECTION --- */}
-        <div className="md:col-span-2 bg-gray-50 p-4 rounded border border-gray-200">
+        {/* Compatible Vehicles */}
+        <div className="md:col-span-2 bg-gray-50 p-4 rounded border">
           <h3 className="font-bold text-gray-700 mb-2 flex items-center gap-2">
-            <Car size={20} /> Compatible Vehicles
+            <Car size={20} /> Fits Vehicles
           </h3>
-
           <div className="flex gap-2 mb-3">
             <select
               value={selectedVehicleId}
               onChange={(e) => setSelectedVehicleId(e.target.value)}
-              className="flex-1 p-2 border rounded bg-white"
+              className="flex-1 p-2 border rounded"
             >
-              <option value="">-- Choose a Vehicle Model --</option>
+              <option value="">-- Select Model --</option>
               {vehicles.map((v) => (
                 <option key={v.id} value={v.id}>
                   {v.year} {v.make} {v.model}
@@ -297,22 +297,16 @@ const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
             <button
               type="button"
               onClick={addVehicleToPart}
-              className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-1"
+              className="bg-blue-600 text-white px-4 rounded"
             >
-              <Plus size={18} /> Add
+              <Plus size={18} />
             </button>
           </div>
-
           <div className="flex flex-wrap gap-2">
-            {formData.compatible_vehicles.length === 0 && (
-              <span className="text-gray-400 text-sm italic">
-                No vehicles linked yet.
-              </span>
-            )}
             {formData.compatible_vehicles.map((id) => (
               <span
                 key={id}
-                className="bg-white border border-blue-200 text-blue-800 px-3 py-1 rounded-full text-sm flex items-center gap-2 shadow-sm"
+                className="bg-white border border-blue-200 text-blue-800 px-3 py-1 rounded-full text-sm flex items-center gap-2"
               >
                 {getVehicleName(id)}
                 <button
@@ -327,11 +321,11 @@ const AddPartForm = ({ onPartAdded, onCancel, editingPart }) => {
           </div>
         </div>
 
-        {/* --- SUBMIT --- */}
-        <div className="md:col-span-2 border-t pt-4 flex gap-4">
+        {/* Submit */}
+        <div className="md:col-span-2 border-t pt-4">
           <button
             type="submit"
-            className="flex-1 bg-red-600 text-white font-bold py-3 rounded hover:bg-red-700 transition shadow-lg flex justify-center items-center gap-2"
+            className="w-full bg-red-600 text-white font-bold py-3 rounded hover:bg-red-700 flex justify-center items-center gap-2"
           >
             <Save size={20} /> {editingPart ? "Update Part" : "Save Part"}
           </button>

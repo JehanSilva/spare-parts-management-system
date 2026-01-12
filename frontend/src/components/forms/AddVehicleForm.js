@@ -1,41 +1,36 @@
 import React, { useState, useEffect } from "react";
-import { createVehicle, updateVehicle } from "../../services/api";
-import { Car, Save, AlertCircle, X } from "lucide-react";
+import { Car, Save, X } from "lucide-react";
 
-const AddVehicleForm = ({ onVehicleSaved, onCancel, editingVehicle }) => {
-  // Initialize state. If editingVehicle exists, use its data.
+const AddVehicleForm = ({ onSubmit, onCancel, editingVehicle }) => {
+  // Initialize state
   const [data, setData] = useState({
     make: "",
     model: "",
     year: "",
   });
 
+  // Load data if we are editing an existing vehicle
   useEffect(() => {
     if (editingVehicle) {
       setData({
-        make: editingVehicle.make,
-        model: editingVehicle.model,
-        year: editingVehicle.year,
+        make: editingVehicle.make || "",
+        model: editingVehicle.model || "",
+        year: editingVehicle.year || "",
       });
     }
   }, [editingVehicle]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    try {
-      if (editingVehicle) {
-        // UPDATE Mode
-        await updateVehicle(editingVehicle.id, data);
-        alert("Vehicle Updated!");
-      } else {
-        // CREATE Mode
-        await createVehicle(data);
-        alert("Vehicle Added!");
-      }
-      onVehicleSaved(); // Refresh parent list
-    } catch (err) {
-      alert("Operation failed. Check if vehicle already exists.");
-    }
+
+    // Prepare payload: Convert empty year string to null for the API
+    const payload = {
+      ...data,
+      year: data.year ? data.year : null,
+    };
+
+    // Send data to Parent Page (VehiclePage.js)
+    onSubmit(payload);
   };
 
   return (
@@ -56,7 +51,7 @@ const AddVehicleForm = ({ onVehicleSaved, onCancel, editingVehicle }) => {
           <button
             type="button"
             onClick={onCancel}
-            className="text-gray-400 hover:text-red-600"
+            className="text-gray-400 hover:text-red-600 transition-colors"
           >
             <X size={24} />
           </button>
@@ -64,42 +59,55 @@ const AddVehicleForm = ({ onVehicleSaved, onCancel, editingVehicle }) => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        {/* Make */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Make
+            Make <span className="text-red-500">*</span>
           </label>
           <input
             value={data.make}
             onChange={(e) => setData({ ...data, make: e.target.value })}
-            className="w-full border p-2 rounded"
+            className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
             required
+            placeholder="e.g. Toyota"
           />
         </div>
+
+        {/* Model */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Model
+            Model <span className="text-red-500">*</span>
           </label>
           <input
             value={data.model}
             onChange={(e) => setData({ ...data, model: e.target.value })}
-            className="w-full border p-2 rounded"
+            className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
             required
+            placeholder="e.g. Prius"
           />
         </div>
+
+        {/* Year - OPTIONAL */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Year
+            Year <span className="text-gray-400 text-xs">(Optional)</span>
           </label>
           <input
             type="number"
             value={data.year}
             onChange={(e) => setData({ ...data, year: e.target.value })}
-            className="w-full border p-2 rounded"
-            required
+            className="w-full border border-gray-300 p-2 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
+            placeholder="e.g. 2018"
           />
         </div>
-        <button className="bg-red-600 text-white py-2 px-4 rounded font-bold hover:bg-red-700 transition flex items-center justify-center gap-2 h-10">
-          <Save size={18} /> {editingVehicle ? "Update" : "Add"}
+
+        {/* Submit Button */}
+        <button
+          type="submit"
+          className="bg-red-600 text-white py-2 px-4 rounded font-bold hover:bg-red-700 transition flex items-center justify-center gap-2 h-10 shadow-sm"
+        >
+          <Save size={18} />
+          {editingVehicle ? "Update" : "Add"}
         </button>
       </div>
     </form>

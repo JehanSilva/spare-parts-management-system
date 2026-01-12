@@ -17,14 +17,13 @@ class Supplier(models.Model):
 class Vehicle(models.Model):
     make = models.CharField(max_length=50)
     model = models.CharField(max_length=50)
-    year = models.PositiveIntegerField()
+    year = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         unique_together = ('make', 'model', 'year')
 
     def __str__(self):
-        return f"{self.year} {self.make} {self.model}"
-
+        return f"{self.make} {self.model} ({self.year or 'Unknown'})"
 class Part(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
@@ -40,7 +39,7 @@ class Part(models.Model):
     stock_qty = models.PositiveIntegerField(default=0)
     min_stock_level = models.PositiveIntegerField(default=5)
     rack_location = models.CharField(max_length=50)
-    image_url = models.URLField(max_length=500, blank=True, null=True)
+    image = models.ImageField(upload_to='parts/', blank=True, null=True)
     
     compatible_vehicles = models.ManyToManyField(Vehicle, related_name='compatible_parts', blank=True)
 

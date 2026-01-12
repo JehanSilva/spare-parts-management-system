@@ -7,6 +7,7 @@ import {
 } from "../services/api";
 import AddSupplierForm from "../components/forms/AddSupplierForm";
 import AlertComponent from "../components/AlertComponent";
+import ConfirmModal from "../components/ConfirmModal"; // <--- 1. Import Modal
 import {
   Truck,
   Plus,
@@ -31,6 +32,9 @@ const SupplierPage = () => {
 
   // Alert State
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
+
+  // Delete Modal State
+  const [deleteId, setDeleteId] = useState(null); // <--- 2. New State for Delete ID
 
   // --- 1. Load Data ---
   const loadSuppliers = async () => {
@@ -57,23 +61,32 @@ const SupplierPage = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleDelete = async (id) => {
-    setAlertInfo({ type: "", message: "" });
-    if (window.confirm("Are you sure you want to delete this supplier?")) {
-      try {
-        await deleteSupplier(id);
-        setAlertInfo({
-          type: "success",
-          message: "Supplier deleted successfully!",
-        });
-        loadSuppliers();
-      } catch (error) {
-        setAlertInfo({
-          type: "error",
-          message:
-            "Failed to delete. Ensure they are not linked to existing parts.",
-        });
-      }
+  // Step 3a: Open the Modal
+  const confirmDelete = (id) => {
+    setDeleteId(id); // Set the ID to trigger the modal opening
+  };
+
+  // Step 3b: Actually Execute Delete (Called by Modal)
+  const executeDelete = async () => {
+    if (!deleteId) return;
+
+    // Close modal immediately or wait for success (your choice)
+    const idToDelete = deleteId;
+    setDeleteId(null); // Close modal
+
+    try {
+      await deleteSupplier(idToDelete);
+      setAlertInfo({
+        type: "success",
+        message: "Supplier deleted successfully!",
+      });
+      loadSuppliers();
+    } catch (error) {
+      setAlertInfo({
+        type: "error",
+        message:
+          "Failed to delete. Ensure they are not linked to existing parts.",
+      });
     }
   };
 
@@ -82,10 +95,8 @@ const SupplierPage = () => {
     setEditingSupplier(null);
   };
 
-  // --- 3. SUBMIT HANDLER (This logic was missing/not connected) ---
   const handleFormSubmit = async (formData) => {
-    setAlertInfo({ type: "", message: "" }); // Clear alerts
-
+    setAlertInfo({ type: "", message: "" });
     try {
       if (editingSupplier) {
         await updateSupplier(editingSupplier.id, formData);
@@ -100,13 +111,10 @@ const SupplierPage = () => {
           message: "Supplier Added Successfully!",
         });
       }
-
       loadSuppliers();
       handleFormClose();
     } catch (error) {
       console.error("Save Error:", error);
-
-      // Error Parsing Logic
       if (error.response && error.response.data) {
         const errorData = error.response.data;
         const errorMessages = Object.values(errorData).flat().join("\n");
@@ -133,7 +141,16 @@ const SupplierPage = () => {
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
-      {/* Alert Component */}
+      {/* --- CONFIRMATION MODAL --- */}
+      <ConfirmModal
+        isOpen={!!deleteId} // Open if deleteId is not null
+        title="Delete Supplier?"
+        message="Are you sure you want to remove this supplier? This action cannot be undone."
+        onConfirm={executeDelete}
+        onCancel={() => setDeleteId(null)}
+      />
+
+      {/* --- TOAST ALERT --- */}
       {alertInfo.message && (
         <AlertComponent
           type={alertInfo.type}
@@ -142,14 +159,14 @@ const SupplierPage = () => {
         />
       )}
 
-      {/* Header */}
+      {/* --- HEADER --- */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-red-900 flex items-center gap-2">
             <Truck className="w-6 h-6 md:w-8 md:h-8" /> Supplier Directory
           </h1>
           <p className="text-gray-600 text-sm mt-1">
-            Manage your parts distributors.
+            Manage your parts distributors and contacts.
           </p>
         </div>
 
@@ -172,7 +189,6 @@ const SupplierPage = () => {
       {/* --- FORM SECTION --- */}
       {showForm && (
         <div className="mb-8 animate-fade-in-down">
-          {/* THIS IS THE FIX: Passing the 'onSubmit' prop */}
           <AddSupplierForm
             onSubmit={handleFormSubmit}
             onCancel={handleFormClose}
@@ -181,7 +197,7 @@ const SupplierPage = () => {
         </div>
       )}
 
-      {/* Search Bar */}
+      {/* --- SEARCH BAR --- */}
       <div className="relative mb-6 w-full md:max-w-md">
         <Search className="absolute left-3 top-3 text-gray-400" size={20} />
         <input
@@ -193,7 +209,7 @@ const SupplierPage = () => {
         />
       </div>
 
-      {/* Grid */}
+      {/* --- SUPPLIERS GRID --- */}
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-500">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-700 mb-2"></div>
@@ -204,7 +220,9 @@ const SupplierPage = () => {
           {filteredSuppliers.length === 0 ? (
             <div className="col-span-full text-center py-10 bg-white rounded-lg shadow border border-gray-100">
               <Truck size={48} className="mx-auto text-gray-300 mb-2" />
-              <p className="text-gray-500 italic">No suppliers found.</p>
+              <p className="text-gray-500 italic">
+                No suppliers found matching "{searchTerm}".
+              </p>
             </div>
           ) : (
             filteredSuppliers.map((supplier) => (
@@ -215,43 +233,73 @@ const SupplierPage = () => {
                 <div className="absolute top-4 right-4 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={() => handleEdit(supplier)}
-                    className="p-2 bg-gray-100 text-blue-600 rounded-full hover:bg-blue-100"
+                    className="p-2 bg-gray-100 text-blue-600 rounded-full hover:bg-blue-100 hover:text-blue-800 transition"
+                    title="Edit Details"
                   >
                     <Edit2 size={16} />
                   </button>
+                  {/* UPDATE: Change handleDelete to confirmDelete */}
                   <button
-                    onClick={() => handleDelete(supplier.id)}
-                    className="p-2 bg-gray-100 text-red-500 rounded-full hover:bg-red-100"
+                    onClick={() => confirmDelete(supplier.id)}
+                    className="p-2 bg-gray-100 text-red-500 rounded-full hover:bg-red-100 hover:text-red-700 transition"
+                    title="Delete Supplier"
                   >
                     <Trash2 size={16} />
                   </button>
                 </div>
-                <h2 className="text-lg md:text-xl font-bold text-gray-800 mb-1 pr-14 truncate">
+
+                {/* Name & Contact */}
+                <h2 className="text-lg md:text-xl font-bold text-gray-800 mb-1 pr-20 md:pr-14 truncate">
                   {supplier.name}
                 </h2>
+
                 <div className="w-full h-px bg-gray-100 my-3"></div>
+
                 <div className="space-y-3 text-sm text-gray-600">
                   <div className="flex items-center gap-3">
                     <User className="text-red-500 shrink-0" size={18} />
                     <span className="font-medium text-gray-900 truncate">
-                      {supplier.contact_person || "N/A"}
+                      {supplier.contact_person || (
+                        <span className="text-gray-400 italic">
+                          No Contact Person
+                        </span>
+                      )}
                     </span>
                   </div>
+
                   <div className="flex items-center gap-3">
                     <Phone className="text-red-500 shrink-0" size={18} />
-                    <span>{supplier.phone || "N/A"}</span>
+                    <a
+                      href={`tel:${supplier.phone}`}
+                      className="hover:text-gray-900 transition"
+                    >
+                      {supplier.phone || (
+                        <span className="text-gray-400 italic">No Phone</span>
+                      )}
+                    </a>
                   </div>
+
                   <div className="flex items-center gap-3">
                     <Mail className="text-red-500 shrink-0" size={18} />
-                    <span className="truncate">{supplier.email || "N/A"}</span>
+                    <a
+                      href={`mailto:${supplier.email}`}
+                      className="hover:text-red-700 hover:underline truncate block"
+                    >
+                      {supplier.email || (
+                        <span className="text-gray-400 italic">No Email</span>
+                      )}
+                    </a>
                   </div>
+
                   <div className="flex items-start gap-3">
                     <MapPin
                       className="text-red-500 shrink-0 mt-0.5"
                       size={18}
                     />
-                    <span className="line-clamp-2">
-                      {supplier.address || "N/A"}
+                    <span className="leading-snug line-clamp-2">
+                      {supplier.address || (
+                        <span className="text-gray-400 italic">No Address</span>
+                      )}
                     </span>
                   </div>
                 </div>

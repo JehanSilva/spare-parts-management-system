@@ -8,25 +8,36 @@ import {
   MapPin,
   Edit2,
   Trash2,
+  Car,
 } from "lucide-react";
-import { fetchParts, deletePart } from "../services/api";
+import {
+  fetchParts,
+  deletePart,
+  createPart,
+  updatePart,
+} from "../services/api";
 import AddPartForm from "../components/forms/AddPartForm";
+import AlertComponent from "../components/AlertComponent";
+import ConfirmModal from "../components/ConfirmModal";
 
 const InventoryPage = () => {
   const [parts, setParts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [editingPart, setEditingPart] = useState(null); // Track which part is being edited
+  const [editingPart, setEditingPart] = useState(null);
 
   // Filter States
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("");
 
-  // Load initial data
+  // Alert & Modal States
+  const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
+  const [deleteId, setDeleteId] = useState(null);
+
+  // --- 1. Load Data ---
   const loadData = async () => {
     setLoading(true);
     try {
-      // Note: If you want to keep filters active after refresh, pass them here
       const partsData = await fetchParts({
         search: searchTerm,
         brand: selectedBrand,
@@ -34,6 +45,10 @@ const InventoryPage = () => {
       setParts(partsData);
     } catch (error) {
       console.error("Failed to load parts", error);
+      setAlertInfo({
+        type: "error",
+        message: "Failed to load inventory data.",
+      });
     }
     setLoading(false);
   };
@@ -42,7 +57,7 @@ const InventoryPage = () => {
     loadData();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // --- ACTIONS ---
+  // --- 2. Action Handlers ---
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -50,33 +65,115 @@ const InventoryPage = () => {
   };
 
   const handleEdit = (part) => {
-    setEditingPart(part); // Populate form with this part
-    setShowForm(true); // Open the form
+    setEditingPart(part);
+    setShowForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleDelete = async (id) => {
-    if (
-      window.confirm(
-        "Are you sure you want to delete this part? This cannot be undone."
-      )
-    ) {
-      try {
-        await deletePart(id);
-        loadData(); // Refresh list
-      } catch (error) {
-        alert(error); // Show backend error message
-      }
+  // Step A: Trigger Delete Modal
+  const confirmDelete = (id) => {
+    setDeleteId(id);
+  };
+
+  // Step B: Execute Delete
+  const executeDelete = async () => {
+    if (!deleteId) return;
+
+    try {
+      await deletePart(deleteId);
+      setAlertInfo({ type: "success", message: "Part deleted successfully!" });
+      loadData();
+    } catch (error) {
+      setAlertInfo({
+        type: "error",
+        message: "Failed to delete part. It may be linked to past sales.",
+      });
+    } finally {
+      setDeleteId(null);
     }
   };
 
   const handleFormClose = () => {
     setShowForm(false);
-    setEditingPart(null); // Reset edit state
+    setEditingPart(null);
+  };
+
+  // --- 3. Form Submit Handler (Handles Images via FormData) ---
+  const handleFormSubmit = async (formData) => {
+    setAlertInfo({ type: "", message: "" });
+
+    try {
+      if (editingPart) {
+        // Update Part
+        await updatePart(editingPart.id, formData);
+        setAlertInfo({
+          type: "success",
+          message: "Part Updated Successfully!",
+        });
+      } else {
+        // Create Part
+        const response = await createPart(formData);
+
+        // Handle "Smart Update" messages
+        if (response.message) {
+          setAlertInfo({ type: "success", message: response.message });
+        } else {
+          setAlertInfo({
+            type: "success",
+            message: "New Part Added Successfully!",
+          });
+        }
+      }
+
+      loadData();
+      handleFormClose();
+    } catch (error) {
+      console.error("Save Error:", error);
+
+      if (error.response && error.response.data) {
+        const errorData = error.response.data;
+        const errorMessages = Object.values(errorData).flat().join("\n");
+        setAlertInfo({
+          type: "error",
+          message: `Failed to save:\n${errorMessages}`,
+        });
+      } else {
+        setAlertInfo({
+          type: "error",
+          message: "Network error. Please check connection.",
+        });
+      }
+    }
+  };
+
+  // Helper to render vehicle name safely from Object or ID
+  const renderVehicleName = (v) => {
+    if (typeof v === "object" && v !== null) {
+      return `${v.make} ${v.model}`;
+    }
+    return "Vehicle";
   };
 
   return (
-    <div className="p-4 md:p-8 min-h-screen bg-gray-50">
+    <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
+      {/* --- CONFIRM MODAL --- */}
+      <ConfirmModal
+        isOpen={!!deleteId}
+        title="Delete Part?"
+        message="Are you sure you want to delete this part? This cannot be undone."
+        onConfirm={executeDelete}
+        onCancel={() => setDeleteId(null)}
+      />
+
+      {/* --- TOAST ALERT --- */}
+      {alertInfo.message && (
+        <AlertComponent
+          type={alertInfo.type}
+          message={alertInfo.message}
+          onClose={() => setAlertInfo({ type: "", message: "" })}
+        />
+      )}
+
       {/* Header Section */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
         <div>
@@ -113,10 +210,7 @@ const InventoryPage = () => {
       {/* Add/Edit Part Form */}
       {showForm && (
         <AddPartForm
-          onPartAdded={() => {
-            loadData();
-            handleFormClose();
-          }}
+          onSubmit={handleFormSubmit}
           onCancel={handleFormClose}
           editingPart={editingPart}
         />
@@ -154,8 +248,9 @@ const InventoryPage = () => {
 
       {/* Parts Grid */}
       {loading ? (
-        <div className="text-center py-20 text-gray-500">
-          Loading Inventory...
+        <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-700 mb-2"></div>
+          <p>Loading Inventory...</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -172,7 +267,7 @@ const InventoryPage = () => {
                 key={part.id}
                 className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-xl transition-shadow duration-300 overflow-hidden flex flex-col relative group"
               >
-                {/* --- Action Buttons (Edit/Delete) --- */}
+                {/* --- Action Buttons --- */}
                 <div className="absolute top-2 right-2 flex gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={() => handleEdit(part)}
@@ -182,7 +277,7 @@ const InventoryPage = () => {
                     <Edit2 size={16} />
                   </button>
                   <button
-                    onClick={() => handleDelete(part.id)}
+                    onClick={() => confirmDelete(part.id)}
                     className="bg-white p-1.5 rounded-full shadow text-red-500 hover:text-red-700 hover:bg-red-50"
                     title="Delete Part"
                   >
@@ -191,19 +286,19 @@ const InventoryPage = () => {
                 </div>
 
                 {/* Image Section */}
-                <div className="h-48 bg-gray-100 relative">
-                  {part.image_url ? (
+                <div className="h-48 bg-gray-100 relative group-hover:opacity-95 transition-opacity">
+                  {part.image ? (
                     <img
-                      src={part.image_url}
+                      src={part.image}
                       alt={part.name}
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400">
+                    <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-50">
                       <Package size={48} opacity={0.2} />
                     </div>
                   )}
-                  {/* Stock Badge (Bottom Left of Image) */}
+                  {/* Stock Badge */}
                   <div className="absolute bottom-2 left-2">
                     {part.stock_qty <= part.min_stock_level ? (
                       <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow">
@@ -232,6 +327,37 @@ const InventoryPage = () => {
                     <span className="bg-red-50 text-red-800 text-xs font-semibold px-2 py-0.5 rounded border border-red-100">
                       {part.brand || "No Brand"}
                     </span>
+                  </div>
+
+                  {/* Compatible Vehicles */}
+                  <div className="mb-4">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold mb-1 flex items-center gap-1">
+                      <Car size={10} /> Fits:
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {part.compatible_vehicles &&
+                      part.compatible_vehicles.length > 0 ? (
+                        part.compatible_vehicles.slice(0, 3).map((v, i) => (
+                          <span
+                            key={i}
+                            className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200"
+                          >
+                            {renderVehicleName(v)}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[10px] text-gray-400 italic">
+                          Universal / Unspecified
+                        </span>
+                      )}
+                      {/* +More Tag */}
+                      {part.compatible_vehicles &&
+                        part.compatible_vehicles.length > 3 && (
+                          <span className="text-[10px] text-gray-400 pl-1 pt-0.5">
+                            +{part.compatible_vehicles.length - 3} more
+                          </span>
+                        )}
+                    </div>
                   </div>
 
                   <div className="space-y-1 mb-4 flex-1">

@@ -12,8 +12,9 @@ import VehiclePage from "./pages/VehiclePage";
 import SupplierPage from "./pages/SupplierPage";
 import POSPage from "./pages/POSPage";
 import SalesHistoryPage from "./pages/SalesHistoryPage";
-import LoginPage from "./pages/LoginPage"; // Import Login
-import PrivateRoute from "./components/PrivateRoute"; // Import PrivateRoute
+import LoginPage from "./pages/LoginPage";
+import PrivateRoute from "./components/PrivateRoute";
+import useAutoLogout from "./hooks/useAutoLogout";
 
 // Helper component to hide Navbar on Login page
 const Layout = ({ children }) => {
@@ -31,6 +32,7 @@ const Layout = ({ children }) => {
 };
 
 function App() {
+  useAutoLogout();
   return (
     <Router>
       <Layout>

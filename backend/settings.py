@@ -159,15 +159,15 @@ STORAGES = {
     "default": {
         "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
-    # 2. Static Files (CSS/JS) -> WhiteNoise (Standard)
-    # This acts like standard Django storage but with compression support
+    # 2. Static Files -> Basic WhiteNoise (No Compression/Hashing)
+    # This is the safest mode that avoids the FileNotFoundError
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.StaticFilesStorage",
     },
 }
 
 # --- COMPATIBILITY FIX ---
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
+STATICFILES_STORAGE = 'whitenoise.storage.StaticFilesStorage'
 
 # --- ADD THIS NEW SETTING ---
 # This prevents the build from failing if a specific unique file is missing

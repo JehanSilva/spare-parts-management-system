@@ -154,20 +154,21 @@ CLOUDINARY_STORAGE = {
 }
 
 # --- DJANGO 6.0 STORAGES CONFIGURATION ---
-# This replaces the old DEFAULT_FILE_STORAGE and STATICFILES_STORAGE settings
-# --- DJANGO 6.0 STORAGES CONFIGURATION ---
 STORAGES = {
     # 1. Media (Images/Uploads) -> Cloudinary
     "default": {
         "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
-    # 2. Static Files (CSS/JS) -> WhiteNoise
-    # CHANGE THIS LINE: Remove "Manifest" from the class name
+    # 2. Static Files (CSS/JS) -> WhiteNoise (Standard)
+    # This acts like standard Django storage but with compression support
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
 # --- COMPATIBILITY FIX ---
-# Update this too so it matches
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
+
+# --- ADD THIS NEW SETTING ---
+# This prevents the build from failing if a specific unique file is missing
+WHITENOISE_MANIFEST_STRICT = False

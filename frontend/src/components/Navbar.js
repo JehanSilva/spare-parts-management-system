@@ -1,10 +1,18 @@
 import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { ShoppingCart, Package, Truck, Car, Home, Menu, X } from "lucide-react";
+import {
+  ShoppingCart,
+  Package,
+  Truck,
+  Car,
+  Home,
+  Menu,
+  X,
+  FileText,
+  LogOut,
+} from "lucide-react";
 import logoImg from "../assets/logo.png";
-import { FileText } from "lucide-react";
 import { logoutUser } from "../services/api";
-import { LogOut } from "lucide-react";
 
 const Navbar = () => {
   const location = useLocation();
@@ -19,7 +27,7 @@ const Navbar = () => {
       : "text-red-100 hover:bg-red-700 hover:text-white";
 
   return (
-    <nav className="bg-red-800 shadow-lg border-b-4 border-red-900">
+    <nav className="bg-red-800 shadow-lg border-b-4 border-red-900 sticky top-0 z-50">
       <div className="container mx-auto px-4">
         <div className="flex justify-between items-center h-16">
           {/* Logo Section */}
@@ -35,8 +43,8 @@ const Navbar = () => {
             <span className="tracking-wide">NSS Auto Spares</span>
           </Link>
 
-          {/* Desktop Menu (Hidden on Mobile) */}
-          <div className="hidden md:flex space-x-2">
+          {/* --- DESKTOP MENU --- */}
+          <div className="hidden md:flex space-x-2 items-center">
             <Link
               to="/"
               className={`px-3 py-2 rounded flex items-center gap-2 ${isActive(
@@ -85,15 +93,17 @@ const Navbar = () => {
             >
               <FileText size={18} /> Sales History
             </Link>
+
+            {/* Desktop Logout Button */}
             <button
               onClick={logoutUser}
-              className="ml-4 flex items-center gap-2 bg-red-800 hover:bg-red-900 px-4 py-2 rounded transition"
+              className="ml-4 flex items-center gap-2 bg-red-900 hover:bg-red-950 text-white px-4 py-2 rounded transition shadow border border-red-700"
             >
               <LogOut size={18} /> Logout
             </button>
           </div>
 
-          {/* Mobile Hamburger Button */}
+          {/* --- MOBILE HAMBURGER BUTTON --- */}
           <div className="md:hidden flex items-center">
             <button
               onClick={toggleMenu}
@@ -105,9 +115,9 @@ const Navbar = () => {
         </div>
       </div>
 
-      {/* Mobile Menu Dropdown */}
+      {/* --- MOBILE MENU DROPDOWN --- */}
       {isOpen && (
-        <div className="md:hidden bg-red-800 border-t border-red-700 pb-4">
+        <div className="md:hidden bg-red-800 border-t border-red-700 pb-4 shadow-xl">
           <Link
             to="/"
             onClick={toggleMenu}
@@ -153,6 +163,30 @@ const Navbar = () => {
               <Car size={20} /> Vehicles
             </div>
           </Link>
+          <Link
+            to="/sales-history"
+            onClick={toggleMenu}
+            className={`block px-4 py-3 ${isActive("/sales-history")}`}
+          >
+            <div className="flex items-center gap-3">
+              <FileText size={20} /> Sales History
+            </div>
+          </Link>
+
+          {/* Mobile Logout Button (Added Here) */}
+          <div className="border-t border-red-700 mt-2 pt-2">
+            <button
+              onClick={() => {
+                toggleMenu();
+                logoutUser();
+              }}
+              className="block w-full text-left px-4 py-3 text-red-100 hover:bg-red-900 hover:text-white transition"
+            >
+              <div className="flex items-center gap-3">
+                <LogOut size={20} /> Logout
+              </div>
+            </button>
+          </div>
         </div>
       )}
     </nav>

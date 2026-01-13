@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { loginUser } from "../services/api";
 import { KeyRound, User } from "lucide-react";
@@ -19,6 +19,15 @@ const LoginPage = () => {
       setError("Invalid username or password");
     }
   };
+
+  useEffect(() => {
+    // Check if user was auto-logged out
+    const isExpired = localStorage.getItem("session_expired");
+    if (isExpired) {
+      alert("Your session expired due to inactivity. Please log in again."); // Or use your Toast Alert
+      localStorage.removeItem("session_expired"); // Clear flag so it doesn't show again
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-red-900 flex items-center justify-center p-4">

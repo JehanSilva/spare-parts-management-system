@@ -155,15 +155,19 @@ CLOUDINARY_STORAGE = {
 
 # --- DJANGO 6.0 STORAGES CONFIGURATION ---
 # This replaces the old DEFAULT_FILE_STORAGE and STATICFILES_STORAGE settings
+# --- DJANGO 6.0 STORAGES CONFIGURATION ---
 STORAGES = {
     # 1. Media (Images/Uploads) -> Cloudinary
     "default": {
         "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
     # 2. Static Files (CSS/JS) -> WhiteNoise
+    # CHANGE THIS LINE: Remove "Manifest" from the class name
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+# --- COMPATIBILITY FIX ---
+# Update this too so it matches
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'

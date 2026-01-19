@@ -39,9 +39,14 @@ const HomePage = () => {
   // --- Load Data on Mount ---
   useEffect(() => {
     const loadStats = async () => {
-      const data = await fetchDashboardStats();
-      if (data) setStats(data);
-      setLoading(false);
+      try {
+        const data = await fetchDashboardStats();
+        if (data) setStats(data);
+      } catch (error) {
+        console.error("Failed to load dashboard stats", error);
+      } finally {
+        setLoading(false);
+      }
     };
     loadStats();
   }, []);
@@ -159,7 +164,7 @@ const HomePage = () => {
             </div>
           </div>
 
-          {/* --- SECTION 3: Supplier Spending Table --- */}
+          {/* --- SECTION 3: Supplier Spending --- */}
           <div className="bg-white rounded-lg shadow-md overflow-hidden border border-gray-200">
             <div className="p-6 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
               <Truck className="text-red-700" size={20} />
@@ -168,52 +173,85 @@ const HomePage = () => {
               </h2>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
-                  <tr>
-                    <th className="p-4">Supplier Name</th>
-                    <th className="p-4 text-center">Current Stock</th>
-                    <th className="p-4 text-right">Investment Value</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {stats.supplier_stats.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan="3"
-                        className="p-8 text-center text-gray-400 flex flex-col items-center justify-center gap-2"
-                      >
-                        <AlertCircle size={24} />
-                        <span>
-                          No supplier data available yet. Add stock to see
-                          stats.
-                        </span>
-                      </td>
-                    </tr>
-                  ) : (
-                    stats.supplier_stats.map((sup, index) => (
-                      <tr
-                        key={index}
-                        className="hover:bg-red-50 transition duration-150"
-                      >
-                        <td className="p-4 font-medium text-gray-800">
-                          {sup.supplier__name}
-                        </td>
-                        <td className="p-4 text-center">
-                          <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-bold border border-blue-200">
-                            {sup.part_count} units
+            {/* Empty State Check */}
+            {stats.supplier_stats.length === 0 ? (
+              <div className="p-8 text-center text-gray-400 flex flex-col items-center justify-center gap-2">
+                <AlertCircle size={24} />
+                <span>
+                  No supplier data available yet. Add stock to see stats.
+                </span>
+              </div>
+            ) : (
+              <>
+                {/* MOBILE VIEW (Card List) 
+                   Visible only on small screens (< md)
+                */}
+                <div className="block md:hidden">
+                  <div className="divide-y divide-gray-100">
+                    {stats.supplier_stats.map((sup, index) => (
+                      <div key={index} className="p-4 flex flex-col gap-3">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="text-xs text-gray-400 uppercase font-bold mb-1">
+                              Supplier
+                            </p>
+                            <p className="font-bold text-gray-800 text-lg leading-tight">
+                              {sup.supplier__name}
+                            </p>
+                          </div>
+                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-bold border border-blue-200 whitespace-nowrap">
+                            {sup.part_count} Units
                           </span>
-                        </td>
-                        <td className="p-4 text-right font-bold text-gray-700">
-                          {formatLKR(sup.total_spent)}
-                        </td>
+                        </div>
+                        <div className="flex justify-between items-end border-t border-dashed border-gray-200 pt-2">
+                          <p className="text-xs text-gray-500">
+                            Total Investment:
+                          </p>
+                          <p className="text-xl font-bold text-red-700">
+                            {formatLKR(sup.total_spent)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* DESKTOP VIEW (Table) 
+                   Visible only on medium screens and up (>= md)
+                */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-100 text-gray-600 text-xs uppercase font-semibold">
+                      <tr>
+                        <th className="p-4">Supplier Name</th>
+                        <th className="p-4 text-center">Current Stock</th>
+                        <th className="p-4 text-right">Investment Value</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {stats.supplier_stats.map((sup, index) => (
+                        <tr
+                          key={index}
+                          className="hover:bg-red-50 transition duration-150"
+                        >
+                          <td className="p-4 font-medium text-gray-800">
+                            {sup.supplier__name}
+                          </td>
+                          <td className="p-4 text-center">
+                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs font-bold border border-blue-200">
+                              {sup.part_count} units
+                            </span>
+                          </td>
+                          <td className="p-4 text-right font-bold text-gray-700">
+                            {formatLKR(sup.total_spent)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

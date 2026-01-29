@@ -164,7 +164,12 @@ CSRF_TRUSTED_ORIGINS = [
     'https://spares.nssauto.lk',
 ]
 
-# Only add Railway URL if the variable actually exists
-railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
-if railway_url:
-    CSRF_TRUSTED_ORIGINS.append(railway_url)
+# FIX: Railway gives the domain WITHOUT https://, so we must add it manually
+railway_domain = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
+
+if railway_domain:
+    # Ensure it starts with https://
+    if not railway_domain.startswith('http'):
+        CSRF_TRUSTED_ORIGINS.append(f'https://{railway_domain}')
+    else:
+        CSRF_TRUSTED_ORIGINS.append(railway_domain)

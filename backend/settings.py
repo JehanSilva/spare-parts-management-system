@@ -159,10 +159,12 @@ CLOUDINARY_STORAGE = {
 
 
 # --- TRUSTED ORIGINS (Railway/Vercel) ---
-# Add your production URLs here
 CSRF_TRUSTED_ORIGINS = [
     'https://spare-parts-management-system.vercel.app', 
     'https://spares.nssauto.lk',
-    # Dynamically add the Railway URL if set
-    os.environ.get('RAILWAY_PUBLIC_DOMAIN', ''), 
 ]
+
+# Only add Railway URL if the variable actually exists
+railway_url = os.environ.get('RAILWAY_PUBLIC_DOMAIN')
+if railway_url:
+    CSRF_TRUSTED_ORIGINS.append(railway_url)

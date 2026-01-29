@@ -172,3 +172,9 @@ STATICFILES_STORAGE = 'whitenoise.storage.StaticFilesStorage'
 # --- ADD THIS NEW SETTING ---
 # This prevents the build from failing if a specific unique file is missing
 WHITENOISE_MANIFEST_STRICT = False
+
+# Add your Railway URL here (start with https://)
+CSRF_TRUSTED_ORIGINS = [
+    'https://spare-parts-management-system.vercel.app/', 
+    'https://spares.nssauto.lk'
+]

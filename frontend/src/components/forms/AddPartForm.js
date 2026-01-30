@@ -1,11 +1,23 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { fetchSuppliers, fetchVehicles } from "../../services/api";
-import { X, Plus, Car, Save, Upload, Image as ImageIcon } from "lucide-react";
+import {
+  X,
+  Car,
+  Save,
+  Upload,
+  Image as ImageIcon,
+  Search,
+  Check,
+} from "lucide-react";
 
 const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const [suppliers, setSuppliers] = useState([]);
   const [vehicles, setVehicles] = useState([]);
-  const [selectedVehicleId, setSelectedVehicleId] = useState("");
+
+  // --- CHANGED: Search State ---
+  const [vehicleSearch, setVehicleSearch] = useState("");
+  const [showVehicleDropdown, setShowVehicleDropdown] = useState(false);
+  const dropdownRef = useRef(null); // To close dropdown when clicking outside
 
   // Image Preview State
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -22,7 +34,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     min_stock_level: 5,
     rack_location: "",
     description: "",
-    image: null, // <--- Now stores the actual File object
+    image: null,
     compatible_vehicles: [],
   });
 
@@ -37,6 +49,17 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     loadDropdowns();
   }, []);
 
+  // Close dropdown if clicked outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowVehicleDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   // Populate Edit Data
   useEffect(() => {
     if (editingPart) {
@@ -45,12 +68,11 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
         supplier: editingPart.supplier || "",
         compatible_vehicles: editingPart.compatible_vehicles
           ? editingPart.compatible_vehicles.map((v) =>
-              typeof v === "object" ? v.id : v
+              typeof v === "object" ? v.id : v,
             )
           : [],
-        image: null, // Reset file input (we don't re-upload unless user picks new one)
+        image: null,
       });
-      // Set existing image as preview
       setPreviewUrl(editingPart.image || null);
     }
   }, [editingPart]);
@@ -59,33 +81,31 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // --- NEW: Handle Image Selection ---
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
       setFormData({ ...formData, image: file });
-      // Create local preview URL
       setPreviewUrl(URL.createObjectURL(file));
     }
   };
 
-  const addVehicleToPart = () => {
-    if (!selectedVehicleId) return;
-    const vehId = parseInt(selectedVehicleId);
-    if (!formData.compatible_vehicles.includes(vehId)) {
+  // --- CHANGED: Add Vehicle Logic ---
+  const addVehicleToPart = (vehicleId) => {
+    if (!formData.compatible_vehicles.includes(vehicleId)) {
       setFormData({
         ...formData,
-        compatible_vehicles: [...formData.compatible_vehicles, vehId],
+        compatible_vehicles: [...formData.compatible_vehicles, vehicleId],
       });
     }
-    setSelectedVehicleId("");
+    setVehicleSearch(""); // Clear search after adding
+    setShowVehicleDropdown(false); // Close dropdown
   };
 
   const removeVehicle = (id) => {
     setFormData({
       ...formData,
       compatible_vehicles: formData.compatible_vehicles.filter(
-        (vId) => vId !== id
+        (vId) => vId !== id,
       ),
     });
   };
@@ -95,22 +115,22 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     return v ? `${v.year} ${v.make} ${v.model}` : "Unknown";
   };
 
-  // --- NEW: Submit Logic with FormData ---
+  // --- CHANGED: Filter Vehicles based on search ---
+  const filteredVehicles = vehicles.filter((v) => {
+    const fullName = `${v.year} ${v.make} ${v.model}`.toLowerCase();
+    return fullName.includes(vehicleSearch.toLowerCase());
+  });
+
   const handleSubmit = (e) => {
     e.preventDefault();
-
-    // 1. Create FormData object
     const dataToSend = new FormData();
 
-    // 2. Append simple fields
     Object.keys(formData).forEach((key) => {
       if (key === "compatible_vehicles") {
-        // Append each ID separately for arrays
         formData[key].forEach((id) =>
-          dataToSend.append("compatible_vehicles", id)
+          dataToSend.append("compatible_vehicles", id),
         );
       } else if (key === "image") {
-        // Only append image if a new file is selected
         if (formData.image instanceof File) {
           dataToSend.append("image", formData.image);
         }
@@ -119,7 +139,6 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
       }
     });
 
-    // 3. Pass FormData up
     onSubmit(dataToSend);
   };
 
@@ -143,7 +162,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
         onSubmit={handleSubmit}
         className="grid grid-cols-1 md:grid-cols-2 gap-6"
       >
-        {/* --- IMAGE UPLOAD SECTION (NEW) --- */}
+        {/* Image Upload */}
         <div className="md:col-span-2 flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-300 rounded-lg hover:bg-gray-50 transition">
           <input
             type="file"
@@ -276,48 +295,88 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
           </div>
         </div>
 
-        {/* Compatible Vehicles */}
+        {/* --- CHANGED: SEARCHABLE COMPATIBLE VEHICLES --- */}
         <div className="md:col-span-2 bg-gray-50 p-4 rounded border">
           <h3 className="font-bold text-gray-700 mb-2 flex items-center gap-2">
             <Car size={20} /> Fits Vehicles
           </h3>
-          <div className="flex gap-2 mb-3">
-            <select
-              value={selectedVehicleId}
-              onChange={(e) => setSelectedVehicleId(e.target.value)}
-              className="flex-1 p-2 border rounded"
-            >
-              <option value="">-- Select Model --</option>
-              {vehicles.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.year} {v.make} {v.model}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={addVehicleToPart}
-              className="bg-blue-600 text-white px-4 rounded"
-            >
-              <Plus size={18} />
-            </button>
+
+          <div className="relative mb-3" ref={dropdownRef}>
+            <div className="flex items-center border rounded bg-white overflow-hidden focus-within:ring-2 ring-blue-500">
+              <div className="pl-3 text-gray-400">
+                <Search size={18} />
+              </div>
+              <input
+                type="text"
+                value={vehicleSearch}
+                onChange={(e) => {
+                  setVehicleSearch(e.target.value);
+                  setShowVehicleDropdown(true);
+                }}
+                onFocus={() => setShowVehicleDropdown(true)}
+                placeholder="Type to search (e.g. 'Toyota Axio', '2015')..."
+                className="flex-1 p-2 outline-none"
+              />
+            </div>
+
+            {/* Dropdown List */}
+            {showVehicleDropdown && (
+              <div className="absolute z-10 w-full bg-white border rounded mt-1 max-h-60 overflow-y-auto shadow-lg">
+                {filteredVehicles.length > 0 ? (
+                  filteredVehicles.map((v) => {
+                    const isSelected = formData.compatible_vehicles.includes(
+                      v.id,
+                    );
+                    return (
+                      <div
+                        key={v.id}
+                        onClick={() => !isSelected && addVehicleToPart(v.id)}
+                        className={`p-2 cursor-pointer flex justify-between items-center border-b last:border-b-0 hover:bg-blue-50 transition ${
+                          isSelected
+                            ? "bg-blue-100 opacity-50 cursor-default"
+                            : ""
+                        }`}
+                      >
+                        <span>
+                          {v.year} {v.make} {v.model}
+                        </span>
+                        {isSelected && (
+                          <Check size={16} className="text-blue-600" />
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="p-3 text-gray-500 text-center">
+                    No vehicles found matching "{vehicleSearch}"
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* Selected Tags */}
           <div className="flex flex-wrap gap-2">
             {formData.compatible_vehicles.map((id) => (
               <span
                 key={id}
-                className="bg-white border border-blue-200 text-blue-800 px-3 py-1 rounded-full text-sm flex items-center gap-2"
+                className="bg-white border border-blue-200 text-blue-800 px-3 py-1 rounded-full text-sm flex items-center gap-2 shadow-sm"
               >
                 {getVehicleName(id)}
                 <button
                   type="button"
                   onClick={() => removeVehicle(id)}
-                  className="text-gray-400 hover:text-red-600"
+                  className="text-gray-400 hover:text-red-600 bg-gray-100 rounded-full p-0.5 hover:bg-gray-200"
                 >
                   <X size={14} />
                 </button>
               </span>
             ))}
+            {formData.compatible_vehicles.length === 0 && (
+              <span className="text-sm text-gray-400 italic">
+                No vehicles selected yet.
+              </span>
+            )}
           </div>
         </div>
 

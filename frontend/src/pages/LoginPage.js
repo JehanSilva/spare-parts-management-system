@@ -1,31 +1,35 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { loginUser } from "../services/api";
-import { KeyRound, User } from "lucide-react";
+import { KeyRound, User, Loader2 } from "lucide-react"; // Import Loader2
 
 const LoginPage = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false); // New loading state
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
+    setLoading(true); // Disable button & show spinner
+
     try {
       await loginUser(username, password);
-      navigate("/"); // Redirect to Dashboard on success
+      navigate("/");
     } catch (err) {
       setError("Invalid username or password");
+      setLoading(false); // Re-enable button on error
     }
+    // Note: We don't set loading(false) on success because we are navigating away immediately
   };
 
   useEffect(() => {
-    // Check if user was auto-logged out
     const isExpired = localStorage.getItem("session_expired");
     if (isExpired) {
-      alert("Your session expired due to inactivity. Please log in again."); // Or use your Toast Alert
-      localStorage.removeItem("session_expired"); // Clear flag so it doesn't show again
+      alert("Your session expired due to inactivity. Please log in again.");
+      localStorage.removeItem("session_expired");
     }
   }, []);
 
@@ -57,6 +61,7 @@ const LoginPage = () => {
                 className="w-full pl-10 p-3 border border-gray-300 rounded focus:ring-2 focus:ring-red-600 outline-none"
                 placeholder="Enter username"
                 required
+                disabled={loading} // Disable input while loading
               />
             </div>
           </div>
@@ -77,12 +82,29 @@ const LoginPage = () => {
                 className="w-full pl-10 p-3 border border-gray-300 rounded focus:ring-2 focus:ring-red-600 outline-none"
                 placeholder="Enter password"
                 required
+                disabled={loading} // Disable input while loading
               />
             </div>
           </div>
 
-          <button className="w-full bg-red-700 text-white py-3 rounded font-bold hover:bg-red-800 transition shadow-lg">
-            Sign In
+          <button
+            type="submit"
+            disabled={loading}
+            className={`w-full py-3 rounded font-bold shadow-lg flex justify-center items-center gap-2 transition
+              ${
+                loading
+                  ? "bg-red-400 cursor-not-allowed"
+                  : "bg-red-700 hover:bg-red-800 text-white"
+              }`}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="animate-spin" size={20} />
+                Signing In...
+              </>
+            ) : (
+              "Sign In"
+            )}
           </button>
         </form>
       </div>

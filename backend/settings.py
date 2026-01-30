@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'inventory',
+    'django_cleanup.apps.CleanupConfig',
 ]
 
 MIDDLEWARE = [

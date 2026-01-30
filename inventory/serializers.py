@@ -1,46 +1,107 @@
 from rest_framework import serializers
 from .models import Supplier, Part, Vehicle, Sale, SaleItem
+
+# --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = '__all__'
 
+# --- 2. VEHICLE ---
 class VehicleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Vehicle
         fields = '__all__'
 
+# --- 3. PART ---
 class PartSerializer(serializers.ModelSerializer):
-    # This allows us to see the Supplier details when reading, 
-    # but use the Supplier ID when writing/creating a part.
+    # Read-only nested supplier details for display
     supplier_details = SupplierSerializer(source='supplier', read_only=True)
 
     class Meta:
         model = Part
         fields = '__all__'
 
-    # --- ADD THIS METHOD ---
     def to_representation(self, instance):
-        # Get the standard data (ids)
+        """
+        Custom representation to show full Vehicle objects in the API response
+        instead of just IDs, making it easier for the frontend to display tags.
+        """
         data = super().to_representation(instance)
-        
-        # Replace the list of IDs with the list of actual Vehicle objects
-        data['compatible_vehicles'] = VehicleSerializer(instance.compatible_vehicles.all(), many=True).data
-        
+        # Replace list of IDs with actual Vehicle objects
+        if instance.compatible_vehicles.exists():
+            data['compatible_vehicles'] = VehicleSerializer(instance.compatible_vehicles.all(), many=True).data
         return data
 
+# --- 4. SALE ITEM ---
 class SaleItemSerializer(serializers.ModelSerializer):
+    # Read-only fields to show part details on the receipt without fetching the part again
     part_name = serializers.ReadOnlyField(source='part.name')
     part_brand = serializers.ReadOnlyField(source='part.brand')
+    part_number = serializers.ReadOnlyField(source='part.part_number')
 
     class Meta:
         model = SaleItem
-        # CHANGE 'warranty' TO 'warranty_period_months'
-        fields = ['id', 'part', 'part_name', 'part_brand', 'quantity', 'unit_price', 'warranty_period_months']
+        fields = [
+            'id', 
+            'part', 
+            'part_name', 
+            'part_brand', 
+            'part_number', 
+            'quantity', 
+            'unit_price', 
+            'discount',      # <--- CRITICAL: Allows discount to be saved
+            'total_price',   # <--- Calculated field from model
+            'warranty_period_months'
+        ]
 
+# --- 5. SALE (THE HEADER) ---
 class SaleSerializer(serializers.ModelSerializer):
-    items = SaleItemSerializer(many=True, read_only=True)
+    # We allow writing items here now so we can send the whole cart in one JSON
+    items = SaleItemSerializer(many=True)
 
     class Meta:
         model = Sale
         fields = ['id', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items']
+
+    def create(self, validated_data):
+        """
+        Custom Create Logic to handle the 'Cart' structure.
+        1. Creates the Sale (Receipt Header).
+        2. Loops through items to create SaleItems.
+        3. Updates Stock Levels.
+        """
+        # Pop the items data from the main payload
+        items_data = validated_data.pop('items')
+        
+        # 1. Create the Sale instance
+        sale = Sale.objects.create(**validated_data)
+        
+        grand_total = 0
+
+        # 2. Process each item in the cart
+        for item_data in items_data:
+            part = item_data['part']
+            quantity = item_data['quantity']
+            
+            # Stock Check (Optional safety)
+            if part.stock_qty < quantity:
+                raise serializers.ValidationError(f"Not enough stock for {part.name}. Available: {part.stock_qty}")
+
+            # Deduct Stock
+            part.stock_qty -= quantity
+            part.save()
+
+            # Create the SaleItem
+            # The 'save()' method in models.py will auto-calculate 'total_price'
+            # using the 'discount' provided in item_data
+            sale_item = SaleItem.objects.create(sale=sale, **item_data)
+            
+            # Add to grand total
+            grand_total += sale_item.total_price
+
+        # 3. Update the total amount on the Sale header
+        sale.total_amount = grand_total
+        sale.save()
+
+        return sale

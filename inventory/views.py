@@ -193,7 +193,15 @@ def create_sale(request):
                     {"error": f"Not enough stock for {part.name}. Available: {part.stock_qty}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            total_amount += (item['quantity'] * item['unit_price'])
+            
+            # Fixed: Calculate total amount respecting the discount
+            # Logic: (Unit Price - Discount) * Quantity
+            unit_price = float(item['unit_price'])
+            discount = float(item.get('discount', 0))
+            quantity = int(item['quantity'])
+            
+            total_amount += (unit_price - discount) * quantity
+
         except Part.DoesNotExist:
              return Response({"error": f"Part ID {item['part_id']} not found"}, status=404)
 
@@ -218,6 +226,7 @@ def create_sale(request):
             part=part,
             quantity=item['quantity'],
             unit_price=item['unit_price'],
+            discount=item.get('discount', 0), # Fixed: Pass discount to model
             # Map 'warranty' (from Frontend) to 'warranty_period_months' (in DB)
             warranty_period_months=item.get('warranty', 0) 
         )

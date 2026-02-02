@@ -24,12 +24,12 @@ class Vehicle(models.Model):
 
     def __str__(self):
         return f"{self.make} {self.model} ({self.year or 'Unknown'})"
+
 class Part(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
     part_number = models.CharField(max_length=50, unique=True)
     
-    # NEW FIELDS ADDED HERE
     brand = models.CharField(max_length=50, blank=True, help_text="e.g., Toyota Genuine, Bosch, K&N")
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, related_name='parts')
     
@@ -53,9 +53,34 @@ class Sale(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
 
+    def __str__(self):
+        return f"Sale {str(self.id)[:8]} - {self.customer_name}"
+
 class SaleItem(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='items')
     part = models.ForeignKey(Part, on_delete=models.PROTECT)
-    quantity = models.PositiveIntegerField()
+    quantity = models.PositiveIntegerField(default=1)
+    
+    # SNAPSHOT: The standard price at the moment of sale
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    # NEW: The discount given just for this specific line item
+    discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    
+    # NEW: Calculated field: (unit_price - discount) * quantity
+    total_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
     warranty_period_months = models.PositiveIntegerField(default=0)
+
+    def save(self, *args, **kwargs):
+        # Auto-calculate total before saving
+        # Logic: (Unit Price - Discount) * Quantity
+        price = self.unit_price or 0
+        disc = self.discount or 0
+        qty = self.quantity or 1
+        
+        self.total_price = (price - disc) * qty
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.part.name} (x{self.quantity})"

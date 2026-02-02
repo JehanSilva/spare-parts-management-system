@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchSales, fetchParts } from "../services/api"; // <--- Import fetchParts
+import { fetchSales, fetchParts } from "../services/api";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import {
@@ -11,12 +11,13 @@ import {
   User,
   Car,
   Printer,
-  Hash, // <--- Import Hash icon
+  Hash,
+  Tag,
 } from "lucide-react";
 
 const SalesHistoryPage = () => {
   const [sales, setSales] = useState([]);
-  const [parts, setParts] = useState([]); // <--- New State for Parts
+  const [parts, setParts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [expandedSaleId, setExpandedSaleId] = useState(null);
@@ -37,11 +38,9 @@ const SalesHistoryPage = () => {
     }
   }, [selectedSaleForPrint, handlePrint]);
 
-  // --- NEW: Helper to enrich sale items with Part Numbers ---
+  // --- Enrich Sale Items with Part Numbers ---
   const getEnrichedSale = (sale) => {
     const enrichedItems = sale.items.map((item) => {
-      // Find the original part in our list to get the Part Number
-      // Note: Backend might send item.part or item.part_id
       const partId = item.part || item.part_id;
       const originalPart = parts.find((p) => p.id === partId);
 
@@ -57,7 +56,6 @@ const SalesHistoryPage = () => {
 
   const printReceipt = (sale, e) => {
     e.stopPropagation();
-    // Enrich the sale data before printing so Receipt.js sees the part_number
     const enriched = getEnrichedSale(sale);
     setSelectedSaleForPrint(enriched);
   };
@@ -67,7 +65,6 @@ const SalesHistoryPage = () => {
     const loadData = async () => {
       setLoading(true);
       try {
-        // Load both Sales and Parts in parallel
         const [salesData, partsData] = await Promise.all([
           fetchSales(),
           fetchParts(),
@@ -108,10 +105,11 @@ const SalesHistoryPage = () => {
     return new Intl.NumberFormat("en-LK", {
       style: "currency",
       currency: "LKR",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
     }).format(amount);
   };
 
-  // Helper to find Part Number for display in table
   const getPartNumber = (partId) => {
     const p = parts.find((part) => part.id === partId);
     return p ? p.part_number : "";
@@ -225,29 +223,60 @@ const SalesHistoryPage = () => {
                       Purchased Items
                     </h4>
                     <div className="space-y-3">
-                      {sale.items.map((item, idx) => (
-                        <div
-                          key={idx}
-                          className="flex justify-between border-b border-gray-200 pb-2 last:border-0"
-                        >
-                          <div>
-                            <p className="font-medium text-gray-700">
-                              {item.part_name || "Unknown Part"}
-                            </p>
-                            {/* Display Part Number */}
-                            <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
-                              <Hash size={10} />
-                              {getPartNumber(item.part || item.part_id)}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              {item.quantity} x {formatLKR(item.unit_price)}
-                            </p>
+                      {sale.items.map((item, idx) => {
+                        const discount = parseFloat(item.discount || 0);
+                        const originalPrice = parseFloat(item.unit_price);
+                        const finalPrice = originalPrice - discount;
+                        const lineTotal = finalPrice * item.quantity;
+
+                        return (
+                          <div
+                            key={idx}
+                            className="flex justify-between border-b border-gray-200 pb-2 last:border-0"
+                          >
+                            <div>
+                              <p className="font-medium text-gray-700">
+                                {item.part_name || "Unknown Part"}
+                              </p>
+                              <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
+                                <Hash size={10} />
+                                {getPartNumber(item.part || item.part_id)}
+                              </p>
+
+                              {/* Price Calculation Display */}
+                              <div className="text-xs text-gray-500 mt-0.5">
+                                {item.quantity} x
+                                {discount > 0 ? (
+                                  <span className="ml-1">
+                                    <span className="line-through text-gray-400 text-[10px] mr-1">
+                                      {formatLKR(originalPrice)}
+                                    </span>
+                                    <span className="text-green-600 font-bold">
+                                      {formatLKR(finalPrice)}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="ml-1">
+                                    {formatLKR(originalPrice)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="text-right">
+                              <p className="font-bold text-gray-800">
+                                {formatLKR(lineTotal)}
+                              </p>
+                              {discount > 0 && (
+                                <p className="text-[9px] text-red-500 flex items-center justify-end gap-0.5">
+                                  <Tag size={8} /> -
+                                  {formatLKR(discount * item.quantity)}
+                                </p>
+                              )}
+                            </div>
                           </div>
-                          <p className="font-bold text-gray-800">
-                            {formatLKR(item.quantity * item.unit_price)}
-                          </p>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -332,50 +361,93 @@ const SalesHistoryPage = () => {
                             <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">
                               Purchased Items
                             </h4>
-                            <table className="w-full max-w-3xl text-sm">
+                            <table className="w-full max-w-4xl text-sm">
                               <thead>
                                 <tr className="text-gray-400 border-b border-gray-200">
-                                  <th className="pb-2 text-left">
+                                  <th className="pb-2 text-left w-[35%]">
                                     Part Details
                                   </th>
-                                  <th className="pb-2 text-center">Qty</th>
-                                  <th className="pb-2 text-right">
-                                    Unit Price
+                                  <th className="pb-2 text-center w-[10%]">
+                                    Qty
                                   </th>
-                                  <th className="pb-2 text-right">Total</th>
+                                  <th className="pb-2 text-right w-[15%]">
+                                    Original Price
+                                  </th>
+                                  <th className="pb-2 text-right w-[15%] text-red-500">
+                                    Discount
+                                  </th>
+                                  <th className="pb-2 text-right w-[15%]">
+                                    Final Price
+                                  </th>
+                                  <th className="pb-2 text-right w-[10%]">
+                                    Total
+                                  </th>
                                 </tr>
                               </thead>
                               <tbody>
-                                {sale.items.map((item, idx) => (
-                                  <tr
-                                    key={idx}
-                                    className="border-b border-gray-100 last:border-0"
-                                  >
-                                    <td className="py-2 text-gray-700 font-medium">
-                                      <div>
-                                        {item.part_name || "Unknown Part"}
-                                      </div>
-                                      {/* Display Part Number */}
-                                      <div className="text-[10px] text-gray-400 font-mono flex items-center gap-1">
-                                        <Hash size={10} />
-                                        {getPartNumber(
-                                          item.part || item.part_id,
+                                {sale.items.map((item, idx) => {
+                                  const discount = parseFloat(
+                                    item.discount || 0,
+                                  );
+                                  const originalPrice = parseFloat(
+                                    item.unit_price,
+                                  );
+                                  const finalPrice = originalPrice - discount;
+                                  const lineTotal = finalPrice * item.quantity;
+
+                                  return (
+                                    <tr
+                                      key={idx}
+                                      className="border-b border-gray-100 last:border-0"
+                                    >
+                                      <td className="py-2 text-gray-700 font-medium">
+                                        <div>
+                                          {item.part_name || "Unknown Part"}
+                                        </div>
+                                        <div className="text-[10px] text-gray-400 font-mono flex items-center gap-1">
+                                          <Hash size={10} />
+                                          {getPartNumber(
+                                            item.part || item.part_id,
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="py-2 text-center">
+                                        {item.quantity}
+                                      </td>
+
+                                      {/* --- FIXED: Original Price Column --- */}
+                                      <td className="py-2 text-right text-gray-500">
+                                        {discount > 0 ? (
+                                          <span className="line-through text-xs mr-2">
+                                            {formatLKR(originalPrice)}
+                                          </span>
+                                        ) : (
+                                          /* Show normal price if no discount */
+                                          <span>
+                                            {formatLKR(originalPrice)}
+                                          </span>
                                         )}
-                                      </div>
-                                    </td>
-                                    <td className="py-2 text-center">
-                                      {item.quantity}
-                                    </td>
-                                    <td className="py-2 text-right">
-                                      {formatLKR(item.unit_price)}
-                                    </td>
-                                    <td className="py-2 text-right font-bold text-gray-800">
-                                      {formatLKR(
-                                        item.quantity * item.unit_price,
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
+                                      </td>
+
+                                      {/* Discount */}
+                                      <td className="py-2 text-right text-red-500 font-medium">
+                                        {discount > 0
+                                          ? `-${formatLKR(discount)}`
+                                          : "-"}
+                                      </td>
+
+                                      {/* Final Price */}
+                                      <td className="py-2 text-right font-medium text-green-700">
+                                        {formatLKR(finalPrice)}
+                                      </td>
+
+                                      {/* Line Total */}
+                                      <td className="py-2 text-right font-bold text-gray-800">
+                                        {formatLKR(lineTotal)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>

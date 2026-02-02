@@ -1,0 +1,30 @@
+# --- GLOBAL / OS FILES ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# --- ROOT FILES ---
+.env
+db.sqlite3
+venv/
+
+# --- FRONTEND (React) ---
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# --- BACKEND (Django/Python) ---
+# Note: venv and db.sqlite3 are in root, handled above
+backend/__pycache__/
+backend/*.pyc
+backend/staticfiles/
+backend/media/
+backend/.env
+
+# --- INVENTORY ---
+inventory/__pycache__/
+inventory/migrations/

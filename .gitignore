@@ -19,12 +19,12 @@ frontend/.env.local
 
 # --- BACKEND (Django/Python) ---
 # Note: venv and db.sqlite3 are in root, handled above
-backend/__pycache__/
+**/__pycache__/
 backend/*.pyc
 backend/staticfiles/
 backend/media/
 backend/.env
 
 # --- INVENTORY ---
-inventory/__pycache__/
+
 inventory/migrations/

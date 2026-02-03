@@ -30,3 +30,4 @@ backend/.env
 inventory/migrations/
 clear_vehicles.py
 seed_vehicles.py
+seed_cworks_stock.py

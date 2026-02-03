@@ -253,9 +253,9 @@ const InventoryPage = () => {
           <p>Loading Inventory...</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-6">
           {parts.length === 0 ? (
-            <div className="col-span-full text-center py-10 bg-white rounded shadow">
+            <div className="col-span-full text-center py-10 bg-white rounded shadow-sm">
               <Package size={48} className="mx-auto text-gray-300 mb-4" />
               <p className="text-gray-500 text-lg">
                 No parts found matching your criteria.
@@ -265,28 +265,28 @@ const InventoryPage = () => {
             parts.map((part) => (
               <div
                 key={part.id}
-                className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-xl transition-shadow duration-300 overflow-hidden flex flex-col relative group"
+                className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col relative group"
               >
-                {/* --- Action Buttons --- */}
-                <div className="absolute top-2 right-2 flex gap-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                {/* --- Action Buttons (Visible on Hover for Desktop, Always for Mobile if needed, but keeping clean for now) --- */}
+                <div className="absolute top-2 right-2 flex gap-1 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={() => handleEdit(part)}
-                    className="bg-white p-1.5 rounded-full shadow text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                    className="bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 border border-gray-100"
                     title="Edit Part"
                   >
-                    <Edit2 size={16} />
+                    <Edit2 size={14} />
                   </button>
                   <button
                     onClick={() => confirmDelete(part.id)}
-                    className="bg-white p-1.5 rounded-full shadow text-red-500 hover:text-red-700 hover:bg-red-50"
+                    className="bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-sm text-red-500 hover:text-red-700 hover:bg-red-50 border border-gray-100"
                     title="Delete Part"
                   >
-                    <Trash2 size={16} />
+                    <Trash2 size={14} />
                   </button>
                 </div>
 
                 {/* Image Section */}
-                <div className="h-48 bg-gray-100 relative group-hover:opacity-95 transition-opacity">
+                <div className="h-32 md:h-48 bg-gray-100 relative group-hover:opacity-95 transition-opacity">
                   {part.image ? (
                     <img
                       src={part.image}
@@ -295,42 +295,38 @@ const InventoryPage = () => {
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-50">
-                      <Package size={48} opacity={0.2} />
+                      <Package size={32} opacity={0.2} className="md:w-12 md:h-12" />
                     </div>
                   )}
                   {/* Stock Badge */}
-                  <div className="absolute bottom-2 left-2">
+                  <div className="absolute bottom-1 left-1 md:bottom-2 md:left-2">
                     {part.stock_qty <= part.min_stock_level ? (
-                      <span className="bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full flex items-center gap-1 shadow">
-                        <AlertTriangle size={12} /> Low Stock
+                      <span className="bg-red-500 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
+                        <AlertTriangle size={10} className="md:w-3 md:h-3" /> Low
                       </span>
-                    ) : (
-                      <span className="bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full shadow">
-                        In Stock
-                      </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
 
                 {/* Content Section */}
-                <div className="p-5 flex-1 flex flex-col">
-                  <div className="mb-2">
-                    <h2 className="text-lg font-bold text-gray-800 leading-tight">
+                <div className="p-3 md:p-5 flex-1 flex flex-col">
+                  <div className="mb-1 md:mb-2">
+                    <h2 className="text-sm md:text-lg font-bold text-gray-800 leading-snug line-clamp-2 md:line-clamp-none">
                       {part.name}
                     </h2>
-                    <p className="text-xs text-gray-400 font-mono mt-1">
+                    <p className="text-[10px] md:text-xs text-gray-400 font-mono mt-0.5 truncate">
                       {part.part_number}
                     </p>
                   </div>
 
-                  <div className="flex gap-2 mb-3">
-                    <span className="bg-red-50 text-red-800 text-xs font-semibold px-2 py-0.5 rounded border border-red-100">
+                  <div className="flex gap-2 mb-2">
+                    <span className="bg-red-50 text-red-800 text-[10px] md:text-xs font-semibold px-1.5 py-0.5 rounded border border-red-100 truncate max-w-full">
                       {part.brand || "No Brand"}
                     </span>
                   </div>
 
-                  {/* Compatible Vehicles */}
-                  <div className="mb-4">
+                  {/* Compatible Vehicles (Hidden on very small screens if needed, or compacted) */}
+                  <div className="mb-2 hidden md:block">
                     <p className="text-[10px] text-gray-400 uppercase font-bold mb-1 flex items-center gap-1">
                       <Car size={10} /> Fits:
                     </p>
@@ -340,52 +336,39 @@ const InventoryPage = () => {
                         part.compatible_vehicles.slice(0, 3).map((v, i) => (
                           <span
                             key={i}
-                            className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200"
+                            className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200 truncate max-w-[100px]"
                           >
                             {renderVehicleName(v)}
                           </span>
                         ))
                       ) : (
                         <span className="text-[10px] text-gray-400 italic">
-                          Universal / Unspecified
+                          Universal
                         </span>
                       )}
-                      {/* +More Tag */}
-                      {part.compatible_vehicles &&
-                        part.compatible_vehicles.length > 3 && (
-                          <span className="text-[10px] text-gray-400 pl-1 pt-0.5">
-                            +{part.compatible_vehicles.length - 3} more
-                          </span>
-                        )}
                     </div>
                   </div>
 
-                  <div className="space-y-1 mb-4 flex-1">
-                    <p className="text-xs text-gray-500 flex items-center gap-1">
-                      <MapPin size={12} /> {part.rack_location}
-                    </p>
-                    <p
-                      className="text-xs text-gray-500 truncate"
-                      title={part.supplier_details?.name}
-                    >
-                      Sup: {part.supplier_details?.name || "Unknown"}
+                  <div className="space-y-0.5 md:space-y-1 mb-2 md:mb-4 flex-1">
+                     <p className="text-[10px] md:text-xs text-gray-500 flex items-center gap-1 truncate">
+                      <MapPin size={10} className="md:w-3 md:h-3" /> {part.rack_location}
                     </p>
                   </div>
 
                   {/* Price Footer */}
-                  <div className="flex justify-between items-end border-t border-gray-100 pt-3 mt-auto">
+                  <div className="flex justify-between items-end border-t border-gray-100 pt-2 mt-auto">
                     <div>
-                      <p className="text-xs text-gray-400">
-                        Buying: LKR {part.buy_price}
+                      <p className="text-[10px] md:text-xs text-gray-400 hidden md:block">
+                        Selling Price
                       </p>
-                      <p className="text-xl font-bold text-red-700">
+                      <p className="text-sm md:text-xl font-bold text-red-700">
                         LKR {part.sell_price}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-gray-400 mb-1">Qty</p>
+                      <p className="text-[10px] md:text-xs text-gray-400 mb-0.5">Qty</p>
                       <span
-                        className={`font-bold text-lg ${
+                        className={`font-bold text-sm md:text-lg ${
                           part.stock_qty <= part.min_stock_level
                             ? "text-red-600"
                             : "text-gray-800"

@@ -240,7 +240,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                    onChange={handleChange}
                    required
                    placeholder="e.g. BP-12345-X"
-                   className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all font-mono text-sm"
+                   className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all font-mono text-base"
                  />
                </div>
              </div>
@@ -355,7 +355,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                     }}
                     onFocus={() => setShowVehicleDropdown(true)}
                     placeholder="Search Vehicle (e.g. 'Toyota Axio')..."
-                    className="flex-1 p-2.5 outline-none text-sm"
+                    className="flex-1 p-2.5 outline-none text-base"
                   />
                 </div>
 

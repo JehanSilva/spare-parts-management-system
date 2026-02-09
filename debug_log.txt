@@ -1,0 +1,2 @@
+Status Code: 200
+Response Data: [{'id': '8dacc0ec-1b24-49c5-a4d2-e80bc00695f1', 'part_number': 'TP-123', 'image': None, 'compatible_vehicles': [{'id': 1, 'make': 'Toyota', 'model': 'Corolla', 'year': 2020}], 'name': 'Test Part'}]

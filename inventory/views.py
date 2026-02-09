@@ -1,9 +1,10 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Sum, F
 from .models import Part, Supplier, Sale, SaleItem
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer
 from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
 from .serializers import VehicleSerializer # <--- Make sure this is imported too!
 from django.shortcuts import get_object_or_404 # Ensure this is imported        
@@ -109,6 +110,27 @@ def get_parts(request):
 
     # 5. Serialize and return
     serializer = PartSerializer(parts, many=True)
+    return Response(serializer.data)
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_parts_minimal(request):
+    """
+    List parts with minimal details (Image, Part Number, Compatible Vehicles)
+    Optional: Search by part number or vehicle
+    """
+    search_query = request.query_params.get('search', '')
+    
+    parts = Part.objects.all().order_by('-id')
+
+    if search_query:
+        parts = parts.filter(
+            Q(part_number__icontains=search_query) |
+            Q(compatible_vehicles__make__icontains=search_query) |
+            Q(compatible_vehicles__model__icontains=search_query)
+        ).distinct()
+
+    serializer = PartMinimalSerializer(parts, many=True)
     return Response(serializer.data)
 
 @api_view(['POST'])

@@ -1,0 +1,4 @@
+﻿Found 1 test(s).
+System check identified no issues (0 silenced).
+Status Code: 401
+Response Data: {'detail': ErrorDetail(string='Authentication credentials were not provided.', code='not_authenticated')}

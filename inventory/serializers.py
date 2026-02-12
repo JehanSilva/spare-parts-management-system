@@ -31,20 +31,7 @@ class PartMinimalSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Part
-        fields = ['id', 'part_number', 'image', 'compatible_vehicles', 'name'] # Added name as well for context, though user asked for image, part_number, compatible_vehicles. It's usually good to have name/ID. checking requirements again: "images name and the part numbers and the compatible vehicles". 
-        # I'll stick to what was asked but keep ID for referencing if needed by frontend, strictly speaking "images name and the part numbers and the compatible vehicles".
-        # Let's add 'name' as it's almost always needed for display even if not explicitly asked, or I can stick strictly to the prompt.
-        # The prompt says: "only the images name and the part numbers and the compatible vehicles"
-        # I will include 'id' as it is best practice, and 'name' is likely useful.
-        
-    def to_representation(self, instance):
-        """
-        Custom representation to show full Vehicle objects
-        """
-        data = super().to_representation(instance)
-        if instance.compatible_vehicles.exists():
-            data['compatible_vehicles'] = VehicleSerializer(instance.compatible_vehicles.all(), many=True).data
-        return data
+        fields = ['id', 'part_number', 'image', 'compatible_vehicles', 'name', 'stock_qty']
 
     def to_representation(self, instance):
         """

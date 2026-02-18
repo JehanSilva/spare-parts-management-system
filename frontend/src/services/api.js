@@ -13,6 +13,18 @@ API.interceptors.request.use((req) => {
   return req;
 });
 
+// --- INTERCEPTOR: Handle 401 Unauthorized (Auto Logout) ---
+API.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response && error.response.status === 401) {
+      // Token expired or invalid
+      logoutUser();
+    }
+    return Promise.reject(error);
+  }
+);
+
 // --- AUTH SERVICES ---
 export const loginUser = async (username, password) => {
   try {

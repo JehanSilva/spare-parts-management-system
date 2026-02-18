@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Car, Save, X } from "lucide-react";
+import { Car, Save, X, Loader } from "lucide-react";
 
-const AddVehicleForm = ({ onSubmit, onCancel, editingVehicle }) => {
+const AddVehicleForm = ({ onSubmit, onCancel, editingVehicle, isSaving }) => {
   // Initialize state
   const [data, setData] = useState({
     make: "",
@@ -104,10 +104,24 @@ const AddVehicleForm = ({ onSubmit, onCancel, editingVehicle }) => {
         {/* Submit Button */}
         <button
           type="submit"
-          className="bg-red-600 text-white py-2 px-4 rounded font-bold hover:bg-red-700 transition flex items-center justify-center gap-2 h-10 shadow-sm"
+          disabled={isSaving}
+          className={`py-2 px-4 rounded font-bold transition flex items-center justify-center gap-2 h-10 shadow-sm ${
+            isSaving
+              ? "bg-red-400 text-white cursor-not-allowed"
+              : "bg-red-600 text-white hover:bg-red-700"
+          }`}
         >
-          <Save size={18} />
-          {editingVehicle ? "Update" : "Add"}
+          {isSaving ? (
+            <>
+              <Loader size={18} className="animate-spin" />
+              Saving...
+            </>
+          ) : (
+            <>
+              <Save size={18} />
+              {editingVehicle ? "Update" : "Add"}
+            </>
+          )}
         </button>
       </div>
     </form>

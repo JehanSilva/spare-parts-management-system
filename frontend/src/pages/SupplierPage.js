@@ -24,6 +24,7 @@ import {
 const SupplierPage = () => {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saveLoading, setSaveLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
   // UI States
@@ -96,6 +97,7 @@ const SupplierPage = () => {
   };
 
   const handleFormSubmit = async (formData) => {
+    setSaveLoading(true);
     setAlertInfo({ type: "", message: "" });
     try {
       if (editingSupplier) {
@@ -128,6 +130,8 @@ const SupplierPage = () => {
           message: "Network error. Please check your connection.",
         });
       }
+    } finally {
+      setSaveLoading(false);
     }
   };
 
@@ -193,6 +197,7 @@ const SupplierPage = () => {
             onSubmit={handleFormSubmit}
             onCancel={handleFormClose}
             editingSupplier={editingSupplier}
+            isSaving={saveLoading}
           />
         </div>
       )}

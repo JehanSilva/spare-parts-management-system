@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Save, X, Truck, User, Phone, Mail, MapPin } from "lucide-react";
+import { Save, X, Truck, User, Phone, Mail, MapPin, Loader } from "lucide-react";
 
-const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier }) => {
+const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
   const [formData, setFormData] = useState({
     name: "",
     contact_person: "",
@@ -162,10 +162,24 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier }) => {
           </button>
           <button
             type="submit"
-            className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-bold flex items-center gap-2"
+            disabled={isSaving}
+            className={`px-6 py-2 text-white rounded-lg transition font-bold flex items-center gap-2 ${
+              isSaving
+                ? "bg-red-400 cursor-not-allowed"
+                : "bg-red-600 hover:bg-red-700"
+            }`}
           >
-            <Save size={18} />
-            {editingSupplier ? "Update Supplier" : "Save Supplier"}
+            {isSaving ? (
+              <>
+                <Loader size={18} className="animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save size={18} />
+                {editingSupplier ? "Update Supplier" : "Save Supplier"}
+              </>
+            )}
           </button>
         </div>
       </form>

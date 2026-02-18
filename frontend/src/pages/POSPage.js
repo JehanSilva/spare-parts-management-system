@@ -26,6 +26,7 @@ const POSPage = () => {
   const [cart, setCart] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [mobileView, setMobileView] = useState("products");
+  const [visibleCount, setVisibleCount] = useState(20);
 
   // Form States
   const [customerName, setCustomerName] = useState("");
@@ -58,6 +59,11 @@ const POSPage = () => {
     loadParts();
   }, []);
 
+  // Reset visible count when search term changes
+  useEffect(() => {
+    setVisibleCount(20);
+  }, [searchTerm]);
+
   // 2. Filter Parts
   const filteredParts = parts.filter(
     (part) =>
@@ -88,8 +94,8 @@ const POSPage = () => {
         setAlertInfo({ type: "error", message: "Item is Out of Stock!" });
         return;
       }
-      // IMPORTANT: Initialize discountPercent to 0
-      setCart([...cart, { ...part, quantity: 1, discountPercent: 0 }]);
+      // IMPORTANT: Initialize discountAmount to 0
+      setCart([...cart, { ...part, quantity: 1, discountAmount: 0 }]);
     }
   };
 
@@ -118,17 +124,26 @@ const POSPage = () => {
     );
   };
 
-  // 5.5 Update Discount Percentage
-  const updateDiscount = (id, percent) => {
-    let validPercent = parseFloat(percent);
-    if (isNaN(validPercent)) validPercent = 0;
-    if (validPercent < 0) validPercent = 0;
-    if (validPercent > 100) validPercent = 100;
+  // 5.5 Update Discount Amount
+  const updateDiscountAmount = (id, amount) => {
+    let validAmount = parseFloat(amount);
+    if (isNaN(validAmount)) validAmount = 0;
+    if (validAmount < 0) validAmount = 0;
 
+    // Optional: You might want to cap the discount at the sell price
+    // But for now, let's just update it.
+    
     setCart(
-      cart.map((item) =>
-        item.id === id ? { ...item, discountPercent: validPercent } : item,
-      ),
+      cart.map((item) => {
+        if (item.id === id) {
+          // Ensure discount doesn't exceed price
+          const maxDiscount = parseFloat(item.sell_price);
+          if (validAmount > maxDiscount) validAmount = maxDiscount;
+          
+          return { ...item, discountAmount: validAmount };
+        }
+        return item;
+      })
     );
   };
 
@@ -148,8 +163,8 @@ const POSPage = () => {
   // 6. Calculate Totals (Visual Only)
   const totalAmount = cart.reduce((sum, item) => {
     const originalPrice = parseFloat(item.sell_price);
-    const discountAmount = originalPrice * (item.discountPercent / 100);
-    const finalPrice = originalPrice - discountAmount;
+    const discountVal = parseFloat(item.discountAmount) || 0;
+    const finalPrice = originalPrice - discountVal;
     return sum + finalPrice * item.quantity;
   }, 0);
 
@@ -177,18 +192,15 @@ const POSPage = () => {
       vehicle_number: vehicleNumber,
       items: cart.map((item) => {
         const originalPrice = parseFloat(item.sell_price);
-        const percent = parseFloat(item.discountPercent) || 0;
-
-        // Convert % to Cash Amount
-        const discountCashValue = originalPrice * (percent / 100);
+        const discountAmount = parseFloat(item.discountAmount) || 0;
 
         return {
           part_id: item.id,
           quantity: parseInt(item.quantity),
           unit_price: originalPrice,
 
-          // SEND CASH VALUE (Backend needs this field enabled in serializers.py)
-          discount: discountCashValue,
+          // SEND CASH VALUE directly
+          discount: discountAmount,
 
           warranty: item.warranty || 0,
         };
@@ -277,6 +289,8 @@ const POSPage = () => {
   }
 
   // --- MAIN LAYOUT ---
+  const visibleParts = filteredParts.slice(0, visibleCount);
+
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
       {alertInfo.message && (
@@ -316,7 +330,7 @@ const POSPage = () => {
 
         <div className="flex-1 overflow-y-auto p-3 pb-24 md:pb-4">
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {filteredParts.map((part) => (
+            {visibleParts.map((part) => (
               <div
                 key={part.id}
                 onClick={() => addToCart(part)}
@@ -365,6 +379,18 @@ const POSPage = () => {
               </div>
             ))}
           </div>
+          
+          {/* Load More Button */}
+          {visibleCount < filteredParts.length && (
+            <div className="mt-4 flex justify-center pb-4">
+              <button
+                onClick={() => setVisibleCount((prev) => prev + 20)}
+                className="bg-white border border-gray-300 text-gray-700 font-bold py-2 px-6 rounded-lg hover:bg-gray-50 active:scale-95 transition shadow-sm"
+              >
+                Load More
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -412,7 +438,7 @@ const POSPage = () => {
           ) : (
             cart.map((item) => {
               const original = parseFloat(item.sell_price);
-              const discountVal = original * (item.discountPercent / 100);
+              const discountVal = parseFloat(item.discountAmount) || 0;
               const final = original - discountVal;
 
               return (
@@ -457,29 +483,28 @@ const POSPage = () => {
                       </button>
                     </div>
 
-                    {/* Discount UI Enhanced */}
-                    <div className={`flex items-center border rounded-lg h-9 px-2 gap-1 transition-all ${item.discountPercent > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                        <Tag size={12} className={item.discountPercent > 0 ? 'text-amber-500' : 'text-gray-400'} />
+                    {/* Discount UI Enhanced (Amount) */}
+                    <div className={`flex items-center border rounded-lg h-9 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                        <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
                         <input
                           type="number"
                           min="0"
-                          max="100"
+                          // max={item.sell_price} // Optional
                           placeholder="0"
-                          value={item.discountPercent === 0 ? '' : item.discountPercent}
-                          onChange={(e) => updateDiscount(item.id, e.target.value)}
-                          className="w-10 text-center bg-transparent outline-none text-sm font-semibold text-gray-700 placeholder-gray-300"
+                          value={item.discountAmount === 0 ? '' : item.discountAmount}
+                          onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
+                          className="w-16 text-center bg-transparent outline-none text-sm font-semibold text-gray-700 placeholder-gray-300"
                         />
-                        <span className="text-[10px] text-gray-400 font-bold">%</span>
                     </div>
 
                     {/* Price Display */}
                     <div className="text-right flex-1">
-                      {item.discountPercent > 0 && (
+                      {item.discountAmount > 0 && (
                         <p className="text-[10px] text-gray-400 line-through">
                           {original.toLocaleString()}
                         </p>
                       )}
-                      <p className={`font-bold ${item.discountPercent > 0 ? "text-amber-600" : "text-gray-800"}`}>
+                      <p className={`font-bold ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
                         {final.toLocaleString()}
                       </p>
                     </div>

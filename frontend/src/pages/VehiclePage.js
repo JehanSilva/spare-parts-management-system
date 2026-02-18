@@ -13,6 +13,7 @@ import { Car, Search, Plus, Edit2, Trash2, XCircle } from "lucide-react";
 const VehiclePage = () => {
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [saveLoading, setSaveLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
   // UI States
@@ -82,6 +83,7 @@ const VehiclePage = () => {
 
   // --- 3. SUBMIT HANDLER (Handles Add & Update API Calls) ---
   const handleFormSubmit = async (formData) => {
+    setSaveLoading(true);
     setAlertInfo({ type: "", message: "" }); // Clear previous alerts
 
     try {
@@ -100,7 +102,6 @@ const VehiclePage = () => {
           message: "Vehicle Added Successfully!",
         });
       }
-
       loadVehicles(); // Refresh List
       handleFormClose(); // Close Form
     } catch (error) {
@@ -120,6 +121,8 @@ const VehiclePage = () => {
           message: "Network error. Please check your connection.",
         });
       }
+    } finally {
+      setSaveLoading(false);
     }
   };
 
@@ -185,6 +188,7 @@ const VehiclePage = () => {
             onSubmit={handleFormSubmit} // Passes the submit logic down
             onCancel={handleFormClose}
             editingVehicle={editingVehicle}
+            isSaving={saveLoading}
           />
         </div>
       )}

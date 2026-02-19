@@ -101,8 +101,10 @@ def get_parts(request):
         parts = parts.filter(
             Q(name__icontains=search_query) | 
             Q(part_number__icontains=search_query) |
-            Q(description__icontains=search_query)
-        )
+            Q(description__icontains=search_query) |
+            Q(compatible_vehicles__make__icontains=search_query) |
+            Q(compatible_vehicles__model__icontains=search_query)
+        ).distinct()
 
     # 4. Apply Brand Filter (Exact match or partial)
     if brand_filter:

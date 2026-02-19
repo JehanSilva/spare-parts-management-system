@@ -33,6 +33,7 @@ const POSPage = () => {
   const [vehicleNumber, setVehicleNumber] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [partsLoading, setPartsLoading] = useState(true);
   const [saleSuccess, setSaleSuccess] = useState(null);
 
   // Alerts
@@ -49,11 +50,14 @@ const POSPage = () => {
   // 1. Load Parts
   useEffect(() => {
     const loadParts = async () => {
+      setPartsLoading(true);
       try {
         const data = await fetchParts();
         setParts(data);
       } catch (error) {
         setAlertInfo({ type: "error", message: "Failed to load parts data." });
+      } finally {
+        setPartsLoading(false);
       }
     };
     loadParts();
@@ -252,35 +256,61 @@ const POSPage = () => {
   // --- SUCCESS SCREEN ---
   if (saleSuccess) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-gray-50 p-4">
-        <CheckCircle className="text-green-600 w-16 h-16 md:w-20 md:h-20 mb-4" />
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-800 text-center">
-          Sale Completed!
-        </h1>
-        <p className="text-gray-600 mb-2 font-mono">
-          #{saleSuccess.id.substring(0, 8)}
-        </p>
-
-        {saleSuccess.vehicle_number && (
-          <p className="text-gray-500 mb-6 flex items-center gap-2">
-            <Car size={16} /> {saleSuccess.vehicle_number}
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm">
+        <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-200/50 p-8 md:p-10 max-w-lg w-full text-center relative overflow-hidden">
+          
+          {/* Success Icon */}
+          <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-slow ring-8 ring-green-50/50">
+             <CheckCircle className="text-green-500 w-12 h-12" strokeWidth={3} />
+          </div>
+          
+          <h1 className="text-3xl md:text-4xl font-extrabold text-gray-800 mb-2 tracking-tight">
+            Payment Successful!
+          </h1>
+          <p className="text-gray-400 mb-8 font-medium">
+            Transaction ID <span className="text-gray-600 font-mono">#{saleSuccess.id.substring(0, 8)}</span>
           </p>
-        )}
 
-        <div className="flex flex-col md:flex-row gap-4 w-full md:w-auto">
-          <button
-            onClick={() => setSaleSuccess(null)}
-            className="bg-red-600 text-white px-6 py-3 rounded-lg shadow hover:bg-red-700 font-bold w-full md:w-auto"
-          >
-            New Sale
-          </button>
-          <button
-            onClick={handlePrint}
-            className="bg-gray-800 text-white px-6 py-3 rounded-lg shadow flex items-center justify-center gap-2 hover:bg-gray-900 font-bold w-full md:w-auto"
-          >
-            <Printer size={18} /> Print Invoice
-          </button>
+          {/* Receipt Summary - Softened */}
+          <div className="bg-gray-50/80 rounded-2xl p-6 mb-8 text-left space-y-4">
+             <div className="flex justify-between items-center pb-4 border-b border-gray-100 border-dashed">
+                <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Total Paid</span>
+                <span className="text-2xl font-black text-gray-800">LKR {parseFloat(saleSuccess.total_amount).toLocaleString()}</span>
+             </div>
+             <div className="space-y-2 pt-2">
+                 <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-500">Customer</span>
+                    <span className="font-bold text-gray-700">{saleSuccess.customer_name}</span>
+                 </div>
+                 {saleSuccess.vehicle_number && (
+                    <div className="flex justify-between items-center text-sm">
+                       <span className="text-gray-500">Vehicle</span>
+                       <span className="font-bold text-gray-700 flex items-center gap-1.5"><Car size={14} className="text-gray-400"/>{saleSuccess.vehicle_number}</span>
+                    </div>
+                 )}
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-gray-500">Items</span>
+                    <span className="font-bold text-gray-700">{saleSuccess.items.length} purchased</span>
+                 </div>
+             </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button
+              onClick={handlePrint}
+              className="flex-1 bg-gray-900 text-white px-6 py-4 rounded-xl shadow-lg shadow-gray-200 hover:shadow-xl hover:translate-y-[-2px] flex items-center justify-center gap-2 font-bold transition-all duration-300"
+            >
+              <Printer size={20} /> Invoice
+            </button>
+            <button
+              onClick={() => setSaleSuccess(null)}
+              className="flex-1 bg-white text-red-600 border-2 border-red-50 px-6 py-4 rounded-xl hover:bg-red-50 hover:border-red-100 font-bold flex items-center justify-center gap-2 transition-all duration-300"
+            >
+              <Plus size={20} /> New Sale
+            </button>
+          </div>
         </div>
+
         <div className="hidden">
           <Receipt ref={receiptRef} sale={saleSuccess} />
         </div>
@@ -330,7 +360,23 @@ const POSPage = () => {
 
         <div className="flex-1 overflow-y-auto p-3 pb-24 md:pb-4">
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {visibleParts.map((part) => (
+            {partsLoading ? (
+               /* Skeleton Loader Grid */
+               Array.from({ length: 12 }).map((_, i) => (
+                 <div key={i} className="bg-white border border-gray-100 rounded-xl p-0 overflow-hidden shadow-sm animate-pulse">
+                   <div className="h-28 bg-gray-200"></div>
+                   <div className="p-3 space-y-2">
+                     <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                     <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                     <div className="flex justify-between pt-2">
+                       <div className="h-3 bg-gray-200 rounded w-1/3"></div>
+                       <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+                     </div>
+                   </div>
+                 </div>
+               ))
+            ) : (
+              visibleParts.map((part) => (
               <div
                 key={part.id}
                 onClick={() => addToCart(part)}
@@ -349,7 +395,7 @@ const POSPage = () => {
                     </div>
                   )}
                   <div className="absolute bottom-1.5 left-1.5">
-                    {part.stock_qty <= part.min_stock_level ? (
+                    {part.stock_qty < 2 ? (
                       <span className="bg-red-500 text-white text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
                         <AlertTriangle size={10} /> Low ({part.stock_qty})
                       </span>
@@ -377,17 +423,25 @@ const POSPage = () => {
                   </div>
                 </div>
               </div>
-            ))}
+            ))
+            )}
           </div>
           
           {/* Load More Button */}
           {visibleCount < filteredParts.length && (
-            <div className="mt-4 flex justify-center pb-4">
+            <div className="mt-6 flex flex-col items-center justify-center pb-8">
+              <p className="text-xs text-gray-400 mb-2 font-medium">
+                Showing {visibleCount} of {filteredParts.length} parts
+              </p>
               <button
                 onClick={() => setVisibleCount((prev) => prev + 20)}
-                className="bg-white border border-gray-300 text-gray-700 font-bold py-2 px-6 rounded-lg hover:bg-gray-50 active:scale-95 transition shadow-sm"
+                className="group relative bg-white border-2 border-red-50 text-red-600 font-bold py-2.5 px-8 rounded-full hover:bg-red-50 hover:border-red-100 active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
               >
-                Load More
+                <span>Load More Parts</span>
+                <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-extrabold group-hover:bg-red-200 transition-colors">
+                  +{filteredParts.length - visibleCount}
+                </span>
+                <ChevronUp className="rotate-180 w-4 h-4" />
               </button>
             </div>
           )}

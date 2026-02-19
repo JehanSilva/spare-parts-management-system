@@ -9,6 +9,7 @@ import {
   Edit2,
   Trash2,
   Car,
+  XCircle,
 } from "lucide-react";
 import {
   fetchParts,
@@ -59,8 +60,14 @@ const InventoryPage = () => {
 
   // --- 2. Action Handlers ---
 
+  // Track applied filters to toggle between "Apply" and "Clear"
+  const [lastSearchTerm, setLastSearchTerm] = useState("");
+  const [lastSelectedBrand, setLastSelectedBrand] = useState("");
+
   const handleSearch = async (e) => {
     e.preventDefault();
+    setLastSearchTerm(searchTerm);
+    setLastSelectedBrand(selectedBrand);
     loadData();
   };
 
@@ -225,7 +232,7 @@ const InventoryPage = () => {
           <Search className="absolute left-3 top-3 text-gray-400" size={20} />
           <input
             type="text"
-            placeholder="Search by Name or Part Number..."
+            placeholder="Search by Name, Vehicle Model, Brand, or Part No..."
             className="w-full pl-10 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -233,17 +240,42 @@ const InventoryPage = () => {
         </div>
         <input
           type="text"
-          placeholder="Filter by Brand"
+          placeholder="Filter by Manufacturer Brand"
           className="p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
           value={selectedBrand}
           onChange={(e) => setSelectedBrand(e.target.value)}
         />
-        <button
-          type="submit"
-          className="bg-gray-800 text-white p-2 rounded hover:bg-gray-900 flex items-center justify-center gap-2"
-        >
-          <Filter size={18} /> Apply Filters
-        </button>
+        
+        {/* Smart Button Logic: If text matches last search, show Clear. Else show Apply. */}
+        {(searchTerm || selectedBrand) && (searchTerm === lastSearchTerm && selectedBrand === lastSelectedBrand) ? (
+             <button
+              type="button"
+              onClick={() => {
+                  setSearchTerm("");
+                  setSelectedBrand("");
+                  setLastSearchTerm("");
+                  setLastSelectedBrand("");
+                  // Trigger reload with empty params
+                  setLoading(true);
+                  fetchParts({ search: "", brand: "" }).then(data => {
+                      setParts(data);
+                      setLoading(false);
+                  }).catch(() => {
+                      setLoading(false);
+                  });
+              }}
+              className="bg-white border border-red-200 text-red-600 p-2 rounded hover:bg-red-50 flex items-center justify-center gap-2 font-bold transition-colors"
+            >
+              <XCircle size={18} /> Clear Filter
+            </button>
+        ) : (
+             <button
+              type="submit"
+              className="bg-gray-800 text-white p-2 rounded hover:bg-gray-900 flex items-center justify-center gap-2 font-bold transition-colors shadow-sm"
+            >
+              <Filter size={18} /> {searchTerm || selectedBrand ? "Apply Filters" : "Search"}
+            </button>
+        )}
       </form>
 
       {/* Parts Grid */}
@@ -286,20 +318,32 @@ const InventoryPage = () => {
                 </div>
 
                 {/* Image Section */}
-                <div className="h-32 md:h-48 bg-gray-100 relative group-hover:opacity-95 transition-opacity">
+                <div className="h-32 md:h-48 bg-gray-100 relative group-hover:opacity-95 transition-opacity overflow-hidden">
                   {part.image ? (
+                   <>
+                    {/* Skeleton Loader (Visible while image loads) */}
+                    <div className="absolute inset-0 bg-gray-200 animate-pulse z-0">
+                        <div className="h-full w-full flex items-center justify-center">
+                            <Package size={24} className="text-gray-300 opacity-20" />
+                        </div>
+                    </div>
+                    
+                    {/* Actual Image (Fades in on load) */}
                     <img
                       src={part.image}
                       alt={part.name}
-                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      onLoad={(e) => e.target.classList.remove('opacity-0')}
+                      className="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-500 z-10"
                     />
+                   </>
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gray-50">
                       <Package size={32} opacity={0.2} className="md:w-12 md:h-12" />
                     </div>
                   )}
                   {/* Stock Badge */}
-                  <div className="absolute bottom-1 left-1 md:bottom-2 md:left-2">
+                  <div className="absolute bottom-1 left-1 md:bottom-2 md:left-2 z-10">
                     {part.stock_qty <= part.min_stock_level ? (
                       <span className="bg-red-500 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
                         <AlertTriangle size={10} className="md:w-3 md:h-3" /> Low

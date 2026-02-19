@@ -22,6 +22,12 @@ class PartSerializer(serializers.ModelSerializer):
         model = Part
         fields = '__all__'
 
+    def to_representation(self, instance):
+        response = super().to_representation(instance)
+        if instance.compatible_vehicles.exists():
+            response['compatible_vehicles'] = VehicleSerializer(instance.compatible_vehicles.all(), many=True).data
+        return response
+
 class PartMinimalSerializer(serializers.ModelSerializer):
     """
     Serializer for fetching minimal part details:

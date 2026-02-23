@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { fetchSuppliers, fetchVehicles } from "../../services/api";
+import { fetchSuppliers, fetchVehicles, createVehicle } from "../../services/api";
 import {
   X,
   Car,
@@ -10,6 +10,7 @@ import {
   Check,
   Loader2,
   Package,
+  Plus,
 } from "lucide-react";
 
 const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
@@ -26,6 +27,15 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
 
   // Loading State
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCreatingVehicle, setIsCreatingVehicle] = useState(false);
+  const [vehicleSaving, setVehicleSaving] = useState(false);
+
+  // New Vehicle State
+  const [newVehicle, setNewVehicle] = useState({
+    make: "",
+    model: "",
+    year: "",
+  });
 
   // Form State
   const [formData, setFormData] = useState({
@@ -94,6 +104,20 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     }
   };
 
+  const handlePaste = (e) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          setFormData((prev) => ({ ...prev, image: file }));
+          setPreviewUrl(URL.createObjectURL(file));
+        }
+        break;
+      }
+    }
+  };
+
   // --- Add Vehicle Logic ---
   const addVehicleToPart = (vehicleId) => {
     if (!formData.compatible_vehicles.includes(vehicleId)) {
@@ -113,6 +137,34 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
         (vId) => vId !== id
       ),
     });
+  };
+
+  const handleCreateVehicle = async (e) => {
+    e.preventDefault();
+    if (!newVehicle.make || !newVehicle.model) return;
+
+    setVehicleSaving(true);
+    try {
+      const createdVehicle = await createVehicle({
+        ...newVehicle,
+        year: newVehicle.year || null,
+      });
+
+      // Update local vehicles list
+      setVehicles([...vehicles, createdVehicle]);
+
+      // Automatically add to current part
+      addVehicleToPart(createdVehicle.id);
+
+      // Reset new vehicle form
+      setNewVehicle({ make: "", model: "", year: "" });
+      setIsCreatingVehicle(false);
+    } catch (error) {
+      console.error("Failed to create vehicle", error);
+      alert("Failed to create vehicle. Please try again.");
+    } finally {
+      setVehicleSaving(false);
+    }
   };
 
   const getVehicleName = (id) => {
@@ -181,7 +233,11 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
           {/* LEFT COLUMN: Image & Critical Info */}
           <div className="lg:col-span-1 space-y-6">
             {/* Image Upload */}
-            <div className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-red-300 transition-all cursor-pointer group bg-gray-50/50">
+            <div 
+              onPaste={handlePaste}
+              tabIndex="0"
+              className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 focus:outline-none transition-all cursor-pointer group bg-gray-50/50"
+            >
               <input
                 type="file"
                 accept="image/*"
@@ -212,9 +268,12 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                   </div>
                 )}
                 {!previewUrl && (
-                    <span className="text-gray-500 font-medium group-hover:text-red-600 transition-colors flex items-center gap-2">
-                       <Upload size={18} /> Upload Image
-                    </span>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-gray-500 font-medium group-hover:text-red-600 transition-colors flex items-center gap-2">
+                         <Upload size={18} /> Upload Image
+                      </span>
+                      <span className="text-[10px] text-gray-400 font-medium">Or Paste Image (Ctrl+V)</span>
+                    </div>
                 )}
               </label>
             </div>
@@ -357,7 +416,55 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                     placeholder="Search Vehicle (e.g. 'Toyota Axio')..."
                     className="flex-1 p-2.5 outline-none text-base"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setIsCreatingVehicle(!isCreatingVehicle)}
+                    className="mr-2 p-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors flex items-center gap-1 text-sm font-bold"
+                  >
+                    <Plus size={16} /> {isCreatingVehicle ? "Cancel" : "New"}
+                  </button>
                 </div>
+
+                {/* Inline Vehicle Creation Form */}
+                {isCreatingVehicle && (
+                  <div className="mt-3 p-4 bg-white border border-blue-200 rounded-lg shadow-inner animate-fade-in-down">
+                    <h4 className="text-sm font-bold text-blue-800 mb-3 flex items-center gap-2">
+                       <Plus size={14} /> Add New Vehicle
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <input
+                        placeholder="Make (e.g. Toyota)"
+                        value={newVehicle.make}
+                        onChange={(e) => setNewVehicle({...newVehicle, make: e.target.value})}
+                        className="p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <input
+                        placeholder="Model (e.g. Prius)"
+                        value={newVehicle.model}
+                        onChange={(e) => setNewVehicle({...newVehicle, model: e.target.value})}
+                        className="p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <input
+                        type="number"
+                        placeholder="Year (Optional)"
+                        value={newVehicle.year}
+                        onChange={(e) => setNewVehicle({...newVehicle, year: e.target.value})}
+                        className="p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleCreateVehicle}
+                        disabled={vehicleSaving || !newVehicle.make || !newVehicle.model}
+                        className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-bold hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
+                      >
+                        {vehicleSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save & Add Vehicle
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Dropdown List */}
                 {showVehicleDropdown && (

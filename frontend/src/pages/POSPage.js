@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, memo } from "react";
 import { fetchParts, createSale } from "../services/api";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
@@ -20,6 +20,73 @@ import {
   XCircle,
   Tag,
 } from "lucide-react";
+
+// --- MEMOIZED PRODUCT ITEM COMPONENT ---
+const ProductItem = memo(({ part, onAddToCart }) => {
+  const [imgLoaded, setImgLoaded] = useState(false);
+
+  return (
+    <div
+      onClick={() => onAddToCart(part)}
+      className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation"
+    >
+      <div className="h-28 md:h-32 bg-gray-100 relative">
+        {part.image ? (
+          <>
+            {!imgLoaded && (
+              <div className="absolute inset-0 bg-gray-200 animate-pulse z-0">
+                <div className="h-full w-full flex items-center justify-center">
+                  <Package size={24} className="text-gray-300 opacity-20" />
+                </div>
+              </div>
+            )}
+            <img
+              src={part.image}
+              alt={part.name}
+              loading="lazy"
+              decoding="async"
+              onLoad={() => setImgLoaded(true)}
+              className={`w-full h-full object-cover transition-opacity duration-500 ${
+                imgLoaded ? "opacity-100" : "opacity-0"
+              }`}
+            />
+          </>
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
+            <Package size={32} />
+          </div>
+        )}
+        <div className="absolute bottom-1.5 left-1.5">
+          {part.stock_qty < 2 ? (
+            <span className="bg-red-500 text-white text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+              <AlertTriangle size={10} /> Low ({part.stock_qty})
+            </span>
+          ) : (
+            <span className="bg-white/90 backdrop-blur text-gray-700 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border border-gray-100">
+              {part.stock_qty} available
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="p-3 flex-1 flex flex-col justify-between">
+        <div>
+          <h3 className="font-bold text-gray-800 text-xs md:text-sm leading-snug line-clamp-2">
+            {part.name}
+          </h3>
+          <p className="text-[10px] text-gray-400 font-mono mt-0.5">
+            {part.part_number}
+          </p>
+        </div>
+        <div className="mt-2 pt-2 border-t border-gray-50 flex items-center justify-between">
+          <p className="text-xs text-gray-500">{part.brand}</p>
+          <p className="text-sm font-bold text-red-600">
+            {parseFloat(part.sell_price).toLocaleString()}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 const POSPage = () => {
   const [parts, setParts] = useState([]);
@@ -68,13 +135,15 @@ const POSPage = () => {
     setVisibleCount(20);
   }, [searchTerm]);
 
-  // 2. Filter Parts
-  const filteredParts = parts.filter(
-    (part) =>
-      part.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      part.part_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      part.brand.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
+  // 2. Filter Parts (Memoized)
+  const filteredParts = useMemo(() => {
+    return parts.filter(
+      (part) =>
+        part.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        part.part_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        part.brand.toLowerCase().includes(searchTerm.toLowerCase()),
+    );
+  }, [parts, searchTerm]);
 
   // 3. Add to Cart
   const addToCart = (part) => {
@@ -164,15 +233,19 @@ const POSPage = () => {
     setAlertInfo({ type: "success", message: "Cart cleared successfully." });
   };
 
-  // 6. Calculate Totals (Visual Only)
-  const totalAmount = cart.reduce((sum, item) => {
-    const originalPrice = parseFloat(item.sell_price);
-    const discountVal = parseFloat(item.discountAmount) || 0;
-    const finalPrice = originalPrice - discountVal;
-    return sum + finalPrice * item.quantity;
-  }, 0);
+  // 6. Calculate Totals (Visual Only) - Memoized
+  const totalAmount = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const originalPrice = parseFloat(item.sell_price);
+      const discountVal = parseFloat(item.discountAmount) || 0;
+      const finalPrice = originalPrice - discountVal;
+      return sum + finalPrice * item.quantity;
+    }, 0);
+  }, [cart]);
 
-  const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const totalItems = useMemo(() => {
+    return cart.reduce((sum, item) => sum + item.quantity, 0);
+  }, [cart]);
 
   // 7. Checkout Logic (The Critical Part)
   const handleCheckout = async () => {
@@ -253,6 +326,11 @@ const POSPage = () => {
     setLoading(false);
   };
 
+  // --- MAIN LAYOUT DATA ---
+  const visibleParts = useMemo(() => {
+    return filteredParts.slice(0, visibleCount);
+  }, [filteredParts, visibleCount]);
+
   // --- SUCCESS SCREEN ---
   if (saleSuccess) {
     return (
@@ -319,7 +397,7 @@ const POSPage = () => {
   }
 
   // --- MAIN LAYOUT ---
-  const visibleParts = filteredParts.slice(0, visibleCount);
+
 
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
@@ -377,53 +455,12 @@ const POSPage = () => {
                ))
             ) : (
               visibleParts.map((part) => (
-              <div
-                key={part.id}
-                onClick={() => addToCart(part)}
-                className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation"
-              >
-                <div className="h-28 md:h-32 bg-gray-100 relative">
-                  {part.image ? (
-                    <img
-                      src={part.image}
-                      alt={part.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
-                      <Package size={32} />
-                    </div>
-                  )}
-                  <div className="absolute bottom-1.5 left-1.5">
-                    {part.stock_qty < 2 ? (
-                      <span className="bg-red-500 text-white text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
-                        <AlertTriangle size={10} /> Low ({part.stock_qty})
-                      </span>
-                    ) : (
-                      <span className="bg-white/90 backdrop-blur text-gray-700 text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border border-gray-100">
-                        {part.stock_qty} available
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="p-3 flex-1 flex flex-col justify-between">
-                  <div>
-                    <h3 className="font-bold text-gray-800 text-xs md:text-sm leading-snug line-clamp-2">
-                      {part.name}
-                    </h3>
-                    <p className="text-[10px] text-gray-400 font-mono mt-0.5">
-                      {part.part_number}
-                    </p>
-                  </div>
-                  <div className="mt-2 pt-2 border-t border-gray-50 flex items-center justify-between">
-                    <p className="text-xs text-gray-500">{part.brand}</p>
-                    <p className="text-sm font-bold text-red-600">
-                      {parseFloat(part.sell_price).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))
+                <ProductItem 
+                  key={part.id} 
+                  part={part} 
+                  onAddToCart={addToCart} 
+                />
+              ))
             )}
           </div>
           

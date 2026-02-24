@@ -80,6 +80,10 @@ export const deleteVehicle = async (id) =>
 export const createSale = async (data) =>
   (await API.post("/sales/create/", data)).data;
 export const fetchSales = async () => (await API.get("/sales/")).data;
+export const updateSale = async (id, data) =>
+  (await API.patch(`/sales/${id}/update/`, data)).data;
+export const cancelSale = async (id) =>
+  (await API.post(`/sales/${id}/cancel/`)).data;
 export const fetchDashboardStats = async () =>
   (await API.get("/dashboard/stats/")).data;
 

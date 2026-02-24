@@ -18,6 +18,8 @@ urlpatterns = [
     # Sales
     path('sales/create/', views.create_sale, name='create_sale'),
     path('sales/', views.get_all_sales, name='get_all_sales'),
+    path('sales/<uuid:pk>/update/', views.update_sale, name='update_sale'),
+    path('sales/<uuid:pk>/cancel/', views.cancel_sale, name='cancel_sale'),
 
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),

@@ -429,7 +429,7 @@ const POSPage = () => {
             <input
               type="text"
               placeholder="Search part name, number, brand..."
-              className="w-full pl-10 p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white transition-colors focus:ring-2 focus:ring-red-500 outline-none"
+              className="w-full pl-10 p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white transition-colors focus:ring-2 focus:ring-red-500 outline-none text-base md:text-sm"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -584,7 +584,7 @@ const POSPage = () => {
                           placeholder="0"
                           value={item.discountAmount === 0 ? '' : item.discountAmount}
                           onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
-                          className="w-16 text-center bg-transparent outline-none text-sm font-semibold text-gray-700 placeholder-gray-300"
+                          className="w-16 text-center bg-transparent outline-none text-base md:text-sm font-semibold text-gray-700 placeholder-gray-300"
                         />
                     </div>
 
@@ -616,7 +616,7 @@ const POSPage = () => {
               <input
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
-                className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm transition-all"
+                className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
                 placeholder="Required"
               />
             </div>
@@ -627,7 +627,7 @@ const POSPage = () => {
               <input
                 value={vehicleNumber}
                 onChange={(e) => setVehicleNumber(e.target.value)}
-                className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm transition-all"
+                className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
                 placeholder="Optional"
               />
             </div>

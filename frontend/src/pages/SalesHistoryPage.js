@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchSales, fetchParts } from "../services/api";
+import { fetchSales, fetchParts, updateSale, cancelSale } from "../services/api";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
+import AlertComponent from "../components/AlertComponent";
+import ConfirmModal from "../components/ConfirmModal";
 import {
   Search,
   FileText,
@@ -13,7 +15,66 @@ import {
   Printer,
   Hash,
   Tag,
+  Edit2,
+  XCircle,
+  AlertCircle,
+  Trash2,
 } from "lucide-react";
+
+// --- Edit Sale Modal Component ---
+const EditSaleModal = ({ isOpen, sale, onClose, onSave }) => {
+  const [customerName, setCustomerName] = useState("");
+  const [vehicleNumber, setVehicleNumber] = useState("");
+
+  useEffect(() => {
+    if (sale) {
+      setCustomerName(sale.customer_name);
+      setVehicleNumber(sale.vehicle_number || "");
+    }
+  }, [sale]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-scale-in">
+        <div className="bg-red-700 p-4 text-white flex justify-between items-center">
+          <h3 className="font-bold text-lg">Edit Sale Details</h3>
+          <button onClick={onClose} className="hover:bg-red-600 p-1 rounded-full"><XCircle size={20}/></button>
+        </div>
+        <div className="p-6 space-y-4 text-left">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Customer Name</label>
+            <input 
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 outline-none"
+              placeholder="Enter customer name"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Vehicle Number</label>
+            <input 
+              value={vehicleNumber}
+              onChange={(e) => setVehicleNumber(e.target.value)}
+              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 outline-none font-mono"
+              placeholder="e.g. CAS-1234"
+            />
+          </div>
+          <div className="flex gap-3 pt-4">
+            <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition">Cancel</button>
+            <button 
+              onClick={() => onSave({ customer_name: customerName, vehicle_number: vehicleNumber })}
+              className="flex-1 py-2.5 bg-red-700 text-white rounded-xl font-bold hover:bg-red-800 transition shadow-lg shadow-red-200"
+            >
+              Save Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const SalesHistoryPage = () => {
   const [sales, setSales] = useState([]);
@@ -21,6 +82,13 @@ const SalesHistoryPage = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [expandedSaleId, setExpandedSaleId] = useState(null);
+
+  // --- Modal & Alert State ---
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [saleToEdit, setSaleToEdit] = useState(null);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [saleToCancel, setSaleToCancel] = useState(null);
+  const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
 
   // --- Printing State ---
   const [selectedSaleForPrint, setSelectedSaleForPrint] = useState(null);
@@ -83,6 +151,40 @@ const SalesHistoryPage = () => {
     setExpandedSaleId(expandedSaleId === id ? null : id);
   };
 
+  const handleEditClick = (sale, e) => {
+    e.stopPropagation();
+    setSaleToEdit(sale);
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateSale = async (updatedData) => {
+    try {
+      const result = await updateSale(saleToEdit.id, updatedData);
+      setSales(sales.map(s => s.id === result.id ? result : s));
+      setIsEditModalOpen(false);
+      setAlertInfo({ type: "success", message: "Sale updated successfully!" });
+    } catch (error) {
+      setAlertInfo({ type: "error", message: "Failed to update sale." });
+    }
+  };
+
+  const handleCancelClick = (sale, e) => {
+    e.stopPropagation();
+    setSaleToCancel(sale);
+    setShowCancelConfirm(true);
+  };
+
+  const handleExecuteCancel = async () => {
+    try {
+      const result = await cancelSale(saleToCancel.id);
+      setSales(sales.map(s => s.id === result.id ? result : s));
+      setShowCancelConfirm(false);
+      setAlertInfo({ type: "success", message: "Sale cancelled and stock restored!" });
+    } catch (error) {
+      setAlertInfo({ type: "error", message: "Failed to cancel sale." });
+    }
+  };
+
   const filteredSales = sales.filter(
     (sale) =>
       sale.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -117,6 +219,31 @@ const SalesHistoryPage = () => {
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50">
+      {alertInfo.message && (
+        <AlertComponent 
+          type={alertInfo.type} 
+          message={alertInfo.message} 
+          onClose={() => setAlertInfo({ type: "", message: "" })} 
+        />
+      )}
+
+      <ConfirmModal 
+        isOpen={showCancelConfirm}
+        title="Cancel Sale?"
+        message={`Are you sure you want to cancel this sale? Items will be returned to stock. This action cannot be undone.`}
+        onConfirm={handleExecuteCancel}
+        onCancel={() => setShowCancelConfirm(false)}
+        confirmText="Yes, Cancel Sale"
+        type="danger"
+      />
+
+      <EditSaleModal 
+        isOpen={isEditModalOpen}
+        sale={saleToEdit}
+        onClose={() => setIsEditModalOpen(false)}
+        onSave={handleUpdateSale}
+      />
+
       <div className="mb-6 md:mb-8">
         <h1 className="text-2xl md:text-3xl font-bold text-red-900 flex items-center gap-2">
           <FileText className="w-6 h-6 md:w-8 md:h-8" /> Sales History
@@ -184,18 +311,25 @@ const SalesHistoryPage = () => {
                       {sale.customer_name}
                     </h3>
                     <div className="flex justify-between items-center mt-2">
-                      <span className="text-sm text-gray-600 flex items-center gap-1">
-                        <Car
-                          size={14}
-                          className={
-                            sale.vehicle_number
-                              ? "text-orange-500"
-                              : "text-gray-300"
-                          }
-                        />
-                        {sale.vehicle_number || "No Vehicle"}
-                      </span>
-                      <span className="text-lg font-bold text-green-700">
+                       <div className="flex flex-col gap-1">
+                          <span className="text-sm text-gray-600 flex items-center gap-1">
+                            <Car
+                              size={14}
+                              className={
+                                sale.vehicle_number
+                                  ? "text-orange-500"
+                                  : "text-gray-300"
+                              }
+                            />
+                            {sale.vehicle_number || "No Vehicle"}
+                          </span>
+                          {sale.status === 'CANCELLED' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase w-fit">
+                              <XCircle size={10} /> Cancelled
+                            </span>
+                          )}
+                       </div>
+                      <span className={`text-lg font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : 'text-green-700'}`}>
                         {formatLKR(sale.total_amount)}
                       </span>
                     </div>
@@ -212,12 +346,35 @@ const SalesHistoryPage = () => {
                 {/* Expanded Details (Mobile) */}
                 {expandedSaleId === sale.id && (
                   <div className="bg-gray-50 p-4 border-t border-gray-100 text-sm">
-                    <button
-                      onClick={(e) => printReceipt(sale, e)}
-                      className="w-full bg-gray-800 text-white py-2 rounded mb-4 flex items-center justify-center gap-2 hover:bg-gray-900 shadow"
-                    >
-                      <Printer size={16} /> Print Receipt
-                    </button>
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <button
+                        onClick={(e) => printReceipt(sale, e)}
+                        disabled={sale.status === 'CANCELLED'}
+                        className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 ${
+                          sale.status === 'CANCELLED' 
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                          : 'bg-gray-800 text-white hover:bg-gray-900'
+                        }`}
+                        title={sale.status === 'CANCELLED' ? "Cannot print receipt for cancelled sales" : "Print Receipt"}
+                      >
+                        <Printer size={16} /> Receipt
+                      </button>
+                      <button
+                        onClick={(e) => handleEditClick(sale, e)}
+                        className="flex-1 bg-white border border-gray-300 text-gray-700 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-gray-50 transition-all active:scale-95"
+                      >
+                        <Edit2 size={16} /> Edit
+                      </button>
+                    </div>
+
+                    {sale.status !== 'CANCELLED' && (
+                      <button
+                        onClick={(e) => handleCancelClick(sale, e)}
+                        className="w-full bg-red-50 text-red-600 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 transition-all active:scale-95 mb-4 font-bold border border-red-100"
+                      >
+                        <Trash2 size={16} /> Cancel & Return Items
+                      </button>
+                    )}
 
                     <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">
                       Purchased Items
@@ -331,22 +488,52 @@ const SalesHistoryPage = () => {
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
-                      <td className="p-4 text-right font-bold text-green-700">
-                        {formatLKR(sale.total_amount)}
+                      <td className={`p-4 text-right font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : 'text-green-700'}`}>
+                        <div className="flex flex-col items-end">
+                          {formatLKR(sale.total_amount)}
+                          {sale.status === 'CANCELLED' && (
+                            <span className="text-[9px] text-red-500 font-bold uppercase tracking-tighter">Cancelled</span>
+                          )}
+                        </div>
                       </td>
-                      <td className="p-4 text-center text-gray-400 flex justify-center items-center gap-3">
-                        <button
-                          onClick={(e) => printReceipt(sale, e)}
-                          className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded transition"
-                          title="Print Receipt"
-                        >
-                          <Printer size={18} />
-                        </button>
-                        {expandedSaleId === sale.id ? (
-                          <ChevronUp size={20} />
-                        ) : (
-                          <ChevronDown size={20} />
-                        )}
+                      <td className="p-4 text-center text-gray-400">
+                        <div className="flex justify-center items-center gap-2">
+                          <button
+                            onClick={(e) => printReceipt(sale, e)}
+                            disabled={sale.status === 'CANCELLED'}
+                            className={`p-2 rounded-lg transition ${
+                              sale.status === 'CANCELLED'
+                              ? 'text-gray-200 cursor-not-allowed'
+                              : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+                            }`}
+                            title={sale.status === 'CANCELLED' ? "Cannot print receipt for cancelled sales" : "Print Receipt"}
+                          >
+                            <Printer size={16} />
+                          </button>
+                          <button
+                            onClick={(e) => handleEditClick(sale, e)}
+                            className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition"
+                            title="Edit Sale"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          {sale.status !== 'CANCELLED' ? (
+                            <button
+                              onClick={(e) => handleCancelClick(sale, e)}
+                              className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
+                              title="Cancel Sale"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          ) : (
+                            <div className="p-2 text-gray-300 cursor-not-allowed">
+                               <Trash2 size={16} />
+                            </div>
+                          )}
+                          <div className={`transition-transform duration-300 ${expandedSaleId === sale.id ? 'rotate-180' : ''}`}>
+                            <ChevronDown size={18} />
+                          </div>
+                        </div>
                       </td>
                     </tr>
 

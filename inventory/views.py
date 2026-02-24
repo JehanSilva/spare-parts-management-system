@@ -267,6 +267,46 @@ def get_all_sales(request):
     serializer = SaleSerializer(sales, many=True)
     return Response(serializer.data)
 
+@api_view(['PATCH'])
+def update_sale(request, pk):
+    """
+    Update Sale header details (Customer Name, Vehicle Number)
+    """
+    sale = get_object_or_404(Sale, pk=pk)
+    
+    # We only allow updating customer_name and vehicle_number
+    data = request.data
+    if 'customer_name' in data:
+        sale.customer_name = data['customer_name']
+    if 'vehicle_number' in data:
+        sale.vehicle_number = data['vehicle_number']
+        
+    sale.save()
+    return Response(SaleSerializer(sale).data)
+
+@api_view(['POST'])
+@transaction.atomic
+def cancel_sale(request, pk):
+    """
+    Cancel a sale and return items to stock
+    """
+    sale = get_object_or_404(Sale, pk=pk)
+    
+    if sale.status == 'CANCELLED':
+        return Response({"error": "Sale is already cancelled"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # 1. Loop through items and add back to stock
+    for item in sale.items.all():
+        part = item.part
+        part.stock_qty += item.quantity
+        part.save()
+        
+    # 2. Update status
+    sale.status = 'CANCELLED'
+    sale.save()
+    
+    return Response(SaleSerializer(sale).data)
+
 # --- REPORTING VIEW ---
 @api_view(['GET'])
 def dashboard_stats(request):

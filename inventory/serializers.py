@@ -79,7 +79,7 @@ class SaleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Sale
-        fields = ['id', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items']
+        fields = ['id', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items', 'status']
 
     def create(self, validated_data):
         """

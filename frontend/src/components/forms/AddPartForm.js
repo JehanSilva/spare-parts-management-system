@@ -413,13 +413,13 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                       setShowVehicleDropdown(true);
                     }}
                     onFocus={() => setShowVehicleDropdown(true)}
-                    placeholder="Search Vehicle (e.g. 'Toyota Axio')..."
-                    className="flex-1 p-2.5 outline-none text-base"
+                    placeholder="Search Vehicle..."
+                    className="flex-1 min-w-0 py-2.5 px-2 outline-none text-base"
                   />
                   <button
                     type="button"
                     onClick={() => setIsCreatingVehicle(!isCreatingVehicle)}
-                    className="mr-2 p-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors flex items-center gap-1 text-sm font-bold"
+                    className="shrink-0 mr-2 p-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors flex items-center gap-1 text-sm font-bold whitespace-nowrap"
                   >
                     <Plus size={16} /> {isCreatingVehicle ? "Cancel" : "New"}
                   </button>
@@ -452,12 +452,12 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                         className="p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
                       />
                     </div>
-                    <div className="mt-3 flex justify-end">
+                    <div className="mt-3 flex md:justify-end">
                       <button
                         type="button"
                         onClick={handleCreateVehicle}
                         disabled={vehicleSaving || !newVehicle.make || !newVehicle.model}
-                        className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-bold hover:bg-blue-700 disabled:bg-gray-400 flex items-center gap-2"
+                        className="bg-blue-600 text-white px-4 py-2.5 md:py-1.5 rounded text-sm font-bold hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center gap-2 w-full md:w-auto"
                       >
                         {vehicleSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                         Save & Add Vehicle

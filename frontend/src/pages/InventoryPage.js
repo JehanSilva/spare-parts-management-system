@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   Search,
   Plus,
@@ -21,6 +21,90 @@ import AddPartForm from "../components/forms/AddPartForm";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 
+const PartDetailsModal = ({ part, onClose }) => {
+  if (!part) return null;
+  
+  // Helper to render vehicle name safely from Object or ID
+  const renderVehicleName = (v) => {
+    if (typeof v === "object" && v !== null) {
+      return `${v.make} ${v.model}`;
+    }
+    return "Vehicle";
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-scale-in flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+        <div className="bg-red-700 p-4 text-white flex justify-between items-center shrink-0">
+          <h3 className="font-bold text-lg flex items-center gap-2"><Package size={20} /> Part Details</h3>
+          <button onClick={onClose} className="hover:bg-red-600 p-1 rounded-full transition-colors"><XCircle size={20}/></button>
+        </div>
+        <div className="p-6 overflow-y-auto w-full">
+          <div className="flex flex-col sm:flex-row gap-6 mb-6">
+            {part.image ? (
+              <img src={part.image} alt={part.name} className="w-full sm:w-40 h-48 sm:h-40 object-cover rounded-xl border border-gray-200 shadow-sm shrink-0" />
+            ) : (
+              <div className="w-full h-48 sm:w-40 sm:h-40 flex items-center justify-center bg-gray-50 rounded-xl border border-gray-200 text-gray-400 shrink-0">
+                <Package size={48} opacity={0.3} />
+              </div>
+            )}
+            <div className="flex-1 w-full overflow-hidden">
+               <h2 className="text-xl sm:text-2xl font-bold text-gray-800 leading-tight mb-2 truncate max-w-full" title={part.name}>{part.name}</h2>
+               <p className="text-sm text-gray-500 font-mono mb-3 py-1 px-2 bg-gray-100 rounded inline-block truncate max-w-full">
+                 Part No: {part.part_number}
+               </p>
+               {part.brand && (
+                 <div className="mb-3">
+                   <span className="bg-red-50 text-red-800 text-xs font-bold px-2.5 py-1 rounded-md border border-red-100 uppercase tracking-wide truncate max-w-full inline-block">{part.brand}</span>
+                 </div>
+               )}
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-6">
+             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex flex-col">
+               <p className="text-xs text-gray-500 mb-1 flex items-center gap-1 shrink-0"><AlertTriangle size={12} /> Stock Qty</p>
+               <div className="flex items-center gap-2">
+                 <p className={`text-xl font-bold truncate ${part.stock_qty <= part.min_stock_level ? "text-red-600" : "text-gray-800"}`}>
+                   {part.stock_qty}
+                 </p>
+                 {part.stock_qty <= part.min_stock_level && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full uppercase shrink-0">Low</span>}
+               </div>
+             </div>
+             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 overflow-hidden text-ellipsis whitespace-nowrap">
+               <p className="text-xs text-gray-500 mb-1 flex items-center gap-1 shrink-0"><MapPin size={12} /> Location</p>
+               <p className="text-lg sm:text-xl font-bold text-gray-800 truncate" title={part.rack_location || "N/A"}>{part.rack_location || "N/A"}</p>
+             </div>
+             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 overflow-hidden text-ellipsis whitespace-nowrap">
+               <p className="text-xs text-gray-500 mb-1 shrink-0">Buy Price</p>
+               <p className="text-lg font-bold text-gray-800 truncate" title={`LKR ${part.buy_price}`}>LKR {part.buy_price}</p>
+             </div>
+             <div className="bg-red-50 p-3 rounded-xl border border-red-100 overflow-hidden text-ellipsis whitespace-nowrap">
+               <p className="text-xs text-red-500 mb-1 font-semibold shrink-0">Sell Price</p>
+               <p className="text-lg font-bold text-red-700 truncate" title={`LKR ${part.sell_price}`}>LKR {part.sell_price}</p>
+             </div>
+          </div>
+
+          <div>
+             <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-1 border-b pb-2 shrink-0"><Car size={16} /> Compatible Vehicles</h4>
+             <div className="flex flex-wrap gap-2 mt-3">
+               {part.compatible_vehicles && part.compatible_vehicles.length > 0 ? (
+                 part.compatible_vehicles.map((v, i) => (
+                   <span key={i} className="text-xs bg-gray-100 text-gray-700 px-2.5 py-1.5 rounded-md border border-gray-200 truncate max-w-[150px]" title={renderVehicleName(v)}>
+                     {renderVehicleName(v)}
+                   </span>
+                 ))
+               ) : (
+                 <span className="text-sm text-gray-500 italic">Universal Fit / No specific vehicles</span>
+               )}
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const InventoryPage = () => {
   const [parts, setParts] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -34,6 +118,20 @@ const InventoryPage = () => {
   // Alert & Modal States
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const [deleteId, setDeleteId] = useState(null);
+  const [selectedPart, setSelectedPart] = useState(null); // For details modal
+  const pressTimer = useRef(null);
+
+  const startPress = (part) => {
+    pressTimer.current = setTimeout(() => {
+      setSelectedPart(part);
+    }, 500); // 500ms for long press
+  };
+
+  const endPress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+    }
+  };
 
   // --- 1. Load Data ---
   const loadData = async () => {
@@ -163,6 +261,9 @@ const InventoryPage = () => {
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
+      {/* --- DETAILS MODAL --- */}
+      <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />
+
       {/* --- CONFIRM MODAL --- */}
       <ConfirmModal
         isOpen={!!deleteId}
@@ -297,19 +398,31 @@ const InventoryPage = () => {
             parts.map((part) => (
               <div
                 key={part.id}
-                className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col relative group"
+                className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col relative group select-none cursor-pointer"
+                onContextMenu={(e) => { e.preventDefault(); }} // Prevent mobile context menu on long press
+                onMouseDown={() => startPress(part)}
+                onMouseUp={endPress}
+                onMouseLeave={endPress}
+                onTouchStart={() => startPress(part)}
+                onTouchEnd={endPress}
+                onTouchMove={endPress}
+                onClick={endPress}
               >
                 {/* --- Action Buttons (Visible on Hover for Desktop, Always for Mobile if needed, but keeping clean for now) --- */}
                 <div className="absolute top-2 right-2 flex gap-1 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                   <button
-                    onClick={() => handleEdit(part)}
+                    onClick={(e) => { e.stopPropagation(); handleEdit(part); }}
+                    onMouseDown={(e) => { e.stopPropagation(); endPress(); }}
+                    onTouchStart={(e) => { e.stopPropagation(); endPress(); }}
                     className="bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 border border-gray-100"
                     title="Edit Part"
                   >
                     <Edit2 size={14} />
                   </button>
                   <button
-                    onClick={() => confirmDelete(part.id)}
+                    onClick={(e) => { e.stopPropagation(); confirmDelete(part.id); }}
+                    onMouseDown={(e) => { e.stopPropagation(); endPress(); }}
+                    onTouchStart={(e) => { e.stopPropagation(); endPress(); }}
                     className="bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-sm text-red-500 hover:text-red-700 hover:bg-red-50 border border-gray-100"
                     title="Delete Part"
                   >

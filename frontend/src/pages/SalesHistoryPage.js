@@ -266,7 +266,7 @@ const SalesHistoryPage = () => {
         <input
           type="text"
           placeholder="Search Customer, Vehicle, Invoice..."
-          className="w-full pl-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none text-sm"
+          className="w-full pl-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />

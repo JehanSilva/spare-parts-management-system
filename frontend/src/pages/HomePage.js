@@ -15,7 +15,7 @@ import {
   AlertCircle,
   ArrowRight,
 } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 // --- Quick Action Card Component ---
 const QuickActionCard = ({ to, title, icon: Icon, colorClass, gradient, desc }) => (
@@ -238,7 +238,9 @@ const HomePage = () => {
                       <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#6B7280', fontSize: 12}} dy={10} />
                       <YAxis axisLine={false} tickLine={false} tickFormatter={(value) => `Rs ${value}`} tick={{fill: '#6B7280', fontSize: 12}} />
                       <Tooltip formatter={(value) => formatLKR(value)} cursor={{fill: '#fef2f2'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}} />
-                      <Bar dataKey="revenue" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={50} />
+                      <Legend verticalAlign="top" height={36} iconType="circle" />
+                      <Bar dataKey="revenue" name="Revenue" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                      <Bar dataKey="profit" name="Profit" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (

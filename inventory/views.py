@@ -418,20 +418,37 @@ def get_dashboard_stats(request):
         except Part.DoesNotExist:
             continue
 
-    # 7. Sales Trend (Revenue by day)
+    # 7. Sales Trend (Revenue and Profit by day)
     trend_query = sales_query.filter(status='COMPLETED')\
         .annotate(date=TruncDate('created_at'))\
         .values('date')\
         .annotate(daily_revenue=Sum('total_amount'))\
         .order_by('date')
+        
+    profit_trend_query = sale_items_query.filter(sale__status='COMPLETED')\
+        .annotate(date=TruncDate('sale__created_at'))\
+        .values('date')\
+        .annotate(daily_profit=Sum((F('unit_price') - F('part__buy_price')) * F('quantity')))\
+        .order_by('date')
     
-    sales_trend = []
+    trend_dict = {}
     for t in trend_query:
         if t['date']:
-            sales_trend.append({
-                "date": t['date'].strftime('%b %d'),
-                "revenue": t['daily_revenue']
-            })
+            trend_dict[t['date']] = {"revenue": t['daily_revenue'], "profit": 0}
+            
+    for p in profit_trend_query:
+        if p['date']:
+            if p['date'] not in trend_dict:
+                trend_dict[p['date']] = {"revenue": 0, "profit": 0}
+            trend_dict[p['date']]["profit"] = p['daily_profit'] or 0
+
+    sales_trend = []
+    for d in sorted(trend_dict.keys()):
+        sales_trend.append({
+            "date": d.strftime('%b %d'),
+            "revenue": trend_dict[d]["revenue"],
+            "profit": trend_dict[d]["profit"]
+        })
 
     return Response({
         "total_inventory_value": total_inventory_value,

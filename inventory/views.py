@@ -1,6 +1,9 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from django.utils import timezone
+from datetime import timedelta
+from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
 from .models import Part, Supplier, Sale, SaleItem
@@ -92,6 +95,7 @@ def get_parts(request):
     # 1. Get parameters from the URL (e.g., /api/parts/?search=brake&brand=toyota)
     search_query = request.query_params.get('search', '')
     brand_filter = request.query_params.get('brand', '')
+    stock_status = request.query_params.get('stock_status', '')
 
     # 2. Start with all parts
     parts = Part.objects.all().order_by('-id')
@@ -110,7 +114,13 @@ def get_parts(request):
     if brand_filter:
         parts = parts.filter(brand__icontains=brand_filter)
 
-    # 5. Serialize and return
+    # 5. Apply Stock Status filter
+    if stock_status == 'out':
+        parts = parts.filter(stock_qty=0)
+    elif stock_status == 'low':
+        parts = parts.filter(stock_qty=1)
+
+    # 6. Serialize and return
     serializer = PartSerializer(parts, many=True)
     return Response(serializer.data)
 
@@ -340,44 +350,96 @@ def dashboard_stats(request):
 @api_view(['GET'])
 def get_dashboard_stats(request):
     """
-    Calculate financial metrics:
-    1. Total Inventory Cost (Money tied up in stock)
-    2. Total Revenue (Total Sales)
-    3. Net Profit (Revenue - Cost of Goods Sold)
-    4. Spending per Supplier
+    Calculate financial metrics with date filtering logic
     """
+    period = request.query_params.get('period', 'all')
+    now = timezone.now()
     
-    # 1. Total Inventory Value (Current Stock * Buy Price)
-    # We use 'aggregate' to sum up the calculated value of every part
+    if period == 'today':
+        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == 'this_week':
+        start_date = now - timedelta(days=now.weekday())
+        start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == 'this_month':
+        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start_date = None
+
+    # Base queries
+    sales_query = Sale.objects.all()
+    sale_items_query = SaleItem.objects.all()
+    
+    if start_date:
+        sales_query = sales_query.filter(created_at__gte=start_date)
+        sale_items_query = sale_items_query.filter(sale__created_at__gte=start_date)
+
+    # 1. Total Inventory Value (Current Stock * Buy Price) - UNCHANGED BY DATE
     inventory_data = Part.objects.aggregate(
         total_value=Sum(F('buy_price') * F('stock_qty'))
     )
     total_inventory_value = inventory_data['total_value'] or 0
 
-    # 2. Total Sales Revenue
-    sales_data = Sale.objects.aggregate(total=Sum('total_amount'))
+    # 2. Total Sales Revenue - FILTERED BY DATE
+    sales_data = sales_query.aggregate(total=Sum('total_amount'))
     total_sales = sales_data['total'] or 0
 
-    # 3. Calculate Profit
-    # Profit = Sum of [(Unit Price - Original Buy Price) * Qty Sold] for every sold item
-    # Note: We access the related part's buy_price via 'part__buy_price'
-    from .models import SaleItem # Ensure SaleItem is imported
-    profit_data = SaleItem.objects.aggregate(
+    # 3. Calculate Profit - FILTERED BY DATE
+    profit_data = sale_items_query.aggregate(
         total_profit=Sum((F('unit_price') - F('part__buy_price')) * F('quantity'))
     )
     total_profit = profit_data['total_profit'] or 0
 
-    # 4. Spending per Supplier
-    # We group parts by supplier name and sum their total cost (buy_price * stock_qty)
-    # Note: This calculates the value of *currently held* stock from each supplier.
+    # 4. Spending per Supplier - UNCHANGED BY DATE
     supplier_stats = Part.objects.values('supplier__name').annotate(
         total_spent=Sum(F('buy_price') * F('stock_qty')),
         part_count=Sum('stock_qty')
     ).order_by('-total_spent')
 
+    # 5. Stock Alerts Count - UNCHANGED BY DATE
+    out_of_stock_count = Part.objects.filter(stock_qty=0).count()
+    low_stock_count = Part.objects.filter(stock_qty=1).count()
+
+    # 6. Top Sold Parts - FILTERED BY DATE
+    top_parts_ids_query = SaleItem.objects.filter(sale__status='COMPLETED')
+    if start_date:
+        top_parts_ids_query = top_parts_ids_query.filter(sale__created_at__gte=start_date)
+        
+    top_parts_ids = top_parts_ids_query.values('part_id')\
+        .annotate(total_sold=Sum('quantity'))\
+        .order_by('-total_sold')[:5]
+
+    top_sold_parts = []
+    for item in top_parts_ids:
+        try:
+            part = Part.objects.get(id=item['part_id'])
+            part_data = PartMinimalSerializer(part, context={'request': request}).data
+            part_data['total_sold'] = item['total_sold']
+            top_sold_parts.append(part_data)
+        except Part.DoesNotExist:
+            continue
+
+    # 7. Sales Trend (Revenue by day)
+    trend_query = sales_query.filter(status='COMPLETED')\
+        .annotate(date=TruncDate('created_at'))\
+        .values('date')\
+        .annotate(daily_revenue=Sum('total_amount'))\
+        .order_by('date')
+    
+    sales_trend = []
+    for t in trend_query:
+        if t['date']:
+            sales_trend.append({
+                "date": t['date'].strftime('%b %d'),
+                "revenue": t['daily_revenue']
+            })
+
     return Response({
         "total_inventory_value": total_inventory_value,
         "total_sales": total_sales,
         "total_profit": total_profit,
-        "supplier_stats": supplier_stats
+        "supplier_stats": supplier_stats,
+        "out_of_stock_count": out_of_stock_count,
+        "low_stock_count": low_stock_count,
+        "top_sold_parts": top_sold_parts,
+        "sales_trend": sales_trend
     })

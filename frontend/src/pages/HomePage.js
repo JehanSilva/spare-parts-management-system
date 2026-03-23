@@ -15,6 +15,7 @@ import {
   AlertCircle,
   ArrowRight,
 } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 // --- Quick Action Card Component ---
 const QuickActionCard = ({ to, title, icon: Icon, colorClass, gradient, desc }) => (
@@ -47,14 +48,19 @@ const HomePage = () => {
     total_sales: 0,
     total_profit: 0,
     supplier_stats: [],
+    low_stock_count: 0,
+    out_of_stock_count: 0,
+    top_sold_parts: [],
   });
   const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState('all');
 
-  // --- Load Data on Mount ---
+  // --- Load Data on Mount & Period Change ---
   useEffect(() => {
     const loadStats = async () => {
+      setLoading(true);
       try {
-        const data = await fetchDashboardStats();
+        const data = await fetchDashboardStats(period);
         if (data) setStats(data);
       } catch (error) {
         console.error("Failed to load dashboard stats", error);
@@ -63,7 +69,7 @@ const HomePage = () => {
       }
     };
     loadStats();
-  }, []);
+  }, [period]);
 
   // --- Helper for LKR Formatting ---
   const formatLKR = (amount) => {
@@ -137,11 +143,23 @@ const HomePage = () => {
         </div>
 
         {/* --- SECTION 2: Financial Stats Dashboard --- */}
-        <div className="mb-6 flex items-center gap-3">
-          <div className="p-2 bg-red-100 rounded-lg text-red-700">
-             <BarChart3 size={24} />
+        <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-red-100 rounded-lg text-red-700">
+               <BarChart3 size={24} />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">Financial Overview</h2>
           </div>
-          <h2 className="text-2xl font-bold text-gray-800">Financial Overview</h2>
+          <select 
+            className="p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 font-medium text-gray-700 bg-white cursor-pointer shadow-sm"
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+          >
+            <option value="today">Today</option>
+            <option value="this_week">This Week</option>
+            <option value="this_month">This Month</option>
+            <option value="all">All Time</option>
+          </select>
         </div>
 
         {loading ? (
@@ -209,7 +227,117 @@ const HomePage = () => {
               </div>
             </div>
 
-            {/* --- SECTION 3: Supplier Spending --- */}
+            {/* --- Sales Trend Chart --- */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-10">
+              <h3 className="text-lg font-bold text-gray-800 mb-6">Revenue Trend</h3>
+              <div className="h-72 w-full">
+                {stats.sales_trend && stats.sales_trend.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.sales_trend}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#6B7280', fontSize: 12}} dy={10} />
+                      <YAxis axisLine={false} tickLine={false} tickFormatter={(value) => `Rs ${value}`} tick={{fill: '#6B7280', fontSize: 12}} />
+                      <Tooltip formatter={(value) => formatLKR(value)} cursor={{fill: '#fef2f2'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'}} />
+                      <Bar dataKey="revenue" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={50} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-3">
+                    <BarChart3 size={32} opacity={0.2} />
+                    <p>No sales data to display for this period.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* --- SECTION: Critical Alerts --- */}
+            {(stats.low_stock_count > 0 || stats.out_of_stock_count > 0) && (
+              <div className="mb-10">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="p-2 bg-yellow-100 rounded-lg text-yellow-700">
+                    <AlertCircle size={24} />
+                  </div>
+                  <h2 className="text-2xl font-bold text-gray-800">Inventory Alerts</h2>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {stats.out_of_stock_count > 0 && (
+                    <Link to="/inventory?filter=out" className="bg-red-50 p-6 rounded-2xl shadow-sm border border-red-200 hover:shadow-md transition-shadow flex items-center justify-between group">
+                      <div>
+                        <h3 className="text-red-800 font-bold uppercase text-xs tracking-wider mb-2">Out of Stock</h3>
+                        <p className="text-3xl font-extrabold text-red-700">{stats.out_of_stock_count} Parts</p>
+                        <p className="text-sm text-red-600 mt-1 font-medium flex items-center gap-1">Restock immediately <ArrowRight size={14} /></p>
+                      </div>
+                      <div className="w-14 h-14 bg-white rounded-full flex items-center justify-center text-red-600 group-hover:scale-110 transition-transform shadow-sm">
+                        <AlertCircle size={28} />
+                      </div>
+                    </Link>
+                  )}
+                  {stats.low_stock_count > 0 && (
+                    <Link to="/inventory?filter=low" className="bg-orange-50 p-6 rounded-2xl shadow-sm border border-orange-200 hover:shadow-md transition-shadow flex items-center justify-between group">
+                      <div>
+                        <h3 className="text-orange-800 font-bold uppercase text-xs tracking-wider mb-2">Low Stock</h3>
+                        <p className="text-3xl font-extrabold text-orange-700">{stats.low_stock_count} Parts</p>
+                        <p className="text-sm text-orange-600 mt-1 font-medium flex items-center gap-1">Review stock soon <ArrowRight size={14} /></p>
+                      </div>
+                      <div className="w-14 h-14 bg-white rounded-full flex items-center justify-center text-orange-600 group-hover:scale-110 transition-transform shadow-sm">
+                        <Package size={28} />
+                      </div>
+                    </Link>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* --- SECTION 4: Top Selling Parts --- */}
+            {stats.top_sold_parts && stats.top_sold_parts.length > 0 && (
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-200 mb-10">
+                <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded-lg shadow-sm">
+                      <TrendingUp className="text-orange-600" size={20} />
+                    </div>
+                    <h2 className="text-xl font-bold text-gray-800">Top Selling Parts</h2>
+                  </div>
+                </div>
+                <div className="p-6 overflow-x-auto pb-8">
+                  <div className="flex gap-6 pb-2">
+                    {stats.top_sold_parts.map((part, index) => (
+                      <Link 
+                        to="/inventory"
+                        key={part.id || index} 
+                        className="min-w-[240px] max-w-[280px] bg-white border border-gray-100 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow group flex-shrink-0 block"
+                      >
+                        <div className="flex justify-between items-start mb-4">
+                          <span className="bg-orange-100 text-orange-800 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1 border border-orange-200 shadow-sm">
+                            <TrendingUp size={12} /> #{index + 1} Best Seller
+                          </span>
+                        </div>
+                        <div className="h-40 bg-gray-50 rounded-lg mb-4 overflow-hidden flex items-center justify-center relative border border-gray-100">
+                           {part.image ? (
+                             <img src={part.image} alt={part.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                           ) : (
+                             <Package size={32} className="text-gray-300" />
+                           )}
+                        </div>
+                        <h3 className="font-bold text-gray-800 truncate mb-1" title={part.name}>{part.name}</h3>
+                        <p className="text-xs text-gray-500 font-mono mb-4">{part.part_number}</p>
+                        <div className="flex justify-between items-end border-t border-gray-100 pt-4">
+                           <div>
+                             <p className="text-[10px] text-gray-400 font-semibold mb-0.5 uppercase tracking-wider">Total Sold</p>
+                             <p className="text-xl font-black text-gray-800">{part.total_sold} <span className="text-xs font-medium text-gray-500">Units</span></p>
+                           </div>
+                           <div className="w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-red-50 group-hover:text-red-600 transition-colors shadow-sm border border-gray-100">
+                             <ArrowRight size={16} />
+                           </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* --- SECTION 5: Supplier Spending --- */}
             <div className="bg-white rounded-2xl shadow-sm overflow-hidden border border-gray-200">
               <div className="p-6 border-b border-gray-100 flex items-center gap-3 bg-gray-50/50">
                 <div className="p-2 bg-white border border-gray-200 rounded-lg shadow-sm">

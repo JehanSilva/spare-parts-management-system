@@ -65,10 +65,10 @@ const PartDetailsModal = ({ part, onClose }) => {
              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex flex-col">
                <p className="text-xs text-gray-500 mb-1 flex items-center gap-1 shrink-0"><AlertTriangle size={12} /> Stock Qty</p>
                <div className="flex items-center gap-2">
-                 <p className={`text-xl font-bold truncate ${part.stock_qty <= part.min_stock_level ? "text-red-600" : "text-gray-800"}`}>
+                 <p className={`text-xl font-bold truncate ${part.stock_qty <= 1 ? "text-red-600" : "text-gray-800"}`}>
                    {part.stock_qty}
                  </p>
-                 {part.stock_qty <= part.min_stock_level && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full uppercase shrink-0">Low</span>}
+                 {part.stock_qty <= 1 && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full uppercase shrink-0">Low</span>}
                </div>
              </div>
              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 overflow-hidden text-ellipsis whitespace-nowrap">
@@ -114,6 +114,11 @@ const InventoryPage = () => {
   // Filter States
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("");
+  
+  const [stockFilter, setStockFilter] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("filter") || "all";
+  });
 
   // Alert & Modal States
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
@@ -140,6 +145,7 @@ const InventoryPage = () => {
       const partsData = await fetchParts({
         search: searchTerm,
         brand: selectedBrand,
+        ...(stockFilter !== "all" && { stock_status: stockFilter }),
       });
       setParts(partsData);
     } catch (error) {
@@ -161,12 +167,33 @@ const InventoryPage = () => {
   // Track applied filters to toggle between "Apply" and "Clear"
   const [lastSearchTerm, setLastSearchTerm] = useState("");
   const [lastSelectedBrand, setLastSelectedBrand] = useState("");
+  const [lastStockFilter, setLastStockFilter] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("filter") || "all";
+  });
 
   const handleSearch = async (e) => {
     e.preventDefault();
     setLastSearchTerm(searchTerm);
     setLastSelectedBrand(selectedBrand);
+    setLastStockFilter(stockFilter);
     loadData();
+  };
+
+  const handleStockFilter = (filter) => {
+    setStockFilter(filter);
+    setLastStockFilter(filter);
+    
+    // Trigger load data immediately with the new filter
+    setLoading(true);
+    fetchParts({
+      search: searchTerm,
+      brand: selectedBrand,
+      ...(filter !== "all" && { stock_status: filter }),
+    }).then(data => {
+      setParts(data);
+      setLoading(false);
+    }).catch(() => { setLoading(false); });
   };
 
   const handleEdit = (part) => {
@@ -348,14 +375,16 @@ const InventoryPage = () => {
         />
         
         {/* Smart Button Logic: If text matches last search, show Clear. Else show Apply. */}
-        {(searchTerm || selectedBrand) && (searchTerm === lastSearchTerm && selectedBrand === lastSelectedBrand) ? (
+        {(searchTerm || selectedBrand || stockFilter !== "all") && (searchTerm === lastSearchTerm && selectedBrand === lastSelectedBrand && stockFilter === lastStockFilter) ? (
              <button
               type="button"
               onClick={() => {
                   setSearchTerm("");
                   setSelectedBrand("");
+                  setStockFilter("all");
                   setLastSearchTerm("");
                   setLastSelectedBrand("");
+                  setLastStockFilter("all");
                   // Trigger reload with empty params
                   setLoading(true);
                   fetchParts({ search: "", brand: "" }).then(data => {
@@ -378,6 +407,40 @@ const InventoryPage = () => {
             </button>
         )}
       </form>
+
+      {/* Quick Filters */}
+      <div className="flex flex-wrap gap-2 mb-6">
+        <button
+          onClick={() => handleStockFilter("all")}
+          className={`px-4 py-1.5 rounded-full text-sm font-bold border transition-colors ${
+            stockFilter === "all"
+              ? "bg-gray-800 text-white border-gray-800"
+              : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+          }`}
+        >
+          All Parts
+        </button>
+        <button
+          onClick={() => handleStockFilter("low")}
+          className={`px-4 py-1.5 rounded-full text-sm font-bold border transition-colors flex items-center gap-1 ${
+            stockFilter === "low"
+              ? "bg-orange-500 text-white border-orange-500 shadow-sm"
+              : "bg-white text-orange-600 border-orange-200 hover:bg-orange-50"
+          }`}
+        >
+          Low Stock
+        </button>
+        <button
+          onClick={() => handleStockFilter("out")}
+          className={`px-4 py-1.5 rounded-full text-sm font-bold border transition-colors flex items-center gap-1 ${
+            stockFilter === "out"
+              ? "bg-red-600 text-white border-red-600 shadow-sm"
+              : "bg-white text-red-600 border-red-200 hover:bg-red-50"
+          }`}
+        >
+          Out of Stock
+        </button>
+      </div>
 
       {/* Parts Grid */}
       {loading ? (
@@ -457,7 +520,7 @@ const InventoryPage = () => {
                   )}
                   {/* Stock Badge */}
                   <div className="absolute bottom-1 left-1 md:bottom-2 md:left-2 z-10">
-                    {part.stock_qty <= part.min_stock_level ? (
+                    {part.stock_qty <= 1 ? (
                       <span className="bg-red-500 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
                         <AlertTriangle size={10} className="md:w-3 md:h-3" /> Low
                       </span>
@@ -526,7 +589,7 @@ const InventoryPage = () => {
                       <p className="text-[10px] md:text-xs text-gray-400 mb-0.5">Qty</p>
                       <span
                         className={`font-bold text-sm md:text-lg ${
-                          part.stock_qty <= part.min_stock_level
+                          part.stock_qty <= 1
                             ? "text-red-600"
                             : "text-gray-800"
                         }`}

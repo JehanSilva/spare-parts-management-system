@@ -86,5 +86,7 @@ export const cancelSale = async (id) =>
   (await API.post(`/sales/${id}/cancel/`)).data;
 export const fetchDashboardStats = async (period = 'all') =>
   (await API.get("/dashboard/stats/", { params: { period } })).data;
+export const fetchDailyReport = async (date) =>
+  (await API.get("/reports/daily/", { params: { date } })).data;
 
 export default API;

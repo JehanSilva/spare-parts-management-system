@@ -90,26 +90,26 @@ const DailyReportPage = () => {
     <div className="min-h-screen print:min-h-0 bg-gray-50 print:bg-white pb-12 print:pb-0">
       <div className="max-w-6xl print:max-w-none print:w-full mx-auto p-4 md:p-8 print:p-0">
         {/* --- Header & Actions (Hidden during print) --- */}
-        <div className="flex flex-col md:flex-row items-center justify-between mb-8 print:hidden gap-4">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 print:hidden gap-6">
           <div className="flex items-center gap-4">
-            <Link to="/" className="p-2 bg-white rounded-full text-gray-400 hover:text-gray-800 hover:bg-gray-100 transition-colors shadow-sm">
+            <Link to="/" className="p-2 bg-white rounded-full text-gray-400 hover:text-gray-800 hover:bg-gray-100 transition-colors shadow-sm shrink-0">
               <ArrowLeft size={24} />
             </Link>
             <div>
-              <h1 className="text-3xl font-bold text-gray-800">Daily Sales Report</h1>
-              <p className="text-gray-500">End-of-day summary & analytics</p>
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-800 leading-tight">Daily Sales Report</h1>
+              <p className="text-sm md:text-base text-gray-500">End-of-day summary & analytics</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
             <input 
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-red-500 shadow-sm text-gray-700 font-medium"
+              className="w-full sm:w-auto px-4 py-3 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-red-500 shadow-sm text-gray-700 font-medium"
             />
             <button
               onClick={handlePrint}
-              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-md hover:shadow-lg active:scale-95 whitespace-nowrap"
+              className="w-full sm:w-auto flex justify-center items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-xl font-bold transition-all shadow-md hover:shadow-lg active:scale-95 whitespace-nowrap"
             >
               <Printer size={20} /> Download PDF / Print
             </button>
@@ -121,13 +121,13 @@ const DailyReportPage = () => {
           
           {/* Report Header for Print */}
           <div className="mb-10 text-center border-b-[3px] border-red-600 pb-6 print:pb-4 print:mb-6">
-            <h1 className="text-4xl print:text-5xl font-extrabold text-gray-900 mb-2 uppercase tracking-wider">NSS Auto Spares</h1>
-            <h2 className="text-2xl print:text-3xl font-bold text-gray-600">Daily Operating Report</h2>
+            <h1 className="text-3xl sm:text-4xl print:text-4xl font-extrabold text-gray-900 mb-2 uppercase tracking-wider">NSS Auto Spares</h1>
+            <h2 className="text-xl sm:text-2xl print:text-2xl font-bold text-gray-600">Daily Operating Report</h2>
             <p className="text-gray-500 mt-2 font-medium print:text-lg">{displayDateStr}</p>
           </div>
 
           {/* --- Key Metrics Grid --- */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-12 print:mb-8 print:gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-12 print:mb-8 print:grid-cols-4 print:gap-4">
             
             {/* Sales Count */}
             <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100 relative overflow-hidden print:border-gray-300">
@@ -178,12 +178,12 @@ const DailyReportPage = () => {
           </div>
 
           {/* --- Performance Indicator --- */}
-          <div className="mb-12 print:mb-8 bg-white p-6 print:p-4 rounded-2xl border border-gray-100 shadow-sm print:shadow-none print:border print:border-gray-200 flex items-center justify-between">
+          <div className="mb-12 print:mb-8 bg-white p-4 sm:p-6 print:p-4 rounded-2xl border border-gray-100 shadow-sm print:shadow-none print:border print:border-gray-200 flex flex-col sm:flex-row items-center sm:justify-between gap-4 text-center sm:text-left">
             <div>
-              <h3 className="text-lg font-bold text-gray-800 mb-1 lg:text-xl print:text-lg">Performance vs All-Time Average</h3>
-              <p className="text-sm text-gray-500">Based on historical daily average of {formatLKR(reportData.avg_daily_revenue)}</p>
+              <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-1 lg:text-xl print:text-lg">Performance vs All-Time Average</h3>
+              <p className="text-xs sm:text-sm text-gray-500">Based on historical daily average of {formatLKR(reportData.avg_daily_revenue)}</p>
             </div>
-            <div className={`flex items-center gap-2 px-6 py-3 print:py-2 rounded-full font-bold text-xl print:text-lg ${
+            <div className={`flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-3 print:py-2 rounded-full font-bold text-lg sm:text-xl print:text-lg w-full sm:w-auto justify-center ${
               reportData.percentage_change >= 0 
                 ? 'bg-green-100 text-green-700 border border-green-200 print:border-green-400' 
                 : 'bg-red-100 text-red-700 border border-red-200 print:border-red-400'
@@ -195,8 +195,8 @@ const DailyReportPage = () => {
 
           {/* --- Chart --- */}
           <div className="mb-12 print:mb-8 print:break-inside-avoid">
-            <h3 className="text-xl font-bold text-gray-800 mb-6 border-b border-gray-100 pb-2 print:border-gray-300">Hourly Revenue & Profit</h3>
-            <div className="h-80 print:h-64 w-full bg-gray-50/50 p-4 print:p-0 rounded-xl border border-gray-100 print:border-none print:bg-white text-sm">
+            <h3 className="text-lg sm:text-xl font-bold text-gray-800 mb-6 border-b border-gray-100 pb-2 print:border-gray-300">Hourly Revenue & Profit</h3>
+            <div className="h-64 sm:h-80 print:h-64 w-full bg-gray-50/50 p-2 sm:p-4 print:p-0 rounded-xl border border-gray-100 print:border-none print:bg-white text-xs sm:text-sm print:text-sm">
               {reportData.chart_data && reportData.chart_data.some(d => d.revenue > 0) ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={reportData.chart_data}>
@@ -226,46 +226,52 @@ const DailyReportPage = () => {
             </h3>
             
             {reportData.items && reportData.items.length > 0 ? (
-              <div className="overflow-x-auto print:overflow-visible border border-gray-200 rounded-xl print:border-0 print:rounded-none mt-2">
-                <table className="w-full text-left bg-white text-sm print:border-collapse print:border-y print:border-gray-400 table-auto">
-                  <thead className="bg-gray-100 text-gray-700 uppercase font-extrabold tracking-wider print:bg-gray-200 print:text-black border-b border-gray-200 print:border-y print:border-gray-400">
-                    <tr>
-                      <th className="p-4 print:py-3 print:px-2 w-full md:w-auto">Part Info</th>
-                      <th className="p-4 print:py-3 print:px-2 text-right whitespace-nowrap">Unit Price</th>
-                      <th className="p-4 print:py-3 print:px-2 text-center whitespace-nowrap">Qty</th>
-                      <th className="p-4 print:py-3 print:px-2 text-right whitespace-nowrap">Discount</th>
-                      <th className="p-4 print:py-3 print:px-2 text-right whitespace-nowrap">Total</th>
+              <div className="border border-gray-200 rounded-xl print:border-0 print:rounded-none mt-2 overflow-hidden">
+                <table className="w-full text-left bg-white text-xs md:text-sm print:text-sm print:border-collapse print:border-y print:border-gray-400 table-auto block md:table print:table">
+                  <thead className="hidden md:table-header-group bg-gray-100 text-gray-700 uppercase font-extrabold tracking-wider print:bg-gray-200 print:text-black border-b border-gray-200 print:border-y print:border-gray-400 text-[10px] md:text-xs print:text-xs print:table-header-group">
+                    <tr className="md:table-row print:table-row">
+                      <th className="p-3 md:p-4 print:py-3 print:px-2 w-full md:w-auto md:table-cell print:table-cell">Part Info</th>
+                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-right whitespace-nowrap md:table-cell print:table-cell">Unit Price</th>
+                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-center whitespace-nowrap md:table-cell print:table-cell">Qty</th>
+                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-right whitespace-nowrap md:table-cell print:table-cell">Discount</th>
+                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-right whitespace-nowrap md:table-cell print:table-cell">Total</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100 print:divide-y print:divide-dashed print:divide-gray-300">
+                  <tbody className="block md:table-row-group print:table-row-group divide-y divide-gray-100 print:divide-y print:divide-dashed print:divide-gray-300">
                     {reportData.items.map((item, idx) => (
-                      <tr key={idx} className="hover:bg-gray-50 transition-colors even:bg-gray-50/50 print:even:bg-transparent">
-                        <td className="p-4 print:py-4 print:px-2 align-middle">
-                          <div className="flex flex-col gap-1">
-                            <span className="font-bold text-gray-900 text-base print:whitespace-nowrap">{item.part_name}</span>
-                            <span className="text-xs text-gray-500 font-mono bg-gray-100 self-start px-2 py-0.5 rounded print:bg-transparent print:p-0 print:border print:border-gray-300 print:px-1 print:whitespace-nowrap">{item.part_number}</span>
+                      <tr key={idx} className="block md:table-row print:table-row hover:bg-gray-50 transition-colors even:bg-white md:even:bg-gray-50/50 print:even:bg-transparent p-4 md:p-0 print:p-0">
+                        <td className="flex justify-between md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 align-top md:align-middle border-b md:border-none print:border-none border-gray-50">
+                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px] mt-1">Part Info</span>
+                          <div className="flex flex-col gap-1 text-right md:text-left">
+                            <span className="font-bold text-gray-900 text-sm md:text-base print:text-base print:whitespace-nowrap">{item.part_name}</span>
+                            <span className="text-[10px] md:text-xs print:text-xs text-gray-500 font-mono bg-gray-100 self-end md:self-start print:self-start px-2 py-0.5 rounded print:bg-transparent print:p-0 print:border print:border-gray-300 print:px-1 print:whitespace-nowrap">{item.part_number}</span>
                           </div>
                         </td>
-                        <td className="p-4 print:py-4 print:px-2 text-right font-medium text-gray-600 whitespace-nowrap align-middle">
-                          {formatLKR(item.unit_price)}
+                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 text-right font-medium text-gray-600 whitespace-nowrap align-middle border-b md:border-none print:border-none border-gray-50">
+                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px]">Unit Price</span>
+                          <span>{formatLKR(item.unit_price)}</span>
                         </td>
-                        <td className="p-4 print:py-4 print:px-2 text-center align-middle">
-                          <span className="bg-gray-100 print:bg-transparent text-gray-800 px-3 py-1 print:p-0 rounded-full print:rounded-none font-bold inline-block whitespace-nowrap">{item.quantity}</span>
+                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 text-center align-middle border-b md:border-none print:border-none border-gray-50">
+                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px]">Qty</span>
+                          <span className="bg-gray-100 print:bg-transparent text-gray-800 px-2 md:px-3 py-1 print:p-0 rounded-full print:rounded-none font-bold inline-block whitespace-nowrap">{item.quantity}</span>
                         </td>
-                        <td className="p-4 print:py-4 print:px-2 text-right text-red-500 font-medium whitespace-nowrap align-middle">
-                          {parseFloat(item.discount) > 0 ? `-${formatLKR(item.discount)}` : '-'}
+                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 text-right text-red-500 font-medium whitespace-nowrap align-middle border-b md:border-none print:border-none border-gray-50">
+                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px]">Discount</span>
+                          <span>{parseFloat(item.discount) > 0 ? `-${formatLKR(item.discount)}` : '-'}</span>
                         </td>
-                        <td className="p-4 print:py-4 print:px-2 text-right font-black text-gray-900 text-base whitespace-nowrap align-middle">
-                          {formatLKR(item.total_price)}
+                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 pt-3 md:p-4 print:py-4 print:px-2 text-right font-black text-gray-900 text-sm md:text-base print:text-base whitespace-nowrap align-middle">
+                          <span className="md:hidden print:hidden font-bold text-gray-800 uppercase text-[10px]">Total</span>
+                          <span>{formatLKR(item.total_price)}</span>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                   {/* Table Footer Totals */}
-                  <tfoot className="bg-gray-50 font-bold print:bg-gray-100 border-t-2 border-gray-300 print:border-y-2 print:border-gray-800">
-                    <tr>
-                      <td colSpan="4" className="p-4 print:py-4 print:px-2 text-right text-gray-700 uppercase tracking-wider text-xs">Total Revenue Today</td>
-                      <td className="p-4 print:py-4 print:px-2 text-right text-xl text-gray-900 whitespace-nowrap">{formatLKR(reportData.today_revenue)}</td>
+                  <tfoot className="block md:table-footer-group print:table-footer-group bg-gray-50 font-bold print:bg-gray-100 border-t-2 border-gray-300 print:border-y-2 print:border-gray-800">
+                    <tr className="flex flex-row justify-between items-center md:table-row print:table-row p-4 md:p-0 print:p-0">
+                      <td colSpan="4" className="hidden md:table-cell print:table-cell p-3 md:p-4 print:py-4 print:px-2 text-right text-gray-700 uppercase tracking-wider text-[10px] md:text-xs print:text-xs">Total Revenue Today</td>
+                      <td className="md:hidden print:hidden text-gray-700 uppercase tracking-wider text-[11px]">Total Revenue</td>
+                      <td className="md:table-cell print:table-cell md:p-4 print:py-4 print:px-2 text-right text-lg md:text-xl print:text-xl text-gray-900 whitespace-nowrap">{formatLKR(reportData.today_revenue)}</td>
                     </tr>
                   </tfoot>
                 </table>

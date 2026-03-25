@@ -14,6 +14,7 @@ import {
   BarChart3,
   AlertCircle,
   ArrowRight,
+  FileText,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -139,6 +140,14 @@ const HomePage = () => {
             colorClass="text-orange-600 bg-orange-100"
             gradient="from-orange-400 to-orange-600"
             desc="Configure supported car models."
+          />
+          <QuickActionCard
+            to="/daily-report"
+            title="Daily Report"
+            icon={FileText}
+            colorClass="text-indigo-600 bg-indigo-100"
+            gradient="from-indigo-400 to-indigo-600"
+            desc="End-of-day sales, revenue & PDF export."
           />
         </div>
 

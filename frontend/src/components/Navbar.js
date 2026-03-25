@@ -36,7 +36,7 @@ const Navbar = () => {
   ];
 
   return (
-    <nav className="bg-gradient-to-r from-red-900 via-red-800 to-red-900 shadow-xl sticky top-0 z-50 transition-all duration-300">
+    <nav className="bg-gradient-to-r from-red-900 via-red-800 to-red-900 shadow-xl sticky top-0 z-50 transition-all duration-300 print:hidden">
       <div className="container mx-auto px-4">
         <div className="flex justify-between items-center h-16">
           {/* Logo Section */}

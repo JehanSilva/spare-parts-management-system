@@ -32,4 +32,7 @@ urlpatterns = [
 
     # Dashboard Stats
     path('dashboard/stats/', views.get_dashboard_stats, name='dashboard_stats'),
+    
+    # Daily Report
+    path('reports/daily/', views.daily_report, name='daily_report'),
 ]

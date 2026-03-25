@@ -460,3 +460,99 @@ def get_dashboard_stats(request):
         "top_sold_parts": top_sold_parts,
         "sales_trend": sales_trend
     })
+
+# Daily Report View
+@api_view(['GET'])
+def daily_report(request):
+    """
+    Generate comprehensive daily sales report for a specific date (defaults to today).
+    """
+    date_str = request.query_params.get('date')
+    
+    if date_str:
+        try:
+            from datetime import datetime
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            start_date = timezone.make_aware(datetime.combine(target_date, datetime.min.time()))
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+    else:
+        now = timezone.now()
+        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        target_date = start_date.date()
+        
+    end_date = start_date + timedelta(days=1)
+
+    # Filter target date's sales and items
+    target_sales = Sale.objects.filter(status='COMPLETED', created_at__gte=start_date, created_at__lt=end_date)
+    target_items = SaleItem.objects.filter(sale__status='COMPLETED', sale__created_at__gte=start_date, sale__created_at__lt=end_date)
+
+    # Calculate metrics
+    sales_data = target_sales.aggregate(total=Sum('total_amount'))
+    target_revenue = sales_data['total'] or 0
+
+    profit_cost_data = target_items.aggregate(
+        total_profit=Sum((F('unit_price') - F('part__buy_price')) * F('quantity')),
+        total_cost=Sum(F('part__buy_price') * F('quantity'))
+    )
+    target_profit = profit_cost_data['total_profit'] or 0
+    total_investment = profit_cost_data['total_cost'] or 0 # Investment of the items sold that day
+
+    target_sales_count = target_sales.count()
+
+    # Percentage comparison to all-time average daily revenue
+    first_sale = Sale.objects.filter(status='COMPLETED').order_by('created_at').first()
+    all_time_revenue = Sale.objects.filter(status='COMPLETED').aggregate(total=Sum('total_amount'))['total'] or 0
+    
+    avg_daily_revenue = 0
+    percentage_change = 0
+    
+    if first_sale and all_time_revenue > 0:
+        now_date = timezone.now().date()
+        days_active = (now_date - first_sale.created_at.date()).days
+        if days_active < 1:
+            days_active = 1
+        avg_daily_revenue = float(all_time_revenue) / days_active
+        
+        if avg_daily_revenue > 0:
+            percentage_change = ((float(target_revenue) - avg_daily_revenue) / avg_daily_revenue) * 100
+
+    # List of target's sales items
+    items_list = []
+    for item in target_items:
+        items_list.append({
+            "part_name": item.part.name,
+            "part_number": item.part.part_number,
+            "unit_price": item.unit_price,
+            "quantity": item.quantity,
+            "discount": item.discount,
+            "total_price": item.total_price
+        })
+
+    # Chart Data (Sales by hour)
+    hours = {i: {"hour": f"{i:02d}:00", "revenue": 0, "profit": 0} for i in range(8, 20)}
+    
+    for sale in target_sales:
+        hour = sale.created_at.astimezone(timezone.get_current_timezone()).hour
+        if hour not in hours:
+            hours[hour] = {"hour": f"{hour:02d}:00", "revenue": 0, "profit": 0}
+        hours[hour]["revenue"] += sale.total_amount
+        
+    for item in target_items:
+        hour = item.sale.created_at.astimezone(timezone.get_current_timezone()).hour
+        profit = (item.unit_price - item.part.buy_price) * item.quantity
+        if hour in hours:
+            hours[hour]["profit"] += profit
+
+    chart_data = [hours[h] for h in sorted(hours.keys())]
+
+    return Response({
+        "today_revenue": target_revenue,
+        "today_profit": target_profit,
+        "today_sales_count": target_sales_count,
+        "total_investment": total_investment,
+        "percentage_change": round(percentage_change, 2),
+        "avg_daily_revenue": round(avg_daily_revenue, 2),
+        "items": items_list,
+        "chart_data": chart_data
+    })

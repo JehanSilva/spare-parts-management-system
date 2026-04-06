@@ -51,10 +51,7 @@ const DailyReportPage = () => {
   };
 
   const formatLKR = (amount) => {
-    return new Intl.NumberFormat("en-LK", {
-      style: "currency",
-      currency: "LKR",
-    }).format(amount || 0);
+    return `LKR ${parseFloat(amount || 0).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const displayDateStr = new Date(selectedDate).toLocaleDateString("en-US", {
@@ -117,86 +114,88 @@ const DailyReportPage = () => {
         </div>
 
         {/* --- PRINTABLE REPORT CONTENT --- */}
-        <div className="print:block bg-white rounded-3xl md:shadow-lg border border-gray-100 print:border-none print:shadow-none p-6 md:p-10 print:p-12 print:m-0 w-full min-h-screen print:min-h-0">
+        <div className="print-report-container bg-white rounded-3xl md:shadow-lg border border-gray-100 print:border-none print:shadow-none p-6 md:p-10 w-full">
           
-          {/* Report Header for Print */}
-          <div className="mb-10 text-center border-b-[3px] border-red-600 pb-6 print:pb-4 print:mb-6">
-            <h1 className="text-3xl sm:text-4xl print:text-4xl font-extrabold text-gray-900 mb-2 uppercase tracking-wider">NSS Auto Spares</h1>
-            <h2 className="text-xl sm:text-2xl print:text-2xl font-bold text-gray-600">Daily Operating Report</h2>
-            <p className="text-gray-500 mt-2 font-medium print:text-lg">{displayDateStr}</p>
+          {/* Report Header */}
+          <div className="mb-10 print:mb-6 text-center border-b-[3px] border-red-600 pb-6 print:pb-4">
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 mb-2 uppercase tracking-wider">NSS Auto Spares</h1>
+            <h2 className="text-xl sm:text-2xl font-bold text-gray-600">Daily Operating Report</h2>
+            <p className="text-gray-500 mt-2 font-medium">{displayDateStr}</p>
           </div>
 
           {/* --- Key Metrics Grid --- */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-12 print:mb-8 print:grid-cols-4 print:gap-4">
+          <div className="print-metrics-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-12 print:mb-6">
             
             {/* Sales Count */}
-            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100 relative overflow-hidden print:border-gray-300">
-               <div className="flex items-center justify-between mb-4 relative z-10">
+            <div className="print-metric-card bg-gray-50 p-6 rounded-2xl border border-gray-100">
+               <div className="metric-icon flex items-center justify-between mb-4">
                   <div className="w-10 h-10 bg-indigo-100 text-indigo-600 rounded-lg flex items-center justify-center">
                     <ShoppingBag size={20} />
                   </div>
                </div>
-               <p className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1 relative z-10">Total Sales</p>
-               <p className="text-2xl font-black text-gray-900 relative z-10">{reportData.today_sales_count}</p>
+               <p className="metric-label text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Total Sales</p>
+               <p className="metric-value text-2xl font-black text-gray-900">{reportData.today_sales_count}</p>
             </div>
 
             {/* Revenue */}
-            <div className="bg-orange-50 p-6 rounded-2xl border border-orange-100 relative overflow-hidden print:border-gray-300 print:bg-white">
-               <div className="flex items-center justify-between mb-4 relative z-10">
+            <div className="print-metric-card bg-orange-50 p-6 rounded-2xl border border-orange-100">
+               <div className="metric-icon flex items-center justify-between mb-4">
                   <div className="w-10 h-10 bg-orange-100 text-orange-600 rounded-lg flex items-center justify-center">
                     <DollarSign size={20} />
                   </div>
                </div>
-               <p className="text-sm font-bold text-orange-800 uppercase tracking-wider mb-1 relative z-10">Revenue</p>
-               <p className="text-2xl font-black text-gray-900 relative z-10">{formatLKR(reportData.today_revenue)}</p>
+               <p className="metric-label text-sm font-bold text-orange-800 uppercase tracking-wider mb-1">Revenue</p>
+               <p className="metric-value text-2xl font-black text-gray-900">{formatLKR(reportData.today_revenue)}</p>
             </div>
 
-            {/* Profit */}
-            <div className="bg-green-50 p-6 rounded-2xl border border-green-100 relative overflow-hidden print:border-green-300 print:bg-white">
+            {/* Profit / Loss */}
+            <div className={`${reportData.today_profit >= 0 ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'} p-6 rounded-2xl border relative overflow-hidden print:border-gray-300 print:bg-white`}>
                <div className="flex items-center justify-between mb-4 relative z-10">
-                  <div className="w-10 h-10 bg-green-100 text-green-600 rounded-lg flex items-center justify-center">
+                  <div className={`w-10 h-10 ${reportData.today_profit >= 0 ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'} rounded-lg flex items-center justify-center`}>
                     <Activity size={20} />
                   </div>
                </div>
-               <p className="text-sm font-bold text-green-800 uppercase tracking-wider mb-1 relative z-10">Net Profit</p>
-               <p className="text-2xl font-black text-gray-900 relative z-10">{formatLKR(reportData.today_profit)}</p>
+               <p className={`text-sm font-bold ${reportData.today_profit >= 0 ? 'text-green-800' : 'text-red-800'} uppercase tracking-wider mb-1 relative z-10`}>
+                 {reportData.today_profit >= 0 ? 'Net Profit' : 'Net Loss'}
+               </p>
+               <p className={`text-2xl font-black ${reportData.today_profit >= 0 ? 'text-gray-900' : 'text-red-700'} relative z-10`}>
+                 {formatLKR(reportData.today_profit)}
+               </p>
             </div>
 
-            {/* Investment Valuation */}
-            <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100 relative overflow-hidden print:border-gray-300 print:bg-white">
-               <div className="flex items-center justify-between mb-4 relative z-10">
+            {/* Cost of Goods Sold */}
+            <div className="print-metric-card bg-blue-50 p-6 rounded-2xl border border-blue-100">
+               <div className="metric-icon flex items-center justify-between mb-4">
                   <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center">
                     <Package size={20} />
                   </div>
                </div>
-               <p className="text-sm font-bold text-blue-800 uppercase tracking-wider mb-1 relative z-10" title="Investment cost of items sold today">Cost of Goods Sold</p>
-               <p className="text-2xl font-black text-gray-900 relative z-10">
-                 {formatLKR(reportData.total_investment)}
-               </p>
+               <p className="metric-label text-sm font-bold text-blue-800 uppercase tracking-wider mb-1">Cost of Goods Sold</p>
+               <p className="metric-value text-2xl font-black text-gray-900">{formatLKR(reportData.total_investment)}</p>
             </div>
             
           </div>
 
           {/* --- Performance Indicator --- */}
-          <div className="mb-12 print:mb-8 bg-white p-4 sm:p-6 print:p-4 rounded-2xl border border-gray-100 shadow-sm print:shadow-none print:border print:border-gray-200 flex flex-col sm:flex-row items-center sm:justify-between gap-4 text-center sm:text-left">
+          <div className="print-performance mb-12 print:mb-6 bg-white p-4 sm:p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col sm:flex-row items-center sm:justify-between gap-4 text-center sm:text-left">
             <div>
-              <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-1 lg:text-xl print:text-lg">Performance vs All-Time Average</h3>
+              <h3 className="text-base sm:text-lg font-bold text-gray-800 mb-1">Performance vs All-Time Average</h3>
               <p className="text-xs sm:text-sm text-gray-500">Based on historical daily average of {formatLKR(reportData.avg_daily_revenue)}</p>
             </div>
-            <div className={`flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-3 print:py-2 rounded-full font-bold text-lg sm:text-xl print:text-lg w-full sm:w-auto justify-center ${
+            <div className={`flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-3 rounded-full font-bold text-lg sm:text-xl w-full sm:w-auto justify-center ${
               reportData.percentage_change >= 0 
-                ? 'bg-green-100 text-green-700 border border-green-200 print:border-green-400' 
-                : 'bg-red-100 text-red-700 border border-red-200 print:border-red-400'
+                ? 'bg-green-100 text-green-700 border border-green-200' 
+                : 'bg-red-100 text-red-700 border border-red-200'
             }`}>
-              {reportData.percentage_change >= 0 ? <TrendingUp className="print:w-5 print:h-5" size={24} /> : <TrendingDown className="print:w-5 print:h-5" size={24} />}
+              {reportData.percentage_change >= 0 ? <TrendingUp size={24} /> : <TrendingDown size={24} />}
               {Math.abs(reportData.percentage_change)}%
             </div>
           </div>
 
-          {/* --- Chart --- */}
-          <div className="mb-12 print:mb-8 print:break-inside-avoid">
-            <h3 className="text-lg sm:text-xl font-bold text-gray-800 mb-6 border-b border-gray-100 pb-2 print:border-gray-300">Hourly Revenue & Profit</h3>
-            <div className="h-64 sm:h-80 print:h-64 w-full bg-gray-50/50 p-2 sm:p-4 print:p-0 rounded-xl border border-gray-100 print:border-none print:bg-white text-xs sm:text-sm print:text-sm">
+          {/* --- Chart (hidden in print via CSS) --- */}
+          <div className="print-chart-section mb-12">
+            <h3 className="text-lg sm:text-xl font-bold text-gray-800 mb-6 border-b border-gray-100 pb-2">Hourly Revenue & Profit</h3>
+            <div className="h-64 sm:h-80 w-full bg-gray-50/50 p-2 sm:p-4 rounded-xl border border-gray-100 text-xs sm:text-sm">
               {reportData.chart_data && reportData.chart_data.some(d => d.revenue > 0) ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={reportData.chart_data}>
@@ -219,7 +218,7 @@ const DailyReportPage = () => {
           </div>
 
           {/* --- Sales Items Table --- */}
-          <div className="print:break-inside-avoid">
+          <div className="print-table-section">
             <h3 className="text-xl font-bold text-gray-800 mb-6 border-b border-gray-100 pb-2 flex items-center gap-2">
               <Package className="text-gray-400" />
               Itemized Sales Breakdown
@@ -227,51 +226,53 @@ const DailyReportPage = () => {
             
             {reportData.items && reportData.items.length > 0 ? (
               <div className="border border-gray-200 rounded-xl print:border-0 print:rounded-none mt-2 overflow-hidden">
-                <table className="w-full text-left bg-white text-xs md:text-sm print:text-sm print:border-collapse print:border-y print:border-gray-400 table-auto block md:table print:table">
-                  <thead className="hidden md:table-header-group bg-gray-100 text-gray-700 uppercase font-extrabold tracking-wider print:bg-gray-200 print:text-black border-b border-gray-200 print:border-y print:border-gray-400 text-[10px] md:text-xs print:text-xs print:table-header-group">
-                    <tr className="md:table-row print:table-row">
-                      <th className="p-3 md:p-4 print:py-3 print:px-2 w-full md:w-auto md:table-cell print:table-cell">Part Info</th>
-                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-right whitespace-nowrap md:table-cell print:table-cell">Unit Price</th>
-                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-center whitespace-nowrap md:table-cell print:table-cell">Qty</th>
-                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-right whitespace-nowrap md:table-cell print:table-cell">Discount</th>
-                      <th className="p-3 md:p-4 print:py-3 print:px-2 text-right whitespace-nowrap md:table-cell print:table-cell">Total</th>
+                <table className="w-full text-left bg-white text-xs md:text-sm">
+                  <thead className="bg-gray-100 text-gray-700 uppercase font-extrabold tracking-wider border-b border-gray-200 text-[10px] md:text-xs">
+                    <tr>
+                      <th className="col-part p-3 md:p-4">Part Info</th>
+                      <th className="col-price p-3 md:p-4 text-right">Unit Price</th>
+                      <th className="col-qty p-3 md:p-4 text-center">Qty</th>
+                      <th className="col-discount p-3 md:p-4 text-right">Discount</th>
+                      <th className="col-total p-3 md:p-4 text-right">Total</th>
+                      <th className="col-profit p-3 md:p-4 text-right text-green-700">Profit</th>
                     </tr>
                   </thead>
-                  <tbody className="block md:table-row-group print:table-row-group divide-y divide-gray-100 print:divide-y print:divide-dashed print:divide-gray-300">
+                  <tbody className="divide-y divide-gray-100">
                     {reportData.items.map((item, idx) => (
-                      <tr key={idx} className="block md:table-row print:table-row hover:bg-gray-50 transition-colors even:bg-white md:even:bg-gray-50/50 print:even:bg-transparent p-4 md:p-0 print:p-0">
-                        <td className="flex justify-between md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 align-top md:align-middle border-b md:border-none print:border-none border-gray-50">
-                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px] mt-1">Part Info</span>
-                          <div className="flex flex-col gap-1 text-right md:text-left">
-                            <span className="font-bold text-gray-900 text-sm md:text-base print:text-base print:whitespace-nowrap">{item.part_name}</span>
-                            <span className="text-[10px] md:text-xs print:text-xs text-gray-500 font-mono bg-gray-100 self-end md:self-start print:self-start px-2 py-0.5 rounded print:bg-transparent print:p-0 print:border print:border-gray-300 print:px-1 print:whitespace-nowrap">{item.part_number}</span>
+                      <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                        <td className="col-part p-3 md:p-4 align-middle">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-bold text-gray-900 text-sm md:text-base">{item.part_name}</span>
+                            <span className="text-[10px] md:text-xs text-gray-500 font-mono">{item.part_number}</span>
                           </div>
                         </td>
-                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 text-right font-medium text-gray-600 whitespace-nowrap align-middle border-b md:border-none print:border-none border-gray-50">
-                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px]">Unit Price</span>
-                          <span>{formatLKR(item.unit_price)}</span>
+                        <td className="col-price p-3 md:p-4 text-right font-medium text-gray-600 whitespace-nowrap align-middle">
+                          {formatLKR(item.unit_price)}
                         </td>
-                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 text-center align-middle border-b md:border-none print:border-none border-gray-50">
-                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px]">Qty</span>
-                          <span className="bg-gray-100 print:bg-transparent text-gray-800 px-2 md:px-3 py-1 print:p-0 rounded-full print:rounded-none font-bold inline-block whitespace-nowrap">{item.quantity}</span>
+                        <td className="col-qty p-3 md:p-4 text-center align-middle">
+                          <span className="bg-gray-100 print:bg-transparent text-gray-800 px-2 md:px-3 py-1 print:p-0 rounded-full print:rounded-none font-bold inline-block">{item.quantity}</span>
                         </td>
-                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 md:p-4 print:py-4 print:px-2 text-right text-red-500 font-medium whitespace-nowrap align-middle border-b md:border-none print:border-none border-gray-50">
-                          <span className="md:hidden print:hidden font-bold text-gray-400 uppercase text-[10px]">Discount</span>
-                          <span>{parseFloat(item.discount) > 0 ? `-${formatLKR(item.discount)}` : '-'}</span>
+                        <td className="col-discount p-3 md:p-4 text-right text-red-500 font-medium whitespace-nowrap align-middle">
+                          {parseFloat(item.discount) > 0 ? `-${formatLKR(item.discount)}` : '-'}
                         </td>
-                        <td className="flex justify-between items-center md:table-cell print:table-cell p-2 pt-3 md:p-4 print:py-4 print:px-2 text-right font-black text-gray-900 text-sm md:text-base print:text-base whitespace-nowrap align-middle">
-                          <span className="md:hidden print:hidden font-bold text-gray-800 uppercase text-[10px]">Total</span>
-                          <span>{formatLKR(item.total_price)}</span>
+                        <td className="col-total p-3 md:p-4 text-right font-black text-gray-900 text-sm md:text-base whitespace-nowrap align-middle">
+                          {formatLKR(item.total_price)}
+                        </td>
+                        <td className={`col-profit p-3 md:p-4 text-right font-bold text-sm md:text-base whitespace-nowrap align-middle ${item.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {item.profit >= 0 ? `+${formatLKR(item.profit)}` : formatLKR(item.profit)}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                   {/* Table Footer Totals */}
-                  <tfoot className="block md:table-footer-group print:table-footer-group bg-gray-50 font-bold print:bg-gray-100 border-t-2 border-gray-300 print:border-y-2 print:border-gray-800">
-                    <tr className="flex flex-row justify-between items-center md:table-row print:table-row p-4 md:p-0 print:p-0">
-                      <td colSpan="4" className="hidden md:table-cell print:table-cell p-3 md:p-4 print:py-4 print:px-2 text-right text-gray-700 uppercase tracking-wider text-[10px] md:text-xs print:text-xs">Total Revenue Today</td>
-                      <td className="md:hidden print:hidden text-gray-700 uppercase tracking-wider text-[11px]">Total Revenue</td>
-                      <td className="md:table-cell print:table-cell md:p-4 print:py-4 print:px-2 text-right text-lg md:text-xl print:text-xl text-gray-900 whitespace-nowrap">{formatLKR(reportData.today_revenue)}</td>
+                  <tfoot className="bg-gray-50 font-bold border-t-2 border-gray-300">
+                    <tr>
+                      <td colSpan="5" className="p-3 md:p-4 text-right text-gray-700 uppercase tracking-wider text-[10px] md:text-xs">Total Profit Review Today</td>
+                      <td className="p-3 md:p-4 text-right text-lg md:text-xl font-black text-green-700 whitespace-nowrap">{formatLKR(reportData.today_profit)}</td>
+                    </tr>
+                    <tr>
+                      <td colSpan="5" className="p-3 md:p-4 text-right text-gray-700 uppercase tracking-wider text-[10px] md:text-xs">Total Revenue Today</td>
+                      <td className="p-3 md:p-4 text-right text-lg md:text-xl text-gray-900 whitespace-nowrap">{formatLKR(reportData.today_revenue)}</td>
                     </tr>
                   </tfoot>
                 </table>

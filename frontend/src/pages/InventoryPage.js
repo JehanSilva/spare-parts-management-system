@@ -1,8 +1,7 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   Search,
   Plus,
-  Filter,
   AlertTriangle,
   Package,
   MapPin,
@@ -10,12 +9,14 @@ import {
   Trash2,
   Car,
   XCircle,
+  Download,
 } from "lucide-react";
 import {
   fetchParts,
   deletePart,
   createPart,
   updatePart,
+  fetchSuppliers,
 } from "../services/api";
 import AddPartForm from "../components/forms/AddPartForm";
 import AlertComponent from "../components/AlertComponent";
@@ -105,6 +106,228 @@ const PartDetailsModal = ({ part, onClose }) => {
   );
 };
 
+// --- SIMPLE REORDER LIST PDF (for out-of-stock — send to suppliers) ---
+const generateReorderListPDF = (parts, supplierName) => {
+  const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Reorder List - NSS Auto Spares</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11pt; padding: 40px; }
+        
+        .header { text-align: center; border-bottom: 3px solid #b91c1c; padding-bottom: 16px; margin-bottom: 24px; }
+        .header h1 { font-size: 22pt; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 4px; }
+        .header h2 { font-size: 14pt; font-weight: 700; color: #444; margin-bottom: 6px; }
+        .header p { font-size: 10pt; color: #666; }
+        
+        .info { margin-bottom: 20px; font-size: 10pt; color: #555; }
+        .info strong { color: #111; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        thead th { background: #f3f4f6; font-size: 9pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #374151; padding: 12px 12px; border-bottom: 2px solid #9ca3af; text-align: left; }
+        thead th.c { text-align: center; }
+        
+        tbody td { padding: 11px 12px; border-bottom: 1px solid #e5e7eb; font-size: 10.5pt; vertical-align: middle; }
+        tbody tr:nth-child(even) { background: #fafafa; }
+        tbody td.c { text-align: center; }
+        
+        .part-name { font-weight: 700; color: #111; }
+        .part-number { font-family: monospace; color: #374151; font-size: 10pt; }
+        .row-num { color: #9ca3af; font-weight: 600; }
+        
+        tfoot td { border-top: 2px solid #374151; font-weight: 800; padding: 12px; font-size: 10pt; }
+        
+        .footer { margin-top: 30px; text-align: center; font-size: 8pt; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+        
+        @media print {
+          body { padding: 0; }
+          @page { size: A4 portrait; margin: 15mm; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>NSS Auto Spares</h1>
+        <h2>Items to Reorder</h2>
+        <p>${dateStr}</p>
+      </div>
+
+      <div class="info">
+        ${supplierName ? `<strong>Supplier:</strong> ${supplierName} &nbsp;&bull;&nbsp;` : ''}
+        <strong>Total items to reorder:</strong> ${parts.length}
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th class="c" style="width: 8%">#</th>
+            <th style="width: 55%">Part Name</th>
+            <th style="width: 37%">Part Number</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${parts.map((part, idx) => `
+            <tr>
+              <td class="c row-num">${idx + 1}</td>
+              <td class="part-name">${part.name}</td>
+              <td class="part-number">${part.part_number}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" style="text-align: center;">Total: ${parts.length} items</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="footer">
+        Generated on ${new Date().toLocaleString()} &bull; NSS Auto Spares
+      </div>
+    </body>
+    </html>
+  `;
+
+  const printWindow = window.open("", "_blank");
+  printWindow.document.write(htmlContent);
+  printWindow.document.close();
+  printWindow.onload = () => { printWindow.print(); };
+};
+
+// --- DETAILED STOCK REPORT PDF (for low stock — internal use) ---
+const generateStockReportPDF = (parts, supplierName) => {
+  const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const formatLKR = (amount) => `LKR ${parseFloat(amount || 0).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const totalBuyValue = parts.reduce((sum, p) => sum + (parseFloat(p.buy_price) * p.stock_qty), 0);
+  const totalSellValue = parts.reduce((sum, p) => sum + (parseFloat(p.sell_price) * p.stock_qty), 0);
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Low Stock Report - NSS Auto Spares</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11pt; padding: 30px; }
+        
+        .header { text-align: center; border-bottom: 3px solid #b91c1c; padding-bottom: 16px; margin-bottom: 20px; }
+        .header h1 { font-size: 22pt; font-weight: 900; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 4px; }
+        .header h2 { font-size: 14pt; font-weight: 700; color: #444; margin-bottom: 6px; }
+        .header p { font-size: 10pt; color: #666; }
+        
+        .summary-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding: 12px 16px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+        .summary-item { text-align: center; }
+        .summary-item .label { font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 2px; }
+        .summary-item .value { font-size: 14pt; font-weight: 900; color: #111; }
+        
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        thead th { background: #f3f4f6; font-size: 8pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #374151; padding: 10px 8px; border-bottom: 2px solid #9ca3af; text-align: left; }
+        thead th.r { text-align: right; }
+        thead th.c { text-align: center; }
+        
+        tbody td { padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 10pt; vertical-align: middle; }
+        tbody tr:nth-child(even) { background: #fafafa; }
+        tbody td.r { text-align: right; }
+        tbody td.c { text-align: center; }
+        
+        .part-name { font-weight: 700; font-size: 10pt; color: #111; }
+        .part-number { font-size: 8pt; color: #6b7280; font-family: monospace; }
+        .stock-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 8pt; font-weight: 700; }
+        .stock-low { background: #fff7ed; color: #ea580c; border: 1px solid #fed7aa; }
+        
+        tfoot td { border-top: 2px solid #374151; font-weight: 800; padding: 10px 8px; font-size: 10pt; }
+        
+        .footer { margin-top: 24px; text-align: center; font-size: 8pt; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 12px; }
+        
+        @media print {
+          body { padding: 0; }
+          @page { size: A4 landscape; margin: 10mm; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>NSS Auto Spares</h1>
+        <h2>Low Stock Items Report</h2>
+        <p>${dateStr}${supplierName ? ` &bull; Supplier: ${supplierName}` : ' &bull; All Suppliers'}</p>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-item">
+          <div class="label">Total Items</div>
+          <div class="value">${parts.length}</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">Total Stock Qty</div>
+          <div class="value">${parts.reduce((sum, p) => sum + p.stock_qty, 0)}</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">Total Buy Value</div>
+          <div class="value">${formatLKR(totalBuyValue)}</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">Total Sell Value</div>
+          <div class="value">${formatLKR(totalSellValue)}</div>
+        </div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 5%">#</th>
+            <th style="width: 25%">Part Name</th>
+            <th style="width: 12%">Part No.</th>
+            <th style="width: 10%">Brand</th>
+            <th style="width: 12%">Supplier</th>
+            <th style="width: 8%">Location</th>
+            <th class="c" style="width: 7%">Stock</th>
+            <th class="r" style="width: 10%">Buy Price</th>
+            <th class="r" style="width: 11%">Sell Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${parts.map((part, idx) => `
+            <tr>
+              <td>${idx + 1}</td>
+              <td><div class="part-name">${part.name}</div></td>
+              <td><span class="part-number">${part.part_number}</span></td>
+              <td>${part.brand || "-"}</td>
+              <td>${part.supplier_details?.name || "N/A"}</td>
+              <td>${part.rack_location || "-"}</td>
+              <td class="c"><span class="stock-badge stock-low">${part.stock_qty}</span></td>
+              <td class="r">${formatLKR(part.buy_price)}</td>
+              <td class="r">${formatLKR(part.sell_price)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="6" style="text-align: right;">TOTALS</td>
+            <td class="c">${parts.reduce((sum, p) => sum + p.stock_qty, 0)}</td>
+            <td class="r">${formatLKR(totalBuyValue)}</td>
+            <td class="r">${formatLKR(totalSellValue)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="footer">
+        Generated on ${new Date().toLocaleString()} &bull; NSS Auto Spares Management System
+      </div>
+    </body>
+    </html>
+  `;
+
+  const printWindow = window.open("", "_blank");
+  printWindow.document.write(htmlContent);
+  printWindow.document.close();
+  printWindow.onload = () => { printWindow.print(); };
+};
+
 const InventoryPage = () => {
   const [parts, setParts] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -114,6 +337,8 @@ const InventoryPage = () => {
   // Filter States
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("");
+  const [selectedSupplier, setSelectedSupplier] = useState("");
+  const [suppliers, setSuppliers] = useState([]);
   
   const [stockFilter, setStockFilter] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -125,6 +350,7 @@ const InventoryPage = () => {
   const [deleteId, setDeleteId] = useState(null);
   const [selectedPart, setSelectedPart] = useState(null); // For details modal
   const pressTimer = useRef(null);
+  const debounceTimer = useRef(null);
 
   const startPress = (part) => {
     pressTimer.current = setTimeout(() => {
@@ -138,14 +364,28 @@ const InventoryPage = () => {
     }
   };
 
+  // --- Load suppliers on mount ---
+  useEffect(() => {
+    const loadSuppliers = async () => {
+      try {
+        const data = await fetchSuppliers();
+        setSuppliers(data);
+      } catch (err) {
+        console.error("Failed to load suppliers", err);
+      }
+    };
+    loadSuppliers();
+  }, []);
+
   // --- 1. Load Data ---
-  const loadData = async () => {
+  const loadData = useCallback(async (search, brand, stock, supplier) => {
     setLoading(true);
     try {
       const partsData = await fetchParts({
-        search: searchTerm,
-        brand: selectedBrand,
-        ...(stockFilter !== "all" && { stock_status: stockFilter }),
+        search: search,
+        brand: brand,
+        ...(stock !== "all" && { stock_status: stock }),
+        ...(supplier && { supplier: supplier }),
       });
       setParts(partsData);
     } catch (error) {
@@ -156,33 +396,33 @@ const InventoryPage = () => {
       });
     }
     setLoading(false);
-  };
+  }, []);
 
+  // Initial load
   useEffect(() => {
-    loadData();
+    loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // --- Debounced live search: fires on searchTerm or selectedBrand change ---
+  useEffect(() => {
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+    debounceTimer.current = setTimeout(() => {
+      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+    }, 400);
+
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    };
+  }, [searchTerm, selectedBrand]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- 2. Action Handlers ---
 
-  // Track applied filters to toggle between "Apply" and "Clear"
-  const [lastSearchTerm, setLastSearchTerm] = useState("");
-  const [lastSelectedBrand, setLastSelectedBrand] = useState("");
-  const [lastStockFilter, setLastStockFilter] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("filter") || "all";
-  });
-
-  const handleSearch = async (e) => {
-    e.preventDefault();
-    setLastSearchTerm(searchTerm);
-    setLastSelectedBrand(selectedBrand);
-    setLastStockFilter(stockFilter);
-    loadData();
-  };
-
   const handleStockFilter = (filter) => {
     setStockFilter(filter);
-    setLastStockFilter(filter);
     
     // Trigger load data immediately with the new filter
     setLoading(true);
@@ -190,10 +430,47 @@ const InventoryPage = () => {
       search: searchTerm,
       brand: selectedBrand,
       ...(filter !== "all" && { stock_status: filter }),
+      ...(selectedSupplier && { supplier: selectedSupplier }),
     }).then(data => {
       setParts(data);
       setLoading(false);
     }).catch(() => { setLoading(false); });
+  };
+
+  const handleSupplierChange = (supplierId) => {
+    setSelectedSupplier(supplierId);
+    
+    // Trigger load data immediately with the new supplier
+    setLoading(true);
+    fetchParts({
+      search: searchTerm,
+      brand: selectedBrand,
+      ...(stockFilter !== "all" && { stock_status: stockFilter }),
+      ...(supplierId && { supplier: supplierId }),
+    }).then(data => {
+      setParts(data);
+      setLoading(false);
+    }).catch(() => { setLoading(false); });
+  };
+
+  const handleClearFilters = () => {
+    setSearchTerm("");
+    setSelectedBrand("");
+    setSelectedSupplier("");
+    setStockFilter("all");
+    loadData("", "", "all", "");
+  };
+
+  const handleDownloadReport = () => {
+    if (parts.length === 0) {
+      setAlertInfo({ type: "error", message: "No items to download." });
+      return;
+    }
+    const supplierName = selectedSupplier
+      ? suppliers.find(s => String(s.id) === String(selectedSupplier))?.name || ""
+      : "";
+    // Simple reorder list — just part name & part number
+    generateReorderListPDF(parts, supplierName);
   };
 
   const handleEdit = (part) => {
@@ -214,7 +491,7 @@ const InventoryPage = () => {
     try {
       await deletePart(deleteId);
       setAlertInfo({ type: "success", message: "Part deleted successfully!" });
-      loadData();
+      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
     } catch (error) {
       setAlertInfo({
         type: "error",
@@ -257,7 +534,7 @@ const InventoryPage = () => {
         }
       }
 
-      loadData();
+      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
       handleFormClose();
     } catch (error) {
       console.error("Save Error:", error);
@@ -285,6 +562,9 @@ const InventoryPage = () => {
     }
     return "Vehicle";
   };
+
+  // Determine if download button should show
+  const showDownloadButton = stockFilter === "low" || stockFilter === "out";
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
@@ -351,10 +631,9 @@ const InventoryPage = () => {
         />
       )}
 
-      {/* Search & Filter Bar */}
-      <form
-        onSubmit={handleSearch}
-        className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-8 grid grid-cols-1 md:grid-cols-4 gap-4"
+      {/* Search & Filter Bar — live search, no submit button */}
+      <div
+        className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-4 grid grid-cols-1 md:grid-cols-4 gap-3"
       >
         <div className="relative md:col-span-2">
           <Search className="absolute left-3 top-3 text-gray-400" size={20} />
@@ -368,48 +647,37 @@ const InventoryPage = () => {
         </div>
         <input
           type="text"
-          placeholder="Filter by Manufacturer Brand"
+          placeholder="Filter by Brand"
           className="p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
           value={selectedBrand}
           onChange={(e) => setSelectedBrand(e.target.value)}
         />
-        
-        {/* Smart Button Logic: If text matches last search, show Clear. Else show Apply. */}
-        {(searchTerm || selectedBrand || stockFilter !== "all") && (searchTerm === lastSearchTerm && selectedBrand === lastSelectedBrand && stockFilter === lastStockFilter) ? (
-             <button
+        <div className="flex gap-2">
+          <select
+            value={selectedSupplier}
+            onChange={(e) => handleSupplierChange(e.target.value)}
+            className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none bg-white text-gray-700"
+          >
+            <option value="">All Suppliers</option>
+            {suppliers.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          {(searchTerm || selectedBrand || selectedSupplier || stockFilter !== "all") && (
+            <button
               type="button"
-              onClick={() => {
-                  setSearchTerm("");
-                  setSelectedBrand("");
-                  setStockFilter("all");
-                  setLastSearchTerm("");
-                  setLastSelectedBrand("");
-                  setLastStockFilter("all");
-                  // Trigger reload with empty params
-                  setLoading(true);
-                  fetchParts({ search: "", brand: "" }).then(data => {
-                      setParts(data);
-                      setLoading(false);
-                  }).catch(() => {
-                      setLoading(false);
-                  });
-              }}
-              className="bg-white border border-red-200 text-red-600 p-2 rounded hover:bg-red-50 flex items-center justify-center gap-2 font-bold transition-colors"
+              onClick={handleClearFilters}
+              className="bg-white border border-red-200 text-red-600 px-3 py-2 rounded hover:bg-red-50 flex items-center justify-center gap-1 font-bold transition-colors shrink-0"
+              title="Clear all filters"
             >
-              <XCircle size={18} /> Clear Filter
+              <XCircle size={18} />
             </button>
-        ) : (
-             <button
-              type="submit"
-              className="bg-gray-800 text-white p-2 rounded hover:bg-gray-900 flex items-center justify-center gap-2 font-bold transition-colors shadow-sm"
-            >
-              <Filter size={18} /> {searchTerm || selectedBrand ? "Apply Filters" : "Search"}
-            </button>
-        )}
-      </form>
+          )}
+        </div>
+      </div>
 
-      {/* Quick Filters */}
-      <div className="flex flex-wrap gap-2 mb-6">
+      {/* Quick Filters + Download Button */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
         <button
           onClick={() => handleStockFilter("all")}
           className={`px-4 py-1.5 rounded-full text-sm font-bold border transition-colors ${
@@ -440,6 +708,17 @@ const InventoryPage = () => {
         >
           Out of Stock
         </button>
+
+        {/* Download Report Button - visible when filtering by stock status */}
+        {showDownloadButton && parts.length > 0 && (
+          <button
+            onClick={handleDownloadReport}
+            className="ml-auto px-4 py-1.5 rounded-full text-sm font-bold border border-gray-800 bg-gray-800 text-white hover:bg-gray-900 transition-colors flex items-center gap-1.5 shadow-sm"
+          >
+            <Download size={14} />
+            Download Report ({parts.length})
+          </button>
+        )}
       </div>
 
       {/* Parts Grid */}

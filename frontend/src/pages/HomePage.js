@@ -15,6 +15,7 @@ import {
   AlertCircle,
   ArrowRight,
   FileText,
+  TrendingDown,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -216,18 +217,18 @@ const HomePage = () => {
                 </div>
               </div>
 
-              {/* 3. Net Profit Card */}
+              {/* 3. Net Profit / Loss Card */}
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-20 h-20 bg-green-50 rounded-bl-full -mr-6 -mt-6"></div>
+                <div className={`absolute top-0 right-0 w-20 h-20 ${stats.total_profit >= 0 ? 'bg-green-50' : 'bg-red-50'} rounded-bl-full -mr-6 -mt-6`}></div>
                 <div className="flex items-center justify-between mb-2 relative z-10">
                   <h3 className="text-gray-500 font-bold uppercase text-xs tracking-wider">
-                    Net Profit
+                    {stats.total_profit >= 0 ? 'Net Profit' : 'Net Loss'}
                   </h3>
-                  <div className="p-2 bg-green-50 rounded-lg text-green-500">
-                     <TrendingUp size={20} />
+                  <div className={`p-2 ${stats.total_profit >= 0 ? 'bg-green-50 text-green-500' : 'bg-red-50 text-red-500'} rounded-lg`}>
+                     {stats.total_profit >= 0 ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
                   </div>
                 </div>
-                <p className="text-3xl font-extrabold text-green-600 relative z-10">
+                <p className={`text-3xl font-extrabold ${stats.total_profit >= 0 ? 'text-green-600' : 'text-red-600'} relative z-10`}>
                   {formatLKR(stats.total_profit)}
                 </p>
                 <div className="mt-3 flex items-center text-xs text-gray-400 relative z-10">

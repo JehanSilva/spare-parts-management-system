@@ -135,14 +135,18 @@ const POSPage = () => {
     setVisibleCount(20);
   }, [searchTerm]);
 
-  // 2. Filter Parts (Memoized)
+  // 2. Filter Parts (Memoized) — keyword-based: ALL words must match
   const filteredParts = useMemo(() => {
-    return parts.filter(
-      (part) =>
-        part.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        part.part_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        part.brand.toLowerCase().includes(searchTerm.toLowerCase()),
-    );
+    const keywords = searchTerm.toLowerCase().split(/\s+/).filter(Boolean);
+    if (keywords.length === 0) return parts;
+    return parts.filter((part) => {
+      const name = part.name.toLowerCase();
+      const partNum = part.part_number.toLowerCase();
+      const brand = (part.brand || "").toLowerCase();
+      return keywords.every(
+        (kw) => name.includes(kw) || partNum.includes(kw) || brand.includes(kw)
+      );
+    });
   }, [parts, searchTerm]);
 
   // 3. Add to Cart

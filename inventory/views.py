@@ -96,31 +96,40 @@ def get_parts(request):
     search_query = request.query_params.get('search', '')
     brand_filter = request.query_params.get('brand', '')
     stock_status = request.query_params.get('stock_status', '')
+    supplier_filter = request.query_params.get('supplier', '')
 
     # 2. Start with all parts
     parts = Part.objects.all().order_by('-id')
 
-    # 3. Apply Search Filter (Name OR Part Number OR Description)
+    # 3. Apply Search Filter — split into keywords, ALL must match (AND logic)
+    #    Each keyword must appear in at least one field (name, part_number, description, vehicle make/model)
     if search_query:
-        parts = parts.filter(
-            Q(name__icontains=search_query) | 
-            Q(part_number__icontains=search_query) |
-            Q(description__icontains=search_query) |
-            Q(compatible_vehicles__make__icontains=search_query) |
-            Q(compatible_vehicles__model__icontains=search_query)
-        ).distinct()
+        keywords = search_query.split()
+        for keyword in keywords:
+            parts = parts.filter(
+                Q(name__icontains=keyword) | 
+                Q(part_number__icontains=keyword) |
+                Q(description__icontains=keyword) |
+                Q(compatible_vehicles__make__icontains=keyword) |
+                Q(compatible_vehicles__model__icontains=keyword)
+            )
+        parts = parts.distinct()
 
     # 4. Apply Brand Filter (Exact match or partial)
     if brand_filter:
         parts = parts.filter(brand__icontains=brand_filter)
 
-    # 5. Apply Stock Status filter
+    # 5. Apply Supplier Filter
+    if supplier_filter:
+        parts = parts.filter(supplier_id=supplier_filter)
+
+    # 6. Apply Stock Status filter
     if stock_status == 'out':
         parts = parts.filter(stock_qty=0)
     elif stock_status == 'low':
         parts = parts.filter(stock_qty=1)
 
-    # 6. Serialize and return
+    # 7. Serialize and return
     serializer = PartSerializer(parts, many=True)
     return Response(serializer.data)
 
@@ -332,9 +341,12 @@ def dashboard_stats(request):
     profit = 0
     sale_items = SaleItem.objects.all()
     for item in sale_items:
-        cost = item.part.buy_price * item.quantity
-        revenue = item.unit_price * item.quantity
-        profit += (revenue - cost)
+        # Profit = (Revenue with discount) - (Cost)
+        # item.unit_price is the marked sell price. item.discount is the deduction.
+        # item.part.buy_price is the purchase cost.
+        actual_revenue = (item.unit_price - item.discount) * item.quantity
+        total_cost = item.part.buy_price * item.quantity
+        profit += (actual_revenue - total_cost)
 
     # Low Stock Items
     low_stock = Part.objects.filter(stock_qty__lte=F('min_stock_level')).values('name', 'stock_qty')
@@ -383,9 +395,9 @@ def get_dashboard_stats(request):
     sales_data = sales_query.aggregate(total=Sum('total_amount'))
     total_sales = sales_data['total'] or 0
 
-    # 3. Calculate Profit - FILTERED BY DATE
+    # 3. Calculate Profit - FILTERED BY DATE (Accounts for discounts)
     profit_data = sale_items_query.aggregate(
-        total_profit=Sum((F('unit_price') - F('part__buy_price')) * F('quantity'))
+        total_profit=Sum((F('unit_price') - F('discount') - F('part__buy_price')) * F('quantity'))
     )
     total_profit = profit_data['total_profit'] or 0
 
@@ -428,7 +440,7 @@ def get_dashboard_stats(request):
     profit_trend_query = sale_items_query.filter(sale__status='COMPLETED')\
         .annotate(date=TruncDate('sale__created_at'))\
         .values('date')\
-        .annotate(daily_profit=Sum((F('unit_price') - F('part__buy_price')) * F('quantity')))\
+        .annotate(daily_profit=Sum((F('unit_price') - F('discount') - F('part__buy_price')) * F('quantity')))\
         .order_by('date')
     
     trend_dict = {}
@@ -492,7 +504,7 @@ def daily_report(request):
     target_revenue = sales_data['total'] or 0
 
     profit_cost_data = target_items.aggregate(
-        total_profit=Sum((F('unit_price') - F('part__buy_price')) * F('quantity')),
+        total_profit=Sum((F('unit_price') - F('discount') - F('part__buy_price')) * F('quantity')),
         total_cost=Sum(F('part__buy_price') * F('quantity'))
     )
     target_profit = profit_cost_data['total_profit'] or 0
@@ -520,13 +532,16 @@ def daily_report(request):
     # List of target's sales items
     items_list = []
     for item in target_items:
+        # Net Profit = ((Sell Price - Discount) - Buy Price) * Quantity
+        item_profit = (item.unit_price - item.discount - item.part.buy_price) * item.quantity
         items_list.append({
             "part_name": item.part.name,
             "part_number": item.part.part_number,
             "unit_price": item.unit_price,
             "quantity": item.quantity,
             "discount": item.discount,
-            "total_price": item.total_price
+            "total_price": item.total_price,
+            "profit": item_profit
         })
 
     # Chart Data (Sales by hour)
@@ -540,7 +555,7 @@ def daily_report(request):
         
     for item in target_items:
         hour = item.sale.created_at.astimezone(timezone.get_current_timezone()).hour
-        profit = (item.unit_price - item.part.buy_price) * item.quantity
+        profit = (item.unit_price - item.discount - item.part.buy_price) * item.quantity
         if hour in hours:
             hours[hour]["profit"] += profit
 

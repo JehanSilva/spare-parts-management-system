@@ -564,7 +564,7 @@ const InventoryPage = () => {
   };
 
   // Determine if download button should show
-  const showDownloadButton = stockFilter === "low" || stockFilter === "out";
+  const showDownloadButton = stockFilter === "low" || stockFilter === "out" || stockFilter === "no_price";
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
@@ -707,6 +707,16 @@ const InventoryPage = () => {
           }`}
         >
           Out of Stock
+        </button>
+        <button
+          onClick={() => handleStockFilter("no_price")}
+          className={`px-4 py-1.5 rounded-full text-sm font-bold border transition-colors flex items-center gap-1 ${
+            stockFilter === "no_price"
+              ? "bg-purple-600 text-white border-purple-600 shadow-sm"
+              : "bg-white text-purple-600 border-purple-200 hover:bg-purple-50"
+          }`}
+        >
+          Invalid Pricing
         </button>
 
         {/* Download Report Button - visible when filtering by stock status */}

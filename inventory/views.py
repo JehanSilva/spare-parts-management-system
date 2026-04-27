@@ -128,6 +128,8 @@ def get_parts(request):
         parts = parts.filter(stock_qty=0)
     elif stock_status == 'low':
         parts = parts.filter(stock_qty=1)
+    elif stock_status == 'no_price':
+        parts = parts.filter(Q(buy_price=0) | Q(sell_price=0))
 
     # 7. Serialize and return
     serializer = PartSerializer(parts, many=True)

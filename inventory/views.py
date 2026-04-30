@@ -129,7 +129,7 @@ def get_parts(request):
     elif stock_status == 'low':
         parts = parts.filter(stock_qty=1)
     elif stock_status == 'no_price':
-        parts = parts.filter(Q(buy_price=0) | Q(sell_price=0))
+        parts = parts.filter(Q(buy_price=0) | Q(sell_price=0) | Q(image__exact='') | Q(image__isnull=True))
 
     # 7. Serialize and return
     serializer = PartSerializer(parts, many=True)
@@ -572,4 +572,121 @@ def daily_report(request):
         "avg_daily_revenue": round(avg_daily_revenue, 2),
         "items": items_list,
         "chart_data": chart_data
-    })
+    })
+
+@api_view(['POST'])
+def bulk_upload_parts(request):
+    """
+    Handle bulk uploading parts from an Excel file.
+    """
+    if 'file' not in request.FILES:
+        return Response({"error": "No file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+        
+    excel_file = request.FILES['file']
+    
+    if not excel_file.name.endswith('.xlsx') and not excel_file.name.endswith('.xls'):
+        return Response({"error": "Invalid file format. Only Excel files are supported."}, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        import pandas as pd
+        # Read the Excel file into a pandas dataframe without assuming a header row
+        df = pd.read_excel(excel_file, header=None)
+        
+        # Find the row that contains 'Part Number' (case insensitive)
+        header_idx = -1
+        for i in range(min(20, len(df))):
+            row_values = [str(v).strip().lower() for v in df.iloc[i].values if pd.notna(v)]
+            if 'part number' in row_values:
+                header_idx = i
+                break
+                
+        if header_idx != -1:
+            # Set the columns to this row
+            df.columns = [str(c).strip() for c in df.iloc[header_idx].values]
+            # Drop the header row and everything above it
+            df = df.iloc[header_idx+1:].reset_index(drop=True)
+        else:
+            # No header row found. Assume standard column order from screenshot:
+            # 0:Part Name, 1:Part Number, 2:Brand, 3:Supplier, 4:Cost price, 5:Selling Price, 6:Current Stock
+            expected_cols = ['Part Name', 'Part Number', 'Brand', 'Supplier', 'Cost price', 'Selling Price', 'Current Stock', 'fits Vehicles']
+            
+            # Ensure we don't crash if there are fewer or more columns
+            new_cols = []
+            for i in range(len(df.columns)):
+                if i < len(expected_cols):
+                    new_cols.append(expected_cols[i])
+                else:
+                    new_cols.append(f"Unnamed_{i}")
+            df.columns = new_cols
+        
+        created_count = 0
+        updated_count = 0
+        
+        # Start transaction for safety
+        with transaction.atomic():
+            for index, row in df.iterrows():
+                part_number = str(row.get('Part Number', '')).strip()
+                if pd.isna(row.get('Part Number')) or not part_number:
+                    continue # Skip empty rows
+                
+                # Extract values
+                name = str(row.get('Part Name', '')).strip()
+                brand = str(row.get('Brand', '')).strip()
+                
+                # Handle Supplier
+                supplier_name = str(row.get('Supplier', '')).strip()
+                supplier_obj = None
+                if not pd.isna(row.get('Supplier')) and supplier_name and supplier_name.lower() != 'nan':
+                    supplier_obj, _ = Supplier.objects.get_or_create(name=supplier_name)
+                    
+                # Handle prices and stock
+                try:
+                    buy_price = float(row.get('Cost price', 0)) if not pd.isna(row.get('Cost price')) else 0
+                except ValueError:
+                    buy_price = 0
+                    
+                try:
+                    sell_price = float(row.get('Selling Price', 0)) if not pd.isna(row.get('Selling Price')) else 0
+                except ValueError:
+                    sell_price = 0
+                    
+                try:
+                    stock_qty = int(row.get('Current Stock', 0)) if not pd.isna(row.get('Current Stock')) else 0
+                except ValueError:
+                    stock_qty = 0
+                
+                if pd.isna(name) or name.lower() == 'nan':
+                    name = "Unnamed Part"
+                if pd.isna(brand) or brand.lower() == 'nan':
+                    brand = ""
+                    
+                # Create or Update Part
+                part, created = Part.objects.update_or_create(
+                    part_number=part_number,
+                    defaults={
+                        'name': name,
+                        'brand': brand,
+                        'supplier': supplier_obj,
+                        'buy_price': buy_price,
+                        'sell_price': sell_price,
+                    }
+                )
+                
+                if created:
+                    part.stock_qty = stock_qty
+                    created_count += 1
+                else:
+                    # Update stock to match excel
+                    part.stock_qty = stock_qty
+                    updated_count += 1
+                    
+                part.save()
+                
+        return Response({
+            "message": f"Successfully processed Excel file. Created {created_count} new parts, Updated {updated_count} existing parts.",
+            "created": created_count,
+            "updated": updated_count
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response({"error": f"Error processing file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

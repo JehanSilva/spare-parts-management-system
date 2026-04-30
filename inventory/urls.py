@@ -12,6 +12,7 @@ urlpatterns = [
     path('parts/', views.get_parts, name='get_parts'),
     path('parts/minimal/', views.get_parts_minimal, name='get_parts_minimal'),
     path('parts/add/', views.add_part, name='add_part'),
+    path('parts/bulk-upload/', views.bulk_upload_parts, name='bulk_upload_parts'),
     path('parts/<uuid:pk>/update/', views.update_part, name='update_part'),
     path('parts/<uuid:pk>/delete/', views.delete_part, name='delete_part'),
 

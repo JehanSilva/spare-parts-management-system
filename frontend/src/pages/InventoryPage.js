@@ -17,6 +17,7 @@ import {
   createPart,
   updatePart,
   fetchSuppliers,
+  bulkUploadParts,
 } from "../services/api";
 import AddPartForm from "../components/forms/AddPartForm";
 import AlertComponent from "../components/AlertComponent";
@@ -332,6 +333,8 @@ const InventoryPage = () => {
   const [parts, setParts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef(null);
   const [editingPart, setEditingPart] = useState(null);
 
   // Filter States
@@ -479,6 +482,29 @@ const InventoryPage = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setAlertInfo({ type: "info", message: "Uploading and processing Excel file... Please wait." });
+
+    try {
+      const response = await bulkUploadParts(file);
+      setAlertInfo({ type: "success", message: response.message || "Excel file processed successfully!" });
+      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+    } catch (error) {
+      console.error("Upload Error:", error);
+      const errorMsg = error.response?.data?.error || "Failed to upload file.";
+      setAlertInfo({ type: "error", message: errorMsg });
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""; // Reset input
+      }
+    }
+  };
+
   // Step A: Trigger Delete Modal
   const confirmDelete = (id) => {
     setDeleteId(id);
@@ -599,27 +625,44 @@ const InventoryPage = () => {
             Manage spare parts, stock levels, and prices.
           </p>
         </div>
-        <button
-          onClick={() => {
-            if (showForm) handleFormClose();
-            else setShowForm(true);
-          }}
-          className={`w-full md:w-auto px-6 py-2 rounded-lg shadow transition flex items-center justify-center gap-2 font-bold text-white ${
-            showForm
-              ? "bg-gray-500 hover:bg-gray-600"
-              : "bg-red-600 hover:bg-red-700"
-          }`}
-        >
-          <Plus
-            size={20}
-            className={
-              showForm
-                ? "rotate-45 transition-transform"
-                : "transition-transform"
-            }
+        <div className="flex w-full md:w-auto gap-2">
+          <input
+            type="file"
+            accept=".xlsx, .xls"
+            className="hidden"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
           />
-          {showForm ? "Close Form" : "Add New Part"}
-        </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isUploading}
+            className="w-full md:w-auto px-4 py-2 rounded-lg shadow transition flex items-center justify-center gap-2 font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50"
+          >
+            <Download size={20} className="rotate-180" />
+            {isUploading ? "Uploading..." : "Import Excel"}
+          </button>
+          <button
+            onClick={() => {
+              if (showForm) handleFormClose();
+              else setShowForm(true);
+            }}
+            className={`w-full md:w-auto px-6 py-2 rounded-lg shadow transition flex items-center justify-center gap-2 font-bold text-white ${
+              showForm
+                ? "bg-gray-500 hover:bg-gray-600"
+                : "bg-red-600 hover:bg-red-700"
+            }`}
+          >
+            <Plus
+              size={20}
+              className={
+                showForm
+                  ? "rotate-45 transition-transform"
+                  : "transition-transform"
+              }
+            />
+            {showForm ? "Close Form" : "Add New Part"}
+          </button>
+        </div>
       </div>
 
       {/* Add/Edit Part Form */}
@@ -716,7 +759,7 @@ const InventoryPage = () => {
               : "bg-white text-purple-600 border-purple-200 hover:bg-purple-50"
           }`}
         >
-          Invalid Pricing
+          Invalid Price / No Image
         </button>
 
         {/* Download Report Button - visible when filtering by stock status */}

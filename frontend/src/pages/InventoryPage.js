@@ -20,6 +20,7 @@ import {
   bulkUploadParts,
 } from "../services/api";
 import AddPartForm from "../components/forms/AddPartForm";
+import QuickRestockModal from "../components/forms/QuickRestockModal";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 
@@ -33,6 +34,13 @@ const PartDetailsModal = ({ part, onClose }) => {
     }
     return "Vehicle";
   };
+
+  // Calculate profit margin
+  const totalSold = part.total_sold || 0;
+  const totalRevenue = part.total_revenue || 0;
+  const totalCost = part.total_cost || 0;
+  const totalProfit = totalRevenue - totalCost;
+  const profitMargin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={onClose}>
@@ -51,13 +59,13 @@ const PartDetailsModal = ({ part, onClose }) => {
               </div>
             )}
             <div className="flex-1 w-full overflow-hidden">
-               <h2 className="text-xl sm:text-2xl font-bold text-gray-800 leading-tight mb-2 truncate max-w-full" title={part.name}>{part.name}</h2>
-               <p className="text-sm text-gray-500 font-mono mb-3 py-1 px-2 bg-gray-100 rounded inline-block truncate max-w-full">
+               <h2 className="text-xl sm:text-2xl font-bold text-gray-800 leading-tight mb-2 break-words">{part.name}</h2>
+               <p className="text-sm text-gray-500 font-mono mb-3 py-1 px-2 bg-gray-100 rounded inline-block break-all">
                  Part No: {part.part_number}
                </p>
                {part.brand && (
                  <div className="mb-3">
-                   <span className="bg-red-50 text-red-800 text-xs font-bold px-2.5 py-1 rounded-md border border-red-100 uppercase tracking-wide truncate max-w-full inline-block">{part.brand}</span>
+                   <span className="bg-red-50 text-red-800 text-xs font-bold px-2.5 py-1 rounded-md border border-red-100 uppercase tracking-wide inline-block break-words">{part.brand}</span>
                  </div>
                )}
             </div>
@@ -67,23 +75,46 @@ const PartDetailsModal = ({ part, onClose }) => {
              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 flex flex-col">
                <p className="text-xs text-gray-500 mb-1 flex items-center gap-1 shrink-0"><AlertTriangle size={12} /> Stock Qty</p>
                <div className="flex items-center gap-2">
-                 <p className={`text-xl font-bold truncate ${part.stock_qty <= 1 ? "text-red-600" : "text-gray-800"}`}>
+                 <p className={`text-xl font-bold break-words ${part.stock_qty <= 1 ? "text-red-600" : "text-gray-800"}`}>
                    {part.stock_qty}
                  </p>
                  {part.stock_qty <= 1 && <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full uppercase shrink-0">Low</span>}
                </div>
              </div>
-             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 overflow-hidden text-ellipsis whitespace-nowrap">
+             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
                <p className="text-xs text-gray-500 mb-1 flex items-center gap-1 shrink-0"><MapPin size={12} /> Location</p>
-               <p className="text-lg sm:text-xl font-bold text-gray-800 truncate" title={part.rack_location || "N/A"}>{part.rack_location || "N/A"}</p>
+               <p className="text-lg sm:text-xl font-bold text-gray-800 break-words">{part.rack_location || "N/A"}</p>
              </div>
-             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 overflow-hidden text-ellipsis whitespace-nowrap">
+             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
                <p className="text-xs text-gray-500 mb-1 shrink-0">Buy Price</p>
-               <p className="text-lg font-bold text-gray-800 truncate" title={`LKR ${part.buy_price}`}>LKR {part.buy_price}</p>
+               <p className="text-lg font-bold text-gray-800 break-words">LKR {part.buy_price}</p>
              </div>
-             <div className="bg-red-50 p-3 rounded-xl border border-red-100 overflow-hidden text-ellipsis whitespace-nowrap">
+             <div className="bg-red-50 p-3 rounded-xl border border-red-100">
                <p className="text-xs text-red-500 mb-1 font-semibold shrink-0">Sell Price</p>
-               <p className="text-lg font-bold text-red-700 truncate" title={`LKR ${part.sell_price}`}>LKR {part.sell_price}</p>
+               <p className="text-lg font-bold text-red-700 break-words">LKR {part.sell_price}</p>
+             </div>
+             
+             {/* New Supplier and Description fields */}
+             <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 col-span-2 sm:col-span-1">
+               <p className="text-xs text-gray-500 mb-1 shrink-0">Supplier</p>
+               <p className="text-md font-bold text-gray-800 break-words">{part.supplier_details?.name || "N/A"}</p>
+             </div>
+             
+             {part.description && (
+               <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 col-span-2 sm:col-span-1">
+                 <p className="text-xs text-gray-500 mb-1 shrink-0">Description</p>
+                 <p className="text-sm text-gray-800 break-words whitespace-pre-wrap">{part.description}</p>
+               </div>
+             )}
+             
+             {/* New Sales and Profit Fields */}
+             <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 flex flex-col">
+               <p className="text-xs text-blue-500 mb-1 shrink-0 font-semibold">Total Sold</p>
+               <p className="text-xl font-bold text-blue-800 break-words">{totalSold} units</p>
+             </div>
+             <div className="bg-green-50 p-3 rounded-xl border border-green-100 flex flex-col">
+               <p className="text-xs text-green-600 mb-1 shrink-0 font-semibold">Profit Margin</p>
+               <p className="text-xl font-bold text-green-800 break-words">{profitMargin}%</p>
              </div>
           </div>
 
@@ -336,6 +367,7 @@ const InventoryPage = () => {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const [editingPart, setEditingPart] = useState(null);
+  const [showRestockModal, setShowRestockModal] = useState(false);
 
   // Filter States
   const [searchTerm, setSearchTerm] = useState("");
@@ -597,6 +629,17 @@ const InventoryPage = () => {
       {/* --- DETAILS MODAL --- */}
       <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />
 
+      {/* --- QUICK RESTOCK MODAL --- */}
+      {showRestockModal && (
+        <QuickRestockModal
+          onClose={() => setShowRestockModal(false)}
+          onSuccess={(msg) => {
+            setAlertInfo({ type: "success", message: msg });
+            loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+          }}
+        />
+      )}
+
       {/* --- CONFIRM MODAL --- */}
       <ConfirmModal
         isOpen={!!deleteId}
@@ -640,6 +683,13 @@ const InventoryPage = () => {
           >
             <Download size={20} className="rotate-180" />
             {isUploading ? "Uploading..." : "Import Excel"}
+          </button>
+          <button
+            onClick={() => setShowRestockModal(true)}
+            className="w-full md:w-auto px-4 py-2 rounded-lg shadow transition flex items-center justify-center gap-2 font-bold text-white bg-blue-600 hover:bg-blue-700"
+          >
+            <Package size={20} />
+            Quick Restock
           </button>
           <button
             onClick={() => {

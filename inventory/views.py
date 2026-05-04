@@ -98,8 +98,27 @@ def get_parts(request):
     stock_status = request.query_params.get('stock_status', '')
     supplier_filter = request.query_params.get('supplier', '')
 
-    # 2. Start with all parts
-    parts = Part.objects.all().order_by('-id')
+    # 2. Start with all parts, annotated with sales stats
+    from django.db.models import Sum, F, Q, ExpressionWrapper, FloatField
+    
+    completed_sales = Q(saleitem__sale__status='COMPLETED')
+    parts = Part.objects.all().annotate(
+        total_sold=Sum('saleitem__quantity', filter=completed_sales),
+        total_revenue=Sum(
+            ExpressionWrapper(
+                (F('saleitem__unit_price') - F('saleitem__discount')) * F('saleitem__quantity'),
+                output_field=FloatField()
+            ),
+            filter=completed_sales
+        ),
+        total_cost=Sum(
+            ExpressionWrapper(
+                F('buy_price') * F('saleitem__quantity'),
+                output_field=FloatField()
+            ),
+            filter=completed_sales
+        )
+    ).order_by('-id')
 
     # 3. Apply Search Filter — split into keywords, ALL must match (AND logic)
     #    Each keyword must appear in at least one field (name, part_number, description, vehicle make/model)
@@ -214,6 +233,38 @@ def delete_part(request, pk):
         return Response({"error": "Cannot delete part with sales history."}, status=status.HTTP_400_BAD_REQUEST)
     part.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+@api_view(['POST'])
+def restock_part(request, pk):
+    """
+    Quick Restock: Add stock and calculate new weighted average buy price
+    """
+    part = get_object_or_404(Part, pk=pk)
+    
+    try:
+        add_qty = int(request.data.get('added_quantity', 0))
+        new_buy_price = float(request.data.get('new_buy_price', 0))
+    except (ValueError, TypeError):
+        return Response({"error": "Invalid quantity or price format."}, status=status.HTTP_400_BAD_REQUEST)
+        
+    if add_qty <= 0:
+        return Response({"error": "Added quantity must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+        
+    # Weighted Average Cost Calculation
+    old_qty = part.stock_qty
+    old_val = old_qty * float(part.buy_price)
+    new_val = add_qty * new_buy_price
+    
+    total_qty = old_qty + add_qty
+    
+    # Calculate new average
+    new_avg_price = round((old_val + new_val) / total_qty, 2)
+    
+    part.stock_qty = total_qty
+    part.buy_price = new_avg_price
+    part.save()
+    
+    return Response(PartSerializer(part).data)
 
 # --- SALES & BILLING VIEWS ---
 @api_view(['POST'])
@@ -676,8 +727,22 @@ def bulk_upload_parts(request):
                     part.stock_qty = stock_qty
                     created_count += 1
                 else:
-                    # Update stock to match excel
-                    part.stock_qty = stock_qty
+                    # Restock existing item: Weighted Average Cost calculation
+                    old_qty = part.stock_qty
+                    new_qty = stock_qty
+                    
+                    if new_qty > 0:
+                        total_qty = old_qty + new_qty
+                        old_val = old_qty * float(part.buy_price)
+                        new_val = new_qty * float(buy_price)
+                        
+                        part.buy_price = round((old_val + new_val) / total_qty, 2)
+                        part.stock_qty += new_qty
+                        
+                    # Also update sell_price if provided in excel and > 0
+                    if sell_price > 0:
+                        part.sell_price = sell_price
+                        
                     updated_count += 1
                     
                 part.save()

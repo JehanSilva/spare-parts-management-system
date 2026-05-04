@@ -17,6 +17,9 @@ class VehicleSerializer(serializers.ModelSerializer):
 class PartSerializer(serializers.ModelSerializer):
     # Read-only nested supplier details for display
     supplier_details = SupplierSerializer(source='supplier', read_only=True)
+    total_sold = serializers.IntegerField(read_only=True)
+    total_revenue = serializers.FloatField(read_only=True)
+    total_cost = serializers.FloatField(read_only=True)
 
     class Meta:
         model = Part

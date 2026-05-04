@@ -90,14 +90,34 @@ const ProductItem = memo(({ part, onAddToCart }) => {
 
 const POSPage = () => {
   const [parts, setParts] = useState([]);
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState(() => {
+    const saved = localStorage.getItem("pos_cart");
+    return saved ? JSON.parse(saved) : [];
+  });
   const [searchTerm, setSearchTerm] = useState("");
   const [mobileView, setMobileView] = useState("products");
   const [visibleCount, setVisibleCount] = useState(20);
 
   // Form States
-  const [customerName, setCustomerName] = useState("");
-  const [vehicleNumber, setVehicleNumber] = useState("");
+  const [customerName, setCustomerName] = useState(() => {
+    return localStorage.getItem("pos_customer") || "";
+  });
+  const [vehicleNumber, setVehicleNumber] = useState(() => {
+    return localStorage.getItem("pos_vehicle") || "";
+  });
+
+  // Persist State to LocalStorage
+  useEffect(() => {
+    localStorage.setItem("pos_cart", JSON.stringify(cart));
+  }, [cart]);
+  
+  useEffect(() => {
+    localStorage.setItem("pos_customer", customerName);
+  }, [customerName]);
+  
+  useEffect(() => {
+    localStorage.setItem("pos_vehicle", vehicleNumber);
+  }, [vehicleNumber]);
 
   const [loading, setLoading] = useState(false);
   const [partsLoading, setPartsLoading] = useState(true);
@@ -171,8 +191,8 @@ const POSPage = () => {
         setAlertInfo({ type: "error", message: "Item is Out of Stock!" });
         return;
       }
-      // IMPORTANT: Initialize discountAmount to 0
-      setCart([...cart, { ...part, quantity: 1, discountAmount: 0 }]);
+      // Add to the top of the cart instead of the bottom
+      setCart([{ ...part, quantity: 1, discountAmount: 0 }, ...cart]);
     }
   };
 

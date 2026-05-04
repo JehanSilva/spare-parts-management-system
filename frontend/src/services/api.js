@@ -67,6 +67,9 @@ export const updatePart = async (id, data) =>
   (await API.put(`/parts/${id}/update/`, data)).data;
 export const deletePart = async (id) =>
   await API.delete(`/parts/${id}/delete/`);
+export const restockPart = async (id, data) =>
+  (await API.post(`/parts/${id}/restock/`, data)).data;
+
 
 export const fetchSuppliers = async () => (await API.get("/suppliers/")).data;
 export const createSupplier = async (data) =>

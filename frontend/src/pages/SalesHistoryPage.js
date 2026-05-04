@@ -81,6 +81,7 @@ const SalesHistoryPage = () => {
   const [parts, setParts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [filterDate, setFilterDate] = useState("");
   const [expandedSaleId, setExpandedSaleId] = useState(null);
 
   // --- Modal & Alert State ---
@@ -174,6 +175,11 @@ const SalesHistoryPage = () => {
     setShowCancelConfirm(true);
   };
 
+  const getPartNumber = (partId) => {
+    const p = parts.find((part) => part.id === partId);
+    return p ? p.part_number : "";
+  };
+
   const handleExecuteCancel = async () => {
     try {
       const result = await cancelSale(saleToCancel.id);
@@ -185,13 +191,27 @@ const SalesHistoryPage = () => {
     }
   };
 
-  const filteredSales = sales.filter(
-    (sale) =>
-      sale.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (sale.vehicle_number &&
-        sale.vehicle_number.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      sale.id.includes(searchTerm),
-  );
+  const filteredSales = sales.filter((sale) => {
+    const searchLower = searchTerm.toLowerCase();
+    
+    // Check if the sale matches the search term (Customer, Vehicle, ID, or Items)
+    const matchSearch =
+      !searchTerm ||
+      sale.customer_name.toLowerCase().includes(searchLower) ||
+      (sale.vehicle_number && sale.vehicle_number.toLowerCase().includes(searchLower)) ||
+      sale.id.includes(searchTerm) ||
+      sale.items.some((item) => {
+        const pName = (item.part_name || "").toLowerCase();
+        const pNum = getPartNumber(item.part || item.part_id).toLowerCase();
+        return pName.includes(searchLower) || pNum.includes(searchLower);
+      });
+
+    // Check if the sale matches the selected date
+    // sale.created_at is typically "YYYY-MM-DDTHH:MM..."
+    const matchDate = !filterDate || sale.created_at.startsWith(filterDate);
+
+    return matchSearch && matchDate;
+  });
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleString("en-LK", {
@@ -212,10 +232,6 @@ const SalesHistoryPage = () => {
     }).format(amount);
   };
 
-  const getPartNumber = (partId) => {
-    const p = parts.find((part) => part.id === partId);
-    return p ? p.part_number : "";
-  };
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50">
@@ -260,16 +276,41 @@ const SalesHistoryPage = () => {
         )}
       </div>
 
-      {/* Search Bar */}
-      <div className="relative mb-6 max-w-md w-full">
-        <Search className="absolute left-3 top-3 text-gray-400" size={20} />
-        <input
-          type="text"
-          placeholder="Search Customer, Vehicle, Invoice..."
-          className="w-full pl-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
+      {/* Filters Area */}
+      <div className="flex flex-col md:flex-row gap-4 mb-6 max-w-3xl w-full">
+        {/* Search Bar */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+          <input
+            type="text"
+            placeholder="Search Customer, Vehicle, Invoice, Part Name/No..."
+            className="w-full pl-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+
+        {/* Date Filter */}
+        <div className="relative md:w-56 shrink-0">
+          <div className="absolute left-3 top-3 text-gray-400 pointer-events-none">
+            <Calendar size={20} />
+          </div>
+          <input
+            type="date"
+            className="w-full pl-10 pr-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm text-gray-700"
+            value={filterDate}
+            onChange={(e) => setFilterDate(e.target.value)}
+          />
+          {filterDate && (
+            <button
+              onClick={() => setFilterDate("")}
+              className="absolute right-3 top-3.5 text-gray-400 hover:text-red-500"
+              title="Clear Date"
+            >
+              <XCircle size={16} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* --- CONTENT --- */}

@@ -56,6 +56,13 @@ export const fetchParts = async (params) => {
 };
 export const createPart = async (data) =>
   (await API.post("/parts/add/", data)).data;
+export const bulkUploadParts = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  return (await API.post("/parts/bulk-upload/", formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })).data;
+};
 export const updatePart = async (id, data) =>
   (await API.put(`/parts/${id}/update/`, data)).data;
 export const deletePart = async (id) =>

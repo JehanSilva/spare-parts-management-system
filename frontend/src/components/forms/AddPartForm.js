@@ -186,6 +186,13 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     const dataToSend = new FormData();
 
     Object.keys(formData).forEach((key) => {
+      let value = formData[key];
+      
+      // Default empty numerical fields to 0
+      if ((key === "buy_price" || key === "sell_price" || key === "stock_qty") && value === "") {
+        value = 0;
+      }
+
       if (key === "compatible_vehicles") {
         formData[key].forEach((id) =>
           dataToSend.append("compatible_vehicles", id)
@@ -194,8 +201,8 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
         if (formData.image instanceof File) {
           dataToSend.append("image", formData.image);
         }
-      } else if (formData[key] !== null && formData[key] !== undefined) {
-        dataToSend.append(key, formData[key]);
+      } else if (value !== null && value !== undefined) {
+        dataToSend.append(key, value);
       }
     });
 
@@ -354,7 +361,6 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                       name="buy_price"
                       value={formData.buy_price}
                       onChange={handleChange}
-                      required
                       className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none font-mono"
                     />
                  </div>
@@ -365,7 +371,6 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                       name="sell_price"
                       value={formData.sell_price}
                       onChange={handleChange}
-                      required
                       className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none font-bold text-gray-800 font-mono"
                     />
                  </div>
@@ -376,7 +381,6 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                       name="stock_qty"
                       value={formData.stock_qty}
                       onChange={handleChange}
-                      required
                       className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 outline-none"
                     />
                  </div>
@@ -386,7 +390,6 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                       name="rack_location"
                       value={formData.rack_location}
                       onChange={handleChange}
-                      required
                       placeholder="e.g. A-12"
                       className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 outline-none"
                     />

@@ -38,7 +38,7 @@ class Part(models.Model):
     sell_price = models.DecimalField(max_digits=10, decimal_places=2)
     stock_qty = models.PositiveIntegerField(default=0)
     min_stock_level = models.PositiveIntegerField(default=5)
-    rack_location = models.CharField(max_length=50)
+    rack_location = models.CharField(max_length=50, blank=True)
     image = models.ImageField(upload_to='parts/', blank=True, null=True)
     
     compatible_vehicles = models.ManyToManyField(Vehicle, related_name='compatible_parts', blank=True)

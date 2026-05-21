@@ -98,26 +98,44 @@ def get_parts(request):
     stock_status = request.query_params.get('stock_status', '')
     supplier_filter = request.query_params.get('supplier', '')
 
-    # 2. Start with all parts, annotated with sales stats
-    from django.db.models import Sum, F, Q, ExpressionWrapper, FloatField
+    # 2. Start with all parts, annotated with sales stats using Subqueries to avoid Cartesian product joins
+    from django.db.models import Sum, F, Q, ExpressionWrapper, FloatField, Subquery, OuterRef
+    from django.db.models.functions import Coalesce
     
-    completed_sales = Q(saleitem__sale__status='COMPLETED')
+    # Subquery to calculate total_sold
+    sold_subquery = SaleItem.objects.filter(
+        part=OuterRef('pk'),
+        sale__status='COMPLETED'
+    ).values('part').annotate(
+        total=Sum('quantity')
+    ).values('total')
+    
+    # Subquery to calculate total_revenue: Sum((unit_price - discount) * quantity)
+    revenue_subquery = SaleItem.objects.filter(
+        part=OuterRef('pk'),
+        sale__status='COMPLETED'
+    ).values('part').annotate(
+        total=Sum(ExpressionWrapper(
+            (F('unit_price') - F('discount')) * F('quantity'),
+            output_field=FloatField()
+        ))
+    ).values('total')
+    
+    # Subquery to calculate total_cost: Sum(part__buy_price * quantity)
+    cost_subquery = SaleItem.objects.filter(
+        part=OuterRef('pk'),
+        sale__status='COMPLETED'
+    ).values('part').annotate(
+        total=Sum(ExpressionWrapper(
+            F('part__buy_price') * F('quantity'),
+            output_field=FloatField()
+        ))
+    ).values('total')
+    
     parts = Part.objects.all().annotate(
-        total_sold=Sum('saleitem__quantity', filter=completed_sales),
-        total_revenue=Sum(
-            ExpressionWrapper(
-                (F('saleitem__unit_price') - F('saleitem__discount')) * F('saleitem__quantity'),
-                output_field=FloatField()
-            ),
-            filter=completed_sales
-        ),
-        total_cost=Sum(
-            ExpressionWrapper(
-                F('buy_price') * F('saleitem__quantity'),
-                output_field=FloatField()
-            ),
-            filter=completed_sales
-        )
+        total_sold=Coalesce(Subquery(sold_subquery), 0),
+        total_revenue=Coalesce(Subquery(revenue_subquery, output_field=FloatField()), 0.0),
+        total_cost=Coalesce(Subquery(cost_subquery, output_field=FloatField()), 0.0)
     ).order_by('-id')
 
     # 3. Apply Search Filter — split into keywords, ALL must match (AND logic)
@@ -640,35 +658,11 @@ def bulk_upload_parts(request):
         
     try:
         import pandas as pd
-        # Read the Excel file into a pandas dataframe without assuming a header row
-        df = pd.read_excel(excel_file, header=None)
+        # Read the Excel file, using the first row (index 0) as column headers (skipping the 1st line as data)
+        df = pd.read_excel(excel_file, header=0)
         
-        # Find the row that contains 'Part Number' (case insensitive)
-        header_idx = -1
-        for i in range(min(20, len(df))):
-            row_values = [str(v).strip().lower() for v in df.iloc[i].values if pd.notna(v)]
-            if 'part number' in row_values:
-                header_idx = i
-                break
-                
-        if header_idx != -1:
-            # Set the columns to this row
-            df.columns = [str(c).strip() for c in df.iloc[header_idx].values]
-            # Drop the header row and everything above it
-            df = df.iloc[header_idx+1:].reset_index(drop=True)
-        else:
-            # No header row found. Assume standard column order from screenshot:
-            # 0:Part Name, 1:Part Number, 2:Brand, 3:Supplier, 4:Cost price, 5:Selling Price, 6:Current Stock
-            expected_cols = ['Part Name', 'Part Number', 'Brand', 'Supplier', 'Cost price', 'Selling Price', 'Current Stock', 'fits Vehicles']
-            
-            # Ensure we don't crash if there are fewer or more columns
-            new_cols = []
-            for i in range(len(df.columns)):
-                if i < len(expected_cols):
-                    new_cols.append(expected_cols[i])
-                else:
-                    new_cols.append(f"Unnamed_{i}")
-            df.columns = new_cols
+        # Clean column names to lowercase and strip whitespace for robust case-insensitive lookup
+        df.columns = [str(c).strip().lower() for c in df.columns]
         
         created_count = 0
         updated_count = 0
@@ -676,77 +670,112 @@ def bulk_upload_parts(request):
         # Start transaction for safety
         with transaction.atomic():
             for index, row in df.iterrows():
-                part_number = str(row.get('Part Number', '')).strip()
-                if pd.isna(row.get('Part Number')) or not part_number:
-                    continue # Skip empty rows
+                # Normalize keys of the row to lowercase and strip
+                row_dict = {str(k).strip().lower(): v for k, v in row.items()}
+                
+                # Get and clean part number
+                part_number_raw = row_dict.get('part number')
+                if pd.isna(part_number_raw):
+                    continue
+                
+                if isinstance(part_number_raw, float) and part_number_raw.is_integer():
+                    part_number = str(int(part_number_raw))
+                else:
+                    part_number = str(part_number_raw).strip()
+                    if part_number.endswith('.0'):
+                        part_number = part_number[:-2]
+                        
+                if not part_number or part_number.lower() == 'nan':
+                    continue
                 
                 # Extract values
-                name = str(row.get('Part Name', '')).strip()
-                brand = str(row.get('Brand', '')).strip()
-                
-                # Handle Supplier
-                supplier_name = str(row.get('Supplier', '')).strip()
-                supplier_obj = None
-                if not pd.isna(row.get('Supplier')) and supplier_name and supplier_name.lower() != 'nan':
-                    supplier_obj, _ = Supplier.objects.get_or_create(name=supplier_name)
-                    
-                # Handle prices and stock
-                try:
-                    buy_price = float(row.get('Cost price', 0)) if not pd.isna(row.get('Cost price')) else 0
-                except ValueError:
-                    buy_price = 0
-                    
-                try:
-                    sell_price = float(row.get('Selling Price', 0)) if not pd.isna(row.get('Selling Price')) else 0
-                except ValueError:
-                    sell_price = 0
-                    
-                try:
-                    stock_qty = int(row.get('Current Stock', 0)) if not pd.isna(row.get('Current Stock')) else 0
-                except ValueError:
-                    stock_qty = 0
-                
-                if pd.isna(name) or name.lower() == 'nan':
+                name = str(row_dict.get('part name', '')).strip()
+                if not name or name.lower() == 'nan':
                     name = "Unnamed Part"
-                if pd.isna(brand) or brand.lower() == 'nan':
+                    
+                brand = str(row_dict.get('brand', '')).strip()
+                if not brand or brand.lower() == 'nan':
                     brand = ""
                     
-                # Create or Update Part
-                part, created = Part.objects.update_or_create(
-                    part_number=part_number,
-                    defaults={
-                        'name': name,
-                        'brand': brand,
-                        'supplier': supplier_obj,
-                        'buy_price': buy_price,
-                        'sell_price': sell_price,
-                    }
-                )
+                # Handle Supplier
+                supplier_name = str(row_dict.get('supplier', '')).strip()
+                supplier_obj = None
+                if supplier_name and supplier_name.lower() != 'nan':
+                    supplier_obj, _ = Supplier.objects.get_or_create(name=supplier_name)
+                    
+                # Robustly find prices, stock, and location by checking multiple possible name variants
+                cost_keys = ['cost price', 'cost_price', 'buy price', 'buy_price', 'cost']
+                sell_keys = ['selling price', 'selling_price', 'sell price', 'sell_price', 'price']
+                stock_keys = ['current stock', 'current_stock', 'stock qty', 'stock_qty', 'stock', 'qty']
+                location_keys = ['rack/bin location', 'rack / bin location', 'rack location', 'rack_location', 'location']
                 
-                if created:
-                    part.stock_qty = stock_qty
-                    created_count += 1
-                else:
-                    # Restock existing item: Weighted Average Cost calculation
-                    old_qty = part.stock_qty
+                cost_val = next((row_dict[k] for k in cost_keys if k in row_dict), 0)
+                sell_val = next((row_dict[k] for k in sell_keys if k in row_dict), 0)
+                stock_val = next((row_dict[k] for k in stock_keys if k in row_dict), 0)
+                loc_val = next((row_dict[k] for k in location_keys if k in row_dict), "")
+                
+                try:
+                    buy_price = float(cost_val) if pd.notna(cost_val) else 0.0
+                except (ValueError, TypeError):
+                    buy_price = 0.0
+                    
+                try:
+                    sell_price = float(sell_val) if pd.notna(sell_val) else 0.0
+                except (ValueError, TypeError):
+                    sell_price = 0.0
+                    
+                try:
+                    stock_qty = int(stock_val) if pd.notna(stock_val) else 0
+                except (ValueError, TypeError):
+                    stock_qty = 0
+                    
+                rack_location = str(loc_val).strip() if pd.notna(loc_val) and str(loc_val).lower() != 'nan' else ""
+                
+                # Find if part already exists
+                existing_part = Part.objects.filter(part_number=part_number).first()
+                
+                if existing_part:
+                    # Update other details
+                    existing_part.name = name
+                    existing_part.brand = brand
+                    existing_part.supplier = supplier_obj
+                    existing_part.rack_location = rack_location
+                    
+                    old_qty = existing_part.stock_qty
                     new_qty = stock_qty
                     
-                    if new_qty > 0:
-                        total_qty = old_qty + new_qty
-                        old_val = old_qty * float(part.buy_price)
-                        new_val = new_qty * float(buy_price)
-                        
-                        part.buy_price = round((old_val + new_val) / total_qty, 2)
-                        part.stock_qty += new_qty
-                        
-                    # Also update sell_price if provided in excel and > 0
-                    if sell_price > 0:
-                        part.sell_price = sell_price
-                        
-                    updated_count += 1
+                    # Calculate new weighted average buy price using quick restock logic if buy_price is provided
+                    if buy_price > 0:
+                        if old_qty > 0 and new_qty > 0:
+                            old_val = old_qty * float(existing_part.buy_price)
+                            new_val = new_qty * buy_price
+                            existing_part.buy_price = round((old_val + new_val) / (old_qty + new_qty), 2)
+                        else:
+                            existing_part.buy_price = buy_price
                     
-                part.save()
-                
+                    # Accumulate stock level
+                    existing_part.stock_qty = old_qty + new_qty
+                    
+                    # Update sell_price directly if provided
+                    if sell_price > 0:
+                        existing_part.sell_price = sell_price
+                        
+                    existing_part.save()
+                    updated_count += 1
+                else:
+                    # Create new part
+                    Part.objects.create(
+                        part_number=part_number,
+                        name=name,
+                        brand=brand,
+                        supplier=supplier_obj,
+                        buy_price=buy_price,
+                        sell_price=sell_price,
+                        stock_qty=stock_qty,
+                        rack_location=rack_location,
+                    )
+                    created_count += 1
+                    
         return Response({
             "message": f"Successfully processed Excel file. Created {created_count} new parts, Updated {updated_count} existing parts.",
             "created": created_count,

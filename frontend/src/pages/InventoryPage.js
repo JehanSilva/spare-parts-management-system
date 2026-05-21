@@ -35,12 +35,12 @@ const PartDetailsModal = ({ part, onClose }) => {
     return "Vehicle";
   };
 
-  // Calculate profit margin
+  // Calculate profit margin based on past sales (accounting for discounts)
   const totalSold = part.total_sold || 0;
-  const totalRevenue = part.total_revenue || 0;
-  const totalCost = part.total_cost || 0;
+  const totalRevenue = parseFloat(part.total_revenue || 0);
+  const totalCost = parseFloat(part.total_cost || 0);
   const totalProfit = totalRevenue - totalCost;
-  const profitMargin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : 0;
+  const profitMargin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : "0.0";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in" onClick={onClose}>

@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo, memo } from "react";
+import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
 import { fetchParts, createSale } from "../services/api";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
+import PartDetailsModal from "../components/PartDetailsModal";
 import {
   Search,
   ShoppingCart,
@@ -22,12 +23,43 @@ import {
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
-const ProductItem = memo(({ part, onAddToCart }) => {
+const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
+  const pressTimer = useRef(null);
+  const isLongPress = useRef(false);
+
+  const startPress = () => {
+    isLongPress.current = false;
+    pressTimer.current = setTimeout(() => {
+      onShowDetails(part);
+      isLongPress.current = true;
+    }, 500); // 500ms for long press
+  };
+
+  const endPress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+    }
+  };
+
+  const handleClick = (e) => {
+    if (isLongPress.current) {
+      isLongPress.current = false;
+      return;
+    }
+    onAddToCart(part);
+  };
 
   return (
     <div
-      onClick={() => onAddToCart(part)}
+      onClick={handleClick}
+      onContextMenu={(e) => { e.preventDefault(); }} // Prevent mobile context menu on long press
+      onMouseDown={startPress}
+      onMouseUp={endPress}
+      onMouseLeave={endPress}
+      onTouchStart={startPress}
+      onTouchEnd={endPress}
+      onTouchMove={endPress}
       className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation"
     >
       <div className="h-28 md:h-32 bg-gray-100 relative">
@@ -90,6 +122,7 @@ const ProductItem = memo(({ part, onAddToCart }) => {
 
 const POSPage = () => {
   const [parts, setParts] = useState([]);
+  const [selectedPart, setSelectedPart] = useState(null);
   const [cart, setCart] = useState(() => {
     const saved = localStorage.getItem("pos_cart");
     return saved ? JSON.parse(saved) : [];
@@ -170,31 +203,31 @@ const POSPage = () => {
   }, [parts, searchTerm]);
 
   // 3. Add to Cart
-  const addToCart = (part) => {
-    const existingItem = cart.find((item) => item.id === part.id);
+  const addToCart = useCallback((part) => {
+    setCart((prevCart) => {
+      const existingItem = prevCart.find((item) => item.id === part.id);
 
-    if (existingItem) {
-      if (existingItem.quantity + 1 > part.stock_qty) {
-        setAlertInfo({
-          type: "error",
-          message: `Not enough stock! Only ${part.stock_qty} available.`,
-        });
-        return;
+      if (existingItem) {
+        if (existingItem.quantity + 1 > part.stock_qty) {
+          setAlertInfo({
+            type: "error",
+            message: `Not enough stock! Only ${part.stock_qty} available.`,
+          });
+          return prevCart;
+        }
+        return prevCart.map((item) =>
+          item.id === part.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      } else {
+        if (part.stock_qty < 1) {
+          setAlertInfo({ type: "error", message: "Item is Out of Stock!" });
+          return prevCart;
+        }
+        // Add to the top of the cart instead of the bottom
+        return [{ ...part, quantity: 1, discountAmount: 0, discountPercentInput: "" }, ...prevCart];
       }
-      setCart(
-        cart.map((item) =>
-          item.id === part.id ? { ...item, quantity: item.quantity + 1 } : item,
-        ),
-      );
-    } else {
-      if (part.stock_qty < 1) {
-        setAlertInfo({ type: "error", message: "Item is Out of Stock!" });
-        return;
-      }
-      // Add to the top of the cart instead of the bottom
-      setCart([{ ...part, quantity: 1, discountAmount: 0 }, ...cart]);
-    }
-  };
+    });
+  }, []);
 
   // 4. Remove from Cart
   const removeFromCart = (id) => {
@@ -222,22 +255,68 @@ const POSPage = () => {
   };
 
   // 5.5 Update Discount Amount
-  const updateDiscountAmount = (id, amount) => {
-    let validAmount = parseFloat(amount);
-    if (isNaN(validAmount)) validAmount = 0;
-    if (validAmount < 0) validAmount = 0;
-
-    // Optional: You might want to cap the discount at the sell price
-    // But for now, let's just update it.
-    
-    setCart(
-      cart.map((item) => {
+  const updateDiscountAmount = (id, amountStr) => {
+    setCart((prevCart) =>
+      prevCart.map((item) => {
         if (item.id === id) {
-          // Ensure discount doesn't exceed price
-          const maxDiscount = parseFloat(item.sell_price);
-          if (validAmount > maxDiscount) validAmount = maxDiscount;
+          if (amountStr === "") {
+            return {
+              ...item,
+              discountAmount: 0,
+              discountPercentInput: "",
+            };
+          }
+
+          let amount = parseFloat(amountStr);
+          if (isNaN(amount)) amount = 0;
+          if (amount < 0) amount = 0;
+
+          const sellPrice = parseFloat(item.sell_price || 0);
+          if (amount > sellPrice) amount = sellPrice;
+
+          // Compute percentage
+          const percent = sellPrice > 0 ? (amount / sellPrice) * 100 : 0;
+
+          return {
+            ...item,
+            discountAmount: amount,
+            discountPercentInput: parseFloat(percent.toFixed(2)).toString(),
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  // 5.6 Update Discount Percent
+  const updateDiscountPercent = (id, percentStr) => {
+    setCart((prevCart) =>
+      prevCart.map((item) => {
+        if (item.id === id) {
+          if (percentStr === "") {
+            return {
+              ...item,
+              discountAmount: 0,
+              discountPercentInput: "",
+            };
+          }
+
+          let percent = parseFloat(percentStr);
+          if (isNaN(percent)) percent = 0;
+          if (percent < 0) percent = 0;
+          if (percent > 100) percent = 100;
+
+          const sellPrice = parseFloat(item.sell_price || 0);
+          let amount = (percent / 100) * sellPrice;
           
-          return { ...item, discountAmount: validAmount };
+          // Round to nearest integer or 2 decimal places for rupees
+          amount = Math.round(amount * 100) / 100;
+
+          return {
+            ...item,
+            discountAmount: amount,
+            discountPercentInput: percentStr,
+          };
         }
         return item;
       })
@@ -355,76 +434,70 @@ const POSPage = () => {
     return filteredParts.slice(0, visibleCount);
   }, [filteredParts, visibleCount]);
 
-  // --- SUCCESS SCREEN ---
-  if (saleSuccess) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm">
-        <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-200/50 p-8 md:p-10 max-w-lg w-full text-center relative overflow-hidden">
-          
-          {/* Success Icon */}
-          <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-slow ring-8 ring-green-50/50">
-             <CheckCircle className="text-green-500 w-12 h-12" strokeWidth={3} />
-          </div>
-          
-          <h1 className="text-3xl md:text-4xl font-extrabold text-gray-800 mb-2 tracking-tight">
-            Payment Successful!
-          </h1>
-          <p className="text-gray-400 mb-8 font-medium">
-            Transaction ID <span className="text-gray-600 font-mono">#{saleSuccess.id.substring(0, 8)}</span>
-          </p>
+  // --- MAIN LAYOUT & SUCCESS SCREEN ---
+  return saleSuccess ? (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm">
+      <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-200/50 p-8 md:p-10 max-w-lg w-full text-center relative overflow-hidden">
+        
+        {/* Success Icon */}
+        <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-slow ring-8 ring-green-50/50">
+           <CheckCircle className="text-green-500 w-12 h-12" strokeWidth={3} />
+        </div>
+        
+        <h1 className="text-3xl md:text-4xl font-extrabold text-gray-800 mb-2 tracking-tight">
+          Payment Successful!
+        </h1>
+        <p className="text-gray-400 mb-8 font-medium">
+          Transaction ID <span className="text-gray-600 font-mono">#{saleSuccess.id.substring(0, 8)}</span>
+        </p>
 
-          {/* Receipt Summary - Softened */}
-          <div className="bg-gray-50/80 rounded-2xl p-6 mb-8 text-left space-y-4">
-             <div className="flex justify-between items-center pb-4 border-b border-gray-100 border-dashed">
-                <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Total Paid</span>
-                <span className="text-2xl font-black text-gray-800">LKR {parseFloat(saleSuccess.total_amount).toLocaleString()}</span>
-             </div>
-             <div className="space-y-2 pt-2">
-                 <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-500">Customer</span>
-                    <span className="font-bold text-gray-700">{saleSuccess.customer_name}</span>
-                 </div>
-                 {saleSuccess.vehicle_number && (
-                    <div className="flex justify-between items-center text-sm">
-                       <span className="text-gray-500">Vehicle</span>
-                       <span className="font-bold text-gray-700 flex items-center gap-1.5"><Car size={14} className="text-gray-400"/>{saleSuccess.vehicle_number}</span>
-                    </div>
-                 )}
+        {/* Receipt Summary - Softened */}
+        <div className="bg-gray-50/80 rounded-2xl p-6 mb-8 text-left space-y-4">
+           <div className="flex justify-between items-center pb-4 border-b border-gray-100 border-dashed">
+              <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Total Paid</span>
+              <span className="text-2xl font-black text-gray-800">LKR {parseFloat(saleSuccess.total_amount).toLocaleString()}</span>
+           </div>
+           <div className="space-y-2 pt-2">
+               <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-500">Customer</span>
+                  <span className="font-bold text-gray-700">{saleSuccess.customer_name}</span>
+               </div>
+               {saleSuccess.vehicle_number && (
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-500">Items</span>
-                    <span className="font-bold text-gray-700">{saleSuccess.items.length} purchased</span>
-                 </div>
-             </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-4">
-            <button
-              onClick={handlePrint}
-              className="flex-1 bg-gray-900 text-white px-6 py-4 rounded-xl shadow-lg shadow-gray-200 hover:shadow-xl hover:translate-y-[-2px] flex items-center justify-center gap-2 font-bold transition-all duration-300"
-            >
-              <Printer size={20} /> Invoice
-            </button>
-            <button
-              onClick={() => setSaleSuccess(null)}
-              className="flex-1 bg-white text-red-600 border-2 border-red-50 px-6 py-4 rounded-xl hover:bg-red-50 hover:border-red-100 font-bold flex items-center justify-center gap-2 transition-all duration-300"
-            >
-              <Plus size={20} /> New Sale
-            </button>
-          </div>
+                     <span className="text-gray-500">Vehicle</span>
+                     <span className="font-bold text-gray-700 flex items-center gap-1.5"><Car size={14} className="text-gray-400"/>{saleSuccess.vehicle_number}</span>
+                  </div>
+               )}
+                <div className="flex justify-between items-center text-sm">
+                  <span className="text-gray-500">Items</span>
+                  <span className="font-bold text-gray-700">{saleSuccess.items.length} purchased</span>
+               </div>
+           </div>
         </div>
 
-        <div className="hidden">
-          <Receipt ref={receiptRef} sale={saleSuccess} />
+        <div className="flex flex-col sm:flex-row gap-4">
+          <button
+            onClick={handlePrint}
+            className="flex-1 bg-gray-900 text-white px-6 py-4 rounded-xl shadow-lg shadow-gray-200 hover:shadow-xl hover:translate-y-[-2px] flex items-center justify-center gap-2 font-bold transition-all duration-300"
+          >
+            <Printer size={20} /> Invoice
+          </button>
+          <button
+            onClick={() => setSaleSuccess(null)}
+            className="flex-1 bg-white text-red-600 border-2 border-red-50 px-6 py-4 rounded-xl hover:bg-red-50 hover:border-red-100 font-bold flex items-center justify-center gap-2 transition-all duration-300"
+          >
+            <Plus size={20} /> New Sale
+          </button>
         </div>
       </div>
-    );
-  }
 
-  // --- MAIN LAYOUT ---
-
-
-  return (
+      <div className="hidden">
+        <Receipt ref={receiptRef} sale={saleSuccess} />
+      </div>
+    </div>
+  ) : (
     <div className="flex flex-col md:flex-row h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
+      <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />
       {alertInfo.message && (
         <AlertComponent
           type={alertInfo.type}
@@ -483,6 +556,7 @@ const POSPage = () => {
                   key={part.id} 
                   part={part} 
                   onAddToCart={addToCart} 
+                  onShowDetails={setSelectedPart}
                 />
               ))
             )}
@@ -556,12 +630,34 @@ const POSPage = () => {
               const discountVal = parseFloat(item.discountAmount) || 0;
               const final = original - discountVal;
 
+              // Calculate remaining unit profitability based on buy_price
+              const buyPrice = parseFloat(item.buy_price || 0);
+              const currentProfit = final - buyPrice;
+              const currentMargin = final > 0 ? ((currentProfit / final) * 100).toFixed(1) : "0.0";
+              const currentMarkup = buyPrice > 0 ? ((currentProfit / buyPrice) * 100).toFixed(1) : "0.0";
+
+              let profitColorClass = "bg-green-50 text-green-700 border-green-100";
+              let profitText = `Margin: ${currentMargin}% (Markup: ${currentMarkup}%)`;
+
+              if (currentProfit === 0) {
+                profitColorClass = "bg-amber-50 text-amber-700 border-amber-100";
+                profitText = "Break Even (0%)";
+              } else if (currentProfit < 0) {
+                profitColorClass = "bg-red-50 text-red-700 border-red-200 animate-pulse font-bold";
+                profitText = `Loss: Margin: ${currentMargin}%`;
+              }
+
+              const percentValue = item.discountPercentInput !== undefined 
+                ? item.discountPercentInput 
+                : (item.discountAmount ? parseFloat(((item.discountAmount / original) * 100).toFixed(2)).toString() : '');
+
               return (
                 <div
                   key={item.id}
                   className="flex flex-col bg-white p-3 rounded-xl shadow-sm border border-gray-200"
                 >
-                  <div className="flex justify-between items-start mb-2">
+                  {/* Row 1: Title, details and remove */}
+                  <div className="flex justify-between items-start mb-2.5">
                     <div className="flex-1 pr-2">
                       <h4 className="font-bold text-sm text-gray-800 line-clamp-2">
                         {item.name}
@@ -572,13 +668,14 @@ const POSPage = () => {
                     </div>
                     <button
                       onClick={() => removeFromCart(item.id)}
-                      className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors"
+                      className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors shrink-0"
                     >
                       <XCircle size={18} />
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between gap-2">
+                  {/* Row 2: Quantity controls & Final Price */}
+                  <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-gray-100 border-dashed">
                     {/* Quantity Control */}
                     <div className="flex items-center bg-gray-100 rounded-lg h-9">
                       <button
@@ -598,30 +695,63 @@ const POSPage = () => {
                       </button>
                     </div>
 
-                    {/* Discount UI Enhanced (Amount) */}
-                    <div className={`flex items-center border rounded-lg h-9 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                        <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
-                        <input
-                          type="number"
-                          min="0"
-                          // max={item.sell_price} // Optional
-                          placeholder="0"
-                          value={item.discountAmount === 0 ? '' : item.discountAmount}
-                          onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
-                          className="w-16 text-center bg-transparent outline-none text-base md:text-sm font-semibold text-gray-700 placeholder-gray-300"
-                        />
-                    </div>
-
                     {/* Price Display */}
-                    <div className="text-right flex-1">
+                    <div className="text-right">
                       {item.discountAmount > 0 && (
                         <p className="text-[10px] text-gray-400 line-through">
                           {original.toLocaleString()}
                         </p>
                       )}
-                      <p className={`font-bold ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
-                        {final.toLocaleString()}
+                      <p className={`font-bold text-sm ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
+                        LKR {final.toLocaleString()}
                       </p>
+                    </div>
+                  </div>
+
+                  {/* Row 3: Discounts Inputs & Profitability badge */}
+                  <div className="mt-2.5 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-1">
+                        <Tag size={12} className="text-gray-400" />
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Discount</span>
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        {/* Rupee Input */}
+                        <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                          <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="0"
+                            value={item.discountAmount === 0 ? '' : item.discountAmount}
+                            onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
+                            className="w-14 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
+                          />
+                        </div>
+                        
+                        {/* Percentage Input */}
+                        <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            placeholder="0"
+                            value={percentValue}
+                            onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
+                            className="w-10 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
+                          />
+                          <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Profitability Badge */}
+                    <div className="flex items-center justify-between text-[10px] pt-1">
+                      <span className="text-gray-400 font-medium">Remaining Profit:</span>
+                      <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
+                        {profitText}
+                      </span>
                     </div>
                   </div>
                 </div>

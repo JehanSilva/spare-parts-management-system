@@ -164,7 +164,11 @@ def get_parts(request):
     if stock_status == 'out':
         parts = parts.filter(stock_qty=0)
     elif stock_status == 'low':
-        parts = parts.filter(stock_qty=1)
+        try:
+            threshold = int(request.query_params.get('low_stock_threshold', 2))
+            parts = parts.filter(stock_qty__lte=threshold)
+        except ValueError:
+            parts = parts.filter(stock_qty__lte=2)
     elif stock_status == 'no_price':
         parts = parts.filter(Q(buy_price=0) | Q(sell_price=0) | Q(image__exact='') | Q(image__isnull=True))
 
@@ -391,7 +395,9 @@ def cancel_sale(request, pk):
         part.stock_qty += item.quantity
         part.save()
         
-    # 2. Update status
+    # 2. Update status and cancellation reason
+    cancel_reason = request.data.get('cancel_reason', '')
+    sale.cancel_reason = cancel_reason
     sale.status = 'CANCELLED'
     sale.save()
     

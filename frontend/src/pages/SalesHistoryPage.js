@@ -3,7 +3,6 @@ import { fetchSales, fetchParts, updateSale, cancelSale } from "../services/api"
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
-import ConfirmModal from "../components/ConfirmModal";
 import {
   Search,
   FileText,
@@ -68,6 +67,133 @@ const EditSaleModal = ({ isOpen, sale, onClose, onSave }) => {
               className="flex-1 py-2.5 bg-red-700 text-white rounded-xl font-bold hover:bg-red-800 transition shadow-lg shadow-red-200"
             >
               Save Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Cancel Sale Modal Component ---
+const CancelSaleModal = ({ isOpen, sale, onClose, onConfirm }) => {
+  const [reasonOption, setReasonOption] = useState("");
+  const [otherReason, setOtherReason] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setReasonOption("");
+      setOtherReason("");
+    }
+  }, [isOpen]);
+
+  if (!isOpen || !sale) return null;
+
+  const predefinedReasons = [
+    "Customer Return / Exchange",
+    "Billing Error / Incorrect Invoice",
+    "Order Cancelled by Customer",
+    "Duplicate Transaction",
+  ];
+
+  const handleConfirm = () => {
+    const finalReason = reasonOption === "Other" ? otherReason.trim() : reasonOption;
+    onConfirm(finalReason);
+  };
+
+  const isConfirmDisabled = 
+    !reasonOption || 
+    (reasonOption === "Other" && !otherReason.trim());
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-scale-in">
+        <div className="bg-red-700 p-4 text-white flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={20} />
+            <h3 className="font-bold text-lg">Cancel Sale</h3>
+          </div>
+          <button onClick={onClose} className="hover:bg-red-600 p-1 rounded-full">
+            <XCircle size={20} />
+          </button>
+        </div>
+        <div className="p-6 space-y-4 text-left">
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-800">
+            <p className="font-semibold mb-1">Warning: This action cannot be undone.</p>
+            <p>Cancelling this sale will return all items back to inventory stock levels.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">
+              Select Reason for Cancellation
+            </label>
+            <div className="space-y-2">
+              {predefinedReasons.map((reason) => (
+                <label
+                  key={reason}
+                  className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition ${
+                    reasonOption === reason
+                      ? "border-red-600 bg-red-50 text-red-950 font-semibold"
+                      : "border-gray-200 hover:bg-gray-50 text-gray-700"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="cancelReason"
+                    value={reason}
+                    checked={reasonOption === reason}
+                    onChange={(e) => setReasonOption(e.target.value)}
+                    className="mt-1 text-red-600 focus:ring-red-500 border-gray-300"
+                  />
+                  <span>{reason}</span>
+                </label>
+              ))}
+              <label
+                className={`flex flex-col gap-2 p-3 rounded-xl border cursor-pointer transition ${
+                  reasonOption === "Other"
+                    ? "border-red-600 bg-red-50 text-red-950 font-semibold"
+                    : "border-gray-200 hover:bg-gray-50 text-gray-700"
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    name="cancelReason"
+                    value="Other"
+                    checked={reasonOption === "Other"}
+                    onChange={(e) => setReasonOption(e.target.value)}
+                    className="mt-1 text-red-600 focus:ring-red-500 border-gray-300"
+                  />
+                  <span>Other (Write custom reason)</span>
+                </div>
+                {reasonOption === "Other" && (
+                  <textarea
+                    value={otherReason}
+                    onChange={(e) => setOtherReason(e.target.value)}
+                    className="w-full mt-1 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none text-gray-800 font-normal"
+                    placeholder="Enter custom cancellation reason..."
+                    rows={3}
+                  />
+                )}
+              </label>
+            </div>
+          </div>
+          <div className="flex gap-3 pt-4 border-t border-gray-100">
+            <button
+              onClick={onClose}
+              className="flex-1 py-2.5 border border-gray-300 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition"
+            >
+              Close
+            </button>
+            <button
+              onClick={handleConfirm}
+              disabled={isConfirmDisabled}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-white transition shadow-lg ${
+                isConfirmDisabled
+                  ? "bg-gray-300 cursor-not-allowed shadow-none"
+                  : "bg-red-700 hover:bg-red-800 shadow-red-200"
+              }`}
+            >
+              Confirm Cancellation
             </button>
           </div>
         </div>
@@ -180,9 +306,9 @@ const SalesHistoryPage = () => {
     return p ? p.part_number : "";
   };
 
-  const handleExecuteCancel = async () => {
+  const handleExecuteCancel = async (cancelReason) => {
     try {
-      const result = await cancelSale(saleToCancel.id);
+      const result = await cancelSale(saleToCancel.id, { cancel_reason: cancelReason });
       setSales(sales.map(s => s.id === result.id ? result : s));
       setShowCancelConfirm(false);
       setAlertInfo({ type: "success", message: "Sale cancelled and stock restored!" });
@@ -243,14 +369,11 @@ const SalesHistoryPage = () => {
         />
       )}
 
-      <ConfirmModal 
+      <CancelSaleModal 
         isOpen={showCancelConfirm}
-        title="Cancel Sale?"
-        message={`Are you sure you want to cancel this sale? Items will be returned to stock. This action cannot be undone.`}
+        sale={saleToCancel}
+        onClose={() => setShowCancelConfirm(false)}
         onConfirm={handleExecuteCancel}
-        onCancel={() => setShowCancelConfirm(false)}
-        confirmText="Yes, Cancel Sale"
-        type="danger"
       />
 
       <EditSaleModal 
@@ -365,9 +488,14 @@ const SalesHistoryPage = () => {
                             {sale.vehicle_number || "No Vehicle"}
                           </span>
                           {sale.status === 'CANCELLED' && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase w-fit">
-                              <XCircle size={10} /> Cancelled
-                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold uppercase w-fit">
+                                <XCircle size={10} /> Cancelled
+                              </span>
+                              <span className="text-[10px] text-gray-500 italic max-w-[200px] truncate" title={sale.cancel_reason || "Not specified"}>
+                                ({sale.cancel_reason || "Not specified"})
+                              </span>
+                            </div>
                           )}
                        </div>
                       <span className={`text-lg font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : 'text-green-700'}`}>
@@ -408,13 +536,18 @@ const SalesHistoryPage = () => {
                       </button>
                     </div>
 
-                    {sale.status !== 'CANCELLED' && (
+                    {sale.status !== 'CANCELLED' ? (
                       <button
                         onClick={(e) => handleCancelClick(sale, e)}
                         className="w-full bg-red-50 text-red-600 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 transition-all active:scale-95 mb-4 font-bold border border-red-100"
                       >
                         <Trash2 size={16} /> Cancel & Return Items
                       </button>
+                    ) : (
+                      <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-3.5 mb-4 text-xs">
+                        <span className="font-bold block uppercase tracking-wider text-[10px] text-red-700 mb-1">Reason for Cancellation</span>
+                        <p className="italic font-medium">"{sale.cancel_reason || "Not specified"}"</p>
+                      </div>
                     )}
 
                     <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">
@@ -529,11 +662,18 @@ const SalesHistoryPage = () => {
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
-                      <td className={`p-4 text-right font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : 'text-green-700'}`}>
+                      <td className="p-4 text-right">
                         <div className="flex flex-col items-end">
-                          {formatLKR(sale.total_amount)}
+                          <span className={`font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : 'text-green-700'}`}>
+                            {formatLKR(sale.total_amount)}
+                          </span>
                           {sale.status === 'CANCELLED' && (
-                            <span className="text-[9px] text-red-500 font-bold uppercase tracking-tighter">Cancelled</span>
+                            <div className="flex flex-col items-end">
+                              <span className="text-[9px] text-red-500 font-bold uppercase tracking-tighter">Cancelled</span>
+                              <span className="text-[10px] text-gray-400 font-normal italic max-w-[150px] truncate" title={sale.cancel_reason || "Not specified"}>
+                                ({sale.cancel_reason || "Not specified"})
+                              </span>
+                            </div>
                           )}
                         </div>
                       </td>
@@ -586,6 +726,12 @@ const SalesHistoryPage = () => {
                           className="p-4 border-t border-gray-200 shadow-inner"
                         >
                           <div className="ml-4 pl-4 border-l-2 border-red-300">
+                             {sale.status === 'CANCELLED' && (
+                               <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-4 mb-4 text-sm max-w-xl">
+                                 <span className="font-bold block uppercase tracking-wider text-xs text-red-700 mb-1">Reason for Cancellation</span>
+                                 <p className="italic font-medium">"{sale.cancel_reason || "Not specified"}"</p>
+                               </div>
+                             )}
                             <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">
                               Purchased Items
                             </h4>

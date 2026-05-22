@@ -7,8 +7,8 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
     return new Intl.NumberFormat("en-LK", {
       style: "currency",
       currency: "LKR",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     }).format(amount);
   };
 
@@ -133,18 +133,18 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
                 {item.discountAmount > 0 ? (
                   <div className="flex flex-col items-end leading-none gap-0.5">
                     <span className="line-through text-[9px] text-gray-400">
-                      {Math.round(item.originalPrice)}
+                      {item.originalPrice.toFixed(2)}
                     </span>
                     <span className="font-bold">
-                      {Math.round(item.finalPrice)}
+                      {item.finalPrice.toFixed(2)}
                     </span>
                   </div>
                 ) : (
-                  <span>{Math.round(item.originalPrice)}</span>
+                  <span>{item.originalPrice.toFixed(2)}</span>
                 )}
               </td>
               <td className="py-2 text-right font-bold align-top">
-                {Math.round(item.lineTotal)}
+                {item.lineTotal.toFixed(2)}
               </td>
             </tr>
           ))}

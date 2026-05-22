@@ -6,8 +6,7 @@ class Supplier(models.Model):
     Represents the company/person you buy parts from.
     """
     name = models.CharField(max_length=100)          # e.g., "AutoParts LK Distributors"
-    contact_person = models.CharField(max_length=100, blank=True)
-    phone = models.CharField(max_length=20, blank=True)
+    contacts = models.JSONField(default=list, blank=True, null=True)
     email = models.EmailField(blank=True)
     address = models.TextField(blank=True)
 

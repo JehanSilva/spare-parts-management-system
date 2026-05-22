@@ -123,34 +123,85 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
 const POSPage = () => {
   const [parts, setParts] = useState([]);
   const [selectedPart, setSelectedPart] = useState(null);
-  const [cart, setCart] = useState(() => {
-    const saved = localStorage.getItem("pos_cart");
-    return saved ? JSON.parse(saved) : [];
+  const [carts, setCarts] = useState(() => {
+    const saved = localStorage.getItem("pos_carts");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch (e) {
+        console.error("Failed to parse pos_carts", e);
+      }
+    }
+
+    // Migration logic for old single cart structure
+    const oldCart = localStorage.getItem("pos_cart");
+    const oldCustomer = localStorage.getItem("pos_customer");
+    const oldVehicle = localStorage.getItem("pos_vehicle");
+    if (oldCart || oldCustomer || oldVehicle) {
+      try {
+        const parsedCart = oldCart ? JSON.parse(oldCart) : [];
+        if (parsedCart.length > 0 || oldCustomer || oldVehicle) {
+          return [
+            {
+              id: "cart_" + Date.now(),
+              customerName: oldCustomer || "",
+              vehicleNumber: oldVehicle || "",
+              items: parsedCart,
+            },
+          ];
+        }
+      } catch (e) {
+        console.error("Failed to migrate old POS cart", e);
+      }
+    }
+
+    return [
+      {
+        id: "cart_" + Date.now(),
+        customerName: "",
+        vehicleNumber: "",
+        items: [],
+      },
+    ];
   });
+
+  const [activeCartId, setActiveCartId] = useState(() => {
+    const savedActiveId = localStorage.getItem("pos_active_cart_id");
+    if (savedActiveId && carts.some((c) => c.id === savedActiveId)) {
+      return savedActiveId;
+    }
+    return carts[0]?.id || "";
+  });
+
   const [searchTerm, setSearchTerm] = useState("");
   const [mobileView, setMobileView] = useState("products");
   const [visibleCount, setVisibleCount] = useState(20);
 
-  // Form States
-  const [customerName, setCustomerName] = useState(() => {
-    return localStorage.getItem("pos_customer") || "";
-  });
-  const [vehicleNumber, setVehicleNumber] = useState(() => {
-    return localStorage.getItem("pos_vehicle") || "";
-  });
+  const [cartToDelete, setCartToDelete] = useState(null);
 
-  // Persist State to LocalStorage
+  // Derived active cart states
+  const activeCart = useMemo(() => {
+    return (
+      carts.find((c) => c.id === activeCartId) ||
+      carts[0] || { id: "default", customerName: "", vehicleNumber: "", items: [] }
+    );
+  }, [carts, activeCartId]);
+
+  const cart = activeCart.items;
+  const customerName = activeCart.customerName;
+  const vehicleNumber = activeCart.vehicleNumber;
+
+  // Persist States to LocalStorage
   useEffect(() => {
-    localStorage.setItem("pos_cart", JSON.stringify(cart));
-  }, [cart]);
-  
+    localStorage.setItem("pos_carts", JSON.stringify(carts));
+  }, [carts]);
+
   useEffect(() => {
-    localStorage.setItem("pos_customer", customerName);
-  }, [customerName]);
-  
-  useEffect(() => {
-    localStorage.setItem("pos_vehicle", vehicleNumber);
-  }, [vehicleNumber]);
+    localStorage.setItem("pos_active_cart_id", activeCartId);
+  }, [activeCartId]);
 
   const [loading, setLoading] = useState(false);
   const [partsLoading, setPartsLoading] = useState(true);
@@ -202,123 +253,199 @@ const POSPage = () => {
     });
   }, [parts, searchTerm]);
 
+  // 2.5 Multi-Cart Actions
+  const handleAddNewCart = () => {
+    const newId = "cart_" + Date.now();
+    const newCart = {
+      id: newId,
+      customerName: "",
+      vehicleNumber: "",
+      items: [],
+    };
+    setCarts((prev) => [...prev, newCart]);
+    setActiveCartId(newId);
+    setAlertInfo({ type: "success", message: "New repair cart created." });
+  };
+
+  const handleDeleteCart = (cartId) => {
+    const targetCart = carts.find((c) => c.id === cartId);
+    if (!targetCart) return;
+
+    if (targetCart.items.length > 0) {
+      setCartToDelete(cartId);
+    } else {
+      executeDeleteCart(cartId);
+    }
+  };
+
+  const executeDeleteCart = (cartId) => {
+    setCarts((prev) => {
+      const remaining = prev.filter((c) => c.id !== cartId);
+      if (activeCartId === cartId) {
+        setActiveCartId(remaining[0].id);
+      }
+      return remaining;
+    });
+    setCartToDelete(null);
+    setAlertInfo({ type: "success", message: "Repair cart discarded." });
+  };
+
+  const handleCustomerNameChange = (name) => {
+    setCarts((prev) =>
+      prev.map((c) => (c.id === activeCartId ? { ...c, customerName: name } : c))
+    );
+  };
+
+  const handleVehicleNumberChange = (veh) => {
+    setCarts((prev) =>
+      prev.map((c) => (c.id === activeCartId ? { ...c, vehicleNumber: veh } : c))
+    );
+  };
+
   // 3. Add to Cart
   const addToCart = useCallback((part) => {
-    setCart((prevCart) => {
-      const existingItem = prevCart.find((item) => item.id === part.id);
+    setCarts((prevCarts) => {
+      return prevCarts.map((c) => {
+        if (c.id !== activeCartId) return c;
 
-      if (existingItem) {
-        if (existingItem.quantity + 1 > part.stock_qty) {
-          setAlertInfo({
-            type: "error",
-            message: `Not enough stock! Only ${part.stock_qty} available.`,
-          });
-          return prevCart;
+        const prevCart = c.items;
+        const existingItem = prevCart.find((item) => item.id === part.id);
+
+        let newItems;
+        if (existingItem) {
+          if (existingItem.quantity + 1 > part.stock_qty) {
+            setAlertInfo({
+              type: "error",
+              message: `Not enough stock! Only ${part.stock_qty} available.`,
+            });
+            return c;
+          }
+          newItems = prevCart.map((item) =>
+            item.id === part.id ? { ...item, quantity: item.quantity + 1 } : item
+          );
+        } else {
+          if (part.stock_qty < 1) {
+            setAlertInfo({ type: "error", message: "Item is Out of Stock!" });
+            return c;
+          }
+          newItems = [
+            { ...part, quantity: 1, discountAmount: 0, discountPercentInput: "" },
+            ...prevCart,
+          ];
         }
-        return prevCart.map((item) =>
-          item.id === part.id ? { ...item, quantity: item.quantity + 1 } : item
-        );
-      } else {
-        if (part.stock_qty < 1) {
-          setAlertInfo({ type: "error", message: "Item is Out of Stock!" });
-          return prevCart;
-        }
-        // Add to the top of the cart instead of the bottom
-        return [{ ...part, quantity: 1, discountAmount: 0, discountPercentInput: "" }, ...prevCart];
-      }
+        return { ...c, items: newItems };
+      });
     });
-  }, []);
+  }, [activeCartId]);
 
   // 4. Remove from Cart
   const removeFromCart = (id) => {
-    setCart(cart.filter((item) => item.id !== id));
+    setCarts((prev) =>
+      prev.map((c) =>
+        c.id === activeCartId
+          ? { ...c, items: c.items.filter((item) => item.id !== id) }
+          : c
+      )
+    );
   };
 
   // 5. Update Quantity
   const updateQuantity = (id, delta) => {
-    setCart(
-      cart.map((item) => {
-        if (item.id === id) {
-          const newQty = item.quantity + delta;
-          if (newQty > item.stock_qty) {
-            setAlertInfo({
-              type: "error",
-              message: `Max stock is ${item.stock_qty}`,
-            });
-            return item;
+    setCarts((prev) =>
+      prev.map((c) => {
+        if (c.id !== activeCartId) return c;
+
+        const newItems = c.items.map((item) => {
+          if (item.id === id) {
+            const newQty = item.quantity + delta;
+            if (newQty > item.stock_qty) {
+              setAlertInfo({
+                type: "error",
+                message: `Max stock is ${item.stock_qty}`,
+              });
+              return item;
+            }
+            return newQty > 0 ? { ...item, quantity: newQty } : item;
           }
-          return newQty > 0 ? { ...item, quantity: newQty } : item;
-        }
-        return item;
-      }),
+          return item;
+        });
+        return { ...c, items: newItems };
+      })
     );
   };
 
   // 5.5 Update Discount Amount
   const updateDiscountAmount = (id, amountStr) => {
-    setCart((prevCart) =>
-      prevCart.map((item) => {
-        if (item.id === id) {
-          if (amountStr === "") {
+    setCarts((prev) =>
+      prev.map((c) => {
+        if (c.id !== activeCartId) return c;
+
+        const newItems = c.items.map((item) => {
+          if (item.id === id) {
+            if (amountStr === "") {
+              return {
+                ...item,
+                discountAmount: 0,
+                discountPercentInput: "",
+              };
+            }
+
+            let amount = parseFloat(amountStr);
+            if (isNaN(amount)) amount = 0;
+            if (amount < 0) amount = 0;
+
+            const sellPrice = parseFloat(item.sell_price || 0);
+            if (amount > sellPrice) amount = sellPrice;
+
+            const percent = sellPrice > 0 ? (amount / sellPrice) * 100 : 0;
+
             return {
               ...item,
-              discountAmount: 0,
-              discountPercentInput: "",
+              discountAmount: amount,
+              discountPercentInput: parseFloat(percent.toFixed(2)).toString(),
             };
           }
-
-          let amount = parseFloat(amountStr);
-          if (isNaN(amount)) amount = 0;
-          if (amount < 0) amount = 0;
-
-          const sellPrice = parseFloat(item.sell_price || 0);
-          if (amount > sellPrice) amount = sellPrice;
-
-          // Compute percentage
-          const percent = sellPrice > 0 ? (amount / sellPrice) * 100 : 0;
-
-          return {
-            ...item,
-            discountAmount: amount,
-            discountPercentInput: parseFloat(percent.toFixed(2)).toString(),
-          };
-        }
-        return item;
+          return item;
+        });
+        return { ...c, items: newItems };
       })
     );
   };
 
   // 5.6 Update Discount Percent
   const updateDiscountPercent = (id, percentStr) => {
-    setCart((prevCart) =>
-      prevCart.map((item) => {
-        if (item.id === id) {
-          if (percentStr === "") {
+    setCarts((prev) =>
+      prev.map((c) => {
+        if (c.id !== activeCartId) return c;
+
+        const newItems = c.items.map((item) => {
+          if (item.id === id) {
+            if (percentStr === "") {
+              return {
+                ...item,
+                discountAmount: 0,
+                discountPercentInput: "",
+              };
+            }
+
+            let percent = parseFloat(percentStr);
+            if (isNaN(percent)) percent = 0;
+            if (percent < 0) percent = 0;
+            if (percent > 100) percent = 100;
+
+            const sellPrice = parseFloat(item.sell_price || 0);
+            let amount = (percent / 100) * sellPrice;
+            amount = Math.round(amount * 100) / 100;
+
             return {
               ...item,
-              discountAmount: 0,
-              discountPercentInput: "",
+              discountAmount: amount,
+              discountPercentInput: percentStr,
             };
           }
-
-          let percent = parseFloat(percentStr);
-          if (isNaN(percent)) percent = 0;
-          if (percent < 0) percent = 0;
-          if (percent > 100) percent = 100;
-
-          const sellPrice = parseFloat(item.sell_price || 0);
-          let amount = (percent / 100) * sellPrice;
-          
-          // Round to nearest integer or 2 decimal places for rupees
-          amount = Math.round(amount * 100) / 100;
-
-          return {
-            ...item,
-            discountAmount: amount,
-            discountPercentInput: percentStr,
-          };
-        }
-        return item;
+          return item;
+        });
+        return { ...c, items: newItems };
       })
     );
   };
@@ -329,9 +456,13 @@ const POSPage = () => {
   };
 
   const executeClearCart = () => {
-    setCart([]);
-    setCustomerName("");
-    setVehicleNumber("");
+    setCarts((prev) =>
+      prev.map((c) =>
+        c.id === activeCartId
+          ? { ...c, customerName: "", vehicleNumber: "", items: [] }
+          : c
+      )
+    );
     setShowConfirm(false);
     setAlertInfo({ type: "success", message: "Cart cleared successfully." });
   };
@@ -366,7 +497,6 @@ const POSPage = () => {
 
     setLoading(true);
 
-    // --- PREPARE PAYLOAD ---
     const salePayload = {
       customer_name: customerName,
       vehicle_number: vehicleNumber,
@@ -378,22 +508,17 @@ const POSPage = () => {
           part_id: item.id,
           quantity: parseInt(item.quantity),
           unit_price: originalPrice,
-
-          // SEND CASH VALUE directly
           discount: discountAmount,
-
           warranty: item.warranty || 0,
         };
       }),
     };
 
-    // DEBUG: Look in your browser console to see what is being sent!
     console.log("🚀 Sending Sale Payload:", salePayload);
 
     try {
       const result = await createSale(salePayload);
 
-      // Enrich sale object with part details for receipt display
       const enrichedItems = result.items.map((saleItem) => {
         const partId = saleItem.part || saleItem.part_id;
         const originalPart = parts.find((p) => p.id === partId);
@@ -409,9 +534,17 @@ const POSPage = () => {
       const enrichedSale = { ...result, items: enrichedItems };
       setSaleSuccess(enrichedSale);
 
-      setCart([]);
-      setCustomerName("");
-      setVehicleNumber("");
+      setCarts((prev) => {
+        const remaining = prev.filter((c) => c.id !== activeCartId);
+        if (remaining.length === 0) {
+          const newId = "cart_" + Date.now();
+          setActiveCartId(newId);
+          return [{ id: newId, customerName: "", vehicleNumber: "", items: [] }];
+        } else {
+          setActiveCartId(remaining[0].id);
+          return remaining;
+        }
+      });
 
       const updatedParts = await fetchParts();
       setParts(updatedParts);
@@ -496,7 +629,7 @@ const POSPage = () => {
       </div>
     </div>
   ) : (
-    <div className="flex flex-col md:flex-row h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
+    <div className="flex flex-col h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
       <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />
       {alertInfo.message && (
         <AlertComponent
@@ -514,7 +647,93 @@ const POSPage = () => {
         onCancel={() => setShowConfirm(false)}
       />
 
-      {/* LEFT SIDE: PRODUCT LIST */}
+      <ConfirmModal
+        isOpen={!!cartToDelete}
+        title="Discard Repair Cart?"
+        message="Are you sure you want to discard this repair cart? All items added will be lost."
+        onConfirm={() => executeDeleteCart(cartToDelete)}
+        onCancel={() => setCartToDelete(null)}
+      />
+
+      {/* TOP BAR: ACTIVE CARTS MANAGEMENT */}
+      <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 z-30 shadow-sm shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="bg-red-50 text-red-600 p-1.5 rounded-lg">
+            <Car size={20} />
+          </div>
+          <div>
+            <h1 className="font-extrabold text-gray-800 text-sm tracking-tight leading-none">Active Repairs</h1>
+            <span className="text-[10px] text-gray-400 font-semibold">{carts.length} ongoing repair{carts.length > 1 ? 's' : ''}</span>
+          </div>
+        </div>
+
+        {/* Scrollable Cart Tabs */}
+        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0">
+          {carts.map((c, index) => {
+            const isActive = c.id === activeCartId;
+            const displayName = c.vehicleNumber 
+              ? c.vehicleNumber 
+              : (c.customerName ? c.customerName : `Repair ${index + 1}`);
+            const subText = c.vehicleNumber && c.customerName ? c.customerName : "";
+
+            return (
+              <div
+                key={c.id}
+                onClick={() => setActiveCartId(c.id)}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 transition-all duration-200 shrink-0 cursor-pointer select-none relative group ${
+                  isActive
+                    ? "bg-red-50 border-red-500 text-red-700 shadow-sm"
+                    : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300"
+                }`}
+              >
+                <Car size={13} className={isActive ? "text-red-500" : "text-gray-400"} />
+                <div className="flex flex-col text-left">
+                  <span className="text-xs font-bold whitespace-nowrap leading-none">
+                    {displayName}
+                  </span>
+                  {subText && (
+                    <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap leading-none mt-1">
+                      {subText}
+                    </span>
+                  )}
+                </div>
+                {c.items.length > 0 && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold leading-none ${
+                    isActive ? "bg-red-200 text-red-800" : "bg-gray-200 text-gray-700"
+                  }`}>
+                    {c.items.length}
+                  </span>
+                )}
+                {/* Delete Cart button - show only if we have more than 1 cart */}
+                {carts.length > 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteCart(c.id);
+                    }}
+                    className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-200 transition-colors ml-1 shrink-0"
+                    title="Delete Cart"
+                  >
+                    <XCircle size={14} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          
+          {/* Add New Cart Button */}
+          <button
+            onClick={handleAddNewCart}
+            className="flex items-center justify-center p-2 rounded-xl border border-dashed border-gray-300 hover:border-gray-500 text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 active:scale-95 transition-all shrink-0 w-8 h-8"
+            title="Add New Cart/Repair"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+        {/* LEFT SIDE: PRODUCT LIST */}
       <div
         className={`w-full md:w-2/3 flex flex-col h-full bg-gray-50 transition-all duration-300 ${
           mobileView === "cart" ? "hidden md:flex" : "flex"
@@ -769,7 +988,7 @@ const POSPage = () => {
               </label>
               <input
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
+                onChange={(e) => handleCustomerNameChange(e.target.value)}
                 className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
                 placeholder="Required"
               />
@@ -780,7 +999,7 @@ const POSPage = () => {
               </label>
               <input
                 value={vehicleNumber}
-                onChange={(e) => setVehicleNumber(e.target.value)}
+                onChange={(e) => handleVehicleNumberChange(e.target.value)}
                 className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
                 placeholder="Optional"
               />
@@ -813,6 +1032,8 @@ const POSPage = () => {
             )}
           </button>
         </div>
+      </div>
+
       </div>
 
       {/* MOBILE FLOATING BAR */}

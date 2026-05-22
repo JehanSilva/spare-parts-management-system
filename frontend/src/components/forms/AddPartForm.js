@@ -169,12 +169,14 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
 
   const getVehicleName = (id) => {
     const v = vehicles.find((vh) => vh.id === id);
-    return v ? `${v.year} ${v.make} ${v.model}` : "Unknown";
+    if (!v) return "Unknown";
+    return v.year ? `${v.year} ${v.make} ${v.model}` : `${v.make} ${v.model}`;
   };
 
   // --- Filter Vehicles based on search ---
   const filteredVehicles = vehicles.filter((v) => {
-    const fullName = `${v.year} ${v.make} ${v.model}`.toLowerCase();
+    const yearStr = v.year ? `${v.year} ` : "";
+    const fullName = `${yearStr}${v.make} ${v.model}`.toLowerCase();
     return fullName.includes(vehicleSearch.toLowerCase());
   });
 
@@ -488,7 +490,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                             }`}
                           >
                             <span className="text-sm font-medium text-gray-700">
-                              <span className="text-gray-400 mr-1">{v.year}</span> {v.make} <span className="font-bold">{v.model}</span>
+                              {v.year && <span className="text-gray-400 mr-1">{v.year}</span>} {v.make} <span className="font-bold">{v.model}</span>
                             </span>
                             {isSelected && (
                               <Check size={16} className="text-blue-600" />

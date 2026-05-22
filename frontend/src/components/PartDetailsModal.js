@@ -7,7 +7,7 @@ const PartDetailsModal = ({ part, onClose }) => {
   // Helper to render vehicle name safely from Object or ID
   const renderVehicleName = (v) => {
     if (typeof v === "object" && v !== null) {
-      return `${v.make} ${v.model}`;
+      return v.year ? `${v.year} ${v.make} ${v.model}` : `${v.make} ${v.model}`;
     }
     return "Vehicle";
   };

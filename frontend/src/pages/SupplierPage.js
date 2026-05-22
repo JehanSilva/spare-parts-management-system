@@ -136,12 +136,16 @@ const SupplierPage = () => {
   };
 
   // --- 4. Client-side Search ---
-  const filteredSuppliers = suppliers.filter(
-    (s) =>
-      s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (s.contact_person &&
-        s.contact_person.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredSuppliers = suppliers.filter((s) => {
+    const searchLower = searchTerm.toLowerCase();
+    const matchesName = s.name.toLowerCase().includes(searchLower);
+    const matchesContacts = s.contacts && s.contacts.some(
+      (c) =>
+        (c.name && c.name.toLowerCase().includes(searchLower)) ||
+        (c.phones && c.phones.some((p) => p.includes(searchTerm)))
+    );
+    return matchesName || matchesContacts;
+  });
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
@@ -261,28 +265,40 @@ const SupplierPage = () => {
                 <div className="w-full h-px bg-gray-100 my-3"></div>
 
                 <div className="space-y-3 text-sm text-gray-600">
-                  <div className="flex items-center gap-3">
-                    <User className="text-red-500 shrink-0" size={18} />
-                    <span className="font-medium text-gray-900 truncate">
-                      {supplier.contact_person || (
-                        <span className="text-gray-400 italic">
-                          No Contact Person
-                        </span>
-                      )}
-                    </span>
-                  </div>
+                  {/* Contacts Section */}
+                  {supplier.contacts && supplier.contacts.length > 0 ? (
+                    <div className="space-y-2.5">
+                      {supplier.contacts.map((contact, cIdx) => (
+                        <div key={cIdx} className="bg-red-50/55 hover:bg-red-50 transition-colors rounded-lg p-2.5 border border-red-100/50 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <User className="text-red-600 shrink-0 font-bold" size={16} />
+                            <span className="font-semibold text-gray-800">{contact.name || "Unnamed Contact"}</span>
+                          </div>
+                          {contact.phones && contact.phones.length > 0 ? (
+                            <div className="pl-6 space-y-1">
+                              {contact.phones.map((ph, pIdx) => (
+                                <div key={pIdx} className="flex items-center gap-1.5 text-xs text-gray-600">
+                                  <Phone className="text-gray-400 shrink-0" size={12} />
+                                  <a href={`tel:${ph}`} className="hover:text-red-600 hover:underline">
+                                    {ph}
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="pl-6 text-xs text-gray-400 italic">No phone numbers</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5 border border-gray-100">
+                      <User className="text-gray-400 shrink-0" size={16} />
+                      <span className="text-gray-400 italic">No Contact Persons</span>
+                    </div>
+                  )}
 
-                  <div className="flex items-center gap-3">
-                    <Phone className="text-red-500 shrink-0" size={18} />
-                    <a
-                      href={`tel:${supplier.phone}`}
-                      className="hover:text-gray-900 transition"
-                    >
-                      {supplier.phone || (
-                        <span className="text-gray-400 italic">No Phone</span>
-                      )}
-                    </a>
-                  </div>
+                  <div className="w-full h-px bg-gray-100 my-2"></div>
 
                   <div className="flex items-center gap-3">
                     <Mail className="text-red-500 shrink-0" size={18} />

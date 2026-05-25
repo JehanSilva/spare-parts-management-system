@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
-from .models import Part, Vehicle, Supplier, Sale, SaleItem
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -197,5 +197,72 @@ class PartCalculationAPITest(TestCase):
         self.assertEqual(part_data['total_sold'], 5)
         self.assertEqual(part_data['total_revenue'], 7300.00)
         self.assertEqual(part_data['total_cost'], 5000.00)
+
+class ActiveCartAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        
+        # Create an initial cart
+        self.cart = ActiveCart.objects.create(
+            id="cart_test_123",
+            customer_name="Test Customer",
+            vehicle_number="WP-1234",
+            items=[{"id": "part-uuid", "quantity": 1}]
+        )
+        self.list_url = reverse('get_active_carts')
+        self.sync_url = reverse('sync_active_carts')
+
+    def test_get_active_carts(self):
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['id'], "cart_test_123")
+        self.assertEqual(response.data[0]['customer_name'], "Test Customer")
+
+    def test_sync_active_carts(self):
+        # 1. Update existing and create new cart
+        sync_payload = [
+            {
+                "id": "cart_test_123",
+                "customer_name": "Test Customer Updated",
+                "vehicle_number": "WP-1234",
+                "items": [{"id": "part-uuid", "quantity": 2}]
+            },
+            {
+                "id": "cart_new_456",
+                "customer_name": "New Customer",
+                "vehicle_number": "WP-5678",
+                "items": []
+            }
+        ]
+        
+        response = self.client.post(self.sync_url, sync_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(ActiveCart.objects.count(), 2)
+        
+        # Verify update
+        updated_cart = ActiveCart.objects.get(id="cart_test_123")
+        self.assertEqual(updated_cart.customer_name, "Test Customer Updated")
+        self.assertEqual(updated_cart.items[0]['quantity'], 2)
+        
+        # Verify creation
+        new_cart = ActiveCart.objects.get(id="cart_new_456")
+        self.assertEqual(new_cart.customer_name, "New Customer")
+        
+        # 2. Sync again but omit cart_test_123 (it should be deleted)
+        sync_payload_delete = [
+            {
+                "id": "cart_new_456",
+                "customer_name": "New Customer",
+                "vehicle_number": "WP-5678",
+                "items": []
+            }
+        ]
+        response = self.client.post(self.sync_url, sync_payload_delete, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(ActiveCart.objects.count(), 1)
+        self.assertFalse(ActiveCart.objects.filter(id="cart_test_123").exists())
 
 

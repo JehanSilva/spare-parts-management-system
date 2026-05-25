@@ -99,4 +99,7 @@ export const fetchDashboardStats = async (period = 'all') =>
 export const fetchDailyReport = async (date) =>
   (await API.get("/reports/daily/", { params: { date } })).data;
 
+export const fetchActiveCarts = async () => (await API.get("/active-carts/")).data;
+export const syncActiveCarts = async (data) => (await API.post("/active-carts/sync/", data)).data;
+
 export default API;

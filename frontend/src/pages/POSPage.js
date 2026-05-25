@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
-import { fetchParts, createSale } from "../services/api";
+import { fetchParts, createSale, fetchActiveCarts, syncActiveCarts } from "../services/api";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
@@ -20,6 +20,7 @@ import {
   ChevronUp,
   XCircle,
   Tag,
+  RefreshCw,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -123,58 +124,143 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
 const POSPage = () => {
   const [parts, setParts] = useState([]);
   const [selectedPart, setSelectedPart] = useState(null);
-  const [carts, setCarts] = useState(() => {
-    const saved = localStorage.getItem("pos_carts");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      } catch (e) {
-        console.error("Failed to parse pos_carts", e);
-      }
-    }
+  
+  const [carts, setCarts] = useState([]);
+  const [activeCartId, setActiveCartId] = useState("");
+  const [cartsLoading, setCartsLoading] = useState(true);
+  const isInitialLoadCompleted = useRef(false);
+  const syncTimer = useRef(null);
 
-    // Migration logic for old single cart structure
-    const oldCart = localStorage.getItem("pos_cart");
-    const oldCustomer = localStorage.getItem("pos_customer");
-    const oldVehicle = localStorage.getItem("pos_vehicle");
-    if (oldCart || oldCustomer || oldVehicle) {
+  // Load carts from database on mount
+  useEffect(() => {
+    const loadCarts = async () => {
+      setCartsLoading(true);
       try {
-        const parsedCart = oldCart ? JSON.parse(oldCart) : [];
-        if (parsedCart.length > 0 || oldCustomer || oldVehicle) {
-          return [
+        const data = await fetchActiveCarts();
+        const mapped = data.map((c) => ({
+          id: c.id,
+          customerName: c.customer_name,
+          vehicleNumber: c.vehicle_number,
+          items: c.items,
+        }));
+        
+        if (mapped.length > 0) {
+          setCarts(mapped);
+          
+          // Set active cart id
+          const savedActiveId = localStorage.getItem("pos_active_cart_id");
+          if (savedActiveId && mapped.some((c) => c.id === savedActiveId)) {
+            setActiveCartId(savedActiveId);
+          } else {
+            setActiveCartId(mapped[0].id);
+          }
+        } else {
+          // Initialize with a single default cart
+          const newId = "cart_" + Date.now();
+          const initialCarts = [
             {
-              id: "cart_" + Date.now(),
-              customerName: oldCustomer || "",
-              vehicleNumber: oldVehicle || "",
-              items: parsedCart,
+              id: newId,
+              customerName: "",
+              vehicleNumber: "",
+              items: [],
             },
           ];
+          setCarts(initialCarts);
+          setActiveCartId(newId);
+          
+          // Sync this initial cart to the backend immediately
+          await syncActiveCarts(initialCarts.map((c) => ({
+            id: c.id,
+            customer_name: c.customerName,
+            vehicle_number: c.vehicleNumber,
+            items: c.items,
+          })));
         }
-      } catch (e) {
-        console.error("Failed to migrate old POS cart", e);
+      } catch (error) {
+        console.error("Failed to load active carts", error);
+        setAlertInfo({ type: "error", message: "Failed to load ongoing repairs from database." });
+      } finally {
+        setCartsLoading(false);
+        isInitialLoadCompleted.current = true;
       }
+    };
+    loadCarts();
+  }, []);
+
+  // Debounced sync to backend
+  useEffect(() => {
+    if (!isInitialLoadCompleted.current || cartsLoading) {
+      return;
     }
 
-    return [
-      {
-        id: "cart_" + Date.now(),
-        customerName: "",
-        vehicleNumber: "",
-        items: [],
-      },
-    ];
-  });
-
-  const [activeCartId, setActiveCartId] = useState(() => {
-    const savedActiveId = localStorage.getItem("pos_active_cart_id");
-    if (savedActiveId && carts.some((c) => c.id === savedActiveId)) {
-      return savedActiveId;
+    if (syncTimer.current) {
+      clearTimeout(syncTimer.current);
     }
-    return carts[0]?.id || "";
-  });
+
+    syncTimer.current = setTimeout(async () => {
+      try {
+        const payload = carts.map((c) => ({
+          id: c.id,
+          customer_name: c.customerName,
+          vehicle_number: c.vehicleNumber,
+          items: c.items,
+        }));
+        await syncActiveCarts(payload);
+      } catch (error) {
+        console.error("Failed to sync carts to database", error);
+      }
+    }, 500); // 500ms debounce
+
+    return () => {
+      if (syncTimer.current) {
+        clearTimeout(syncTimer.current);
+      }
+    };
+  }, [carts, cartsLoading]);
+
+  // Pull latest active carts from database
+  const refreshCarts = async () => {
+    setCartsLoading(true);
+    try {
+      const data = await fetchActiveCarts();
+      const mapped = data.map((c) => ({
+        id: c.id,
+        customerName: c.customer_name,
+        vehicleNumber: c.vehicle_number,
+        items: c.items,
+      }));
+      if (mapped.length > 0) {
+        setCarts(mapped);
+        if (!activeCartId || !mapped.some((c) => c.id === activeCartId)) {
+          setActiveCartId(mapped[0].id);
+        }
+        setAlertInfo({ type: "success", message: "Repairs synced with database." });
+      } else {
+        const newId = "cart_" + Date.now();
+        const initialCarts = [
+          {
+            id: newId,
+            customerName: "",
+            vehicleNumber: "",
+            items: [],
+          },
+        ];
+        setCarts(initialCarts);
+        setActiveCartId(newId);
+        await syncActiveCarts(initialCarts.map((c) => ({
+          id: c.id,
+          customer_name: c.customerName,
+          vehicle_number: c.vehicleNumber,
+          items: c.items,
+        })));
+      }
+    } catch (error) {
+      console.error("Failed to sync repairs", error);
+      setAlertInfo({ type: "error", message: "Failed to sync repairs with database." });
+    } finally {
+      setCartsLoading(false);
+    }
+  };
 
   const [searchTerm, setSearchTerm] = useState("");
   const [mobileView, setMobileView] = useState("products");
@@ -194,13 +280,11 @@ const POSPage = () => {
   const customerName = activeCart.customerName;
   const vehicleNumber = activeCart.vehicleNumber;
 
-  // Persist States to LocalStorage
+  // Persist active cart selection locally
   useEffect(() => {
-    localStorage.setItem("pos_carts", JSON.stringify(carts));
-  }, [carts]);
-
-  useEffect(() => {
-    localStorage.setItem("pos_active_cart_id", activeCartId);
+    if (activeCartId) {
+      localStorage.setItem("pos_active_cart_id", activeCartId);
+    }
   }, [activeCartId]);
 
   const [loading, setLoading] = useState(false);
@@ -218,40 +302,49 @@ const POSPage = () => {
     documentTitle: `Invoice-${saleSuccess?.id || "New"}`,
   });
 
-  // 1. Load Parts
+  const debounceTimer = useRef(null);
+
+  // 1. Load Parts from backend (supports search parameter)
+  const loadParts = useCallback(async (search) => {
+    setPartsLoading(true);
+    try {
+      const data = await fetchParts({ search });
+      setParts(data);
+    } catch (error) {
+      setAlertInfo({ type: "error", message: "Failed to load parts data." });
+    } finally {
+      setPartsLoading(false);
+    }
+  }, []);
+
+  // Initial load on mount
   useEffect(() => {
-    const loadParts = async () => {
-      setPartsLoading(true);
-      try {
-        const data = await fetchParts();
-        setParts(data);
-      } catch (error) {
-        setAlertInfo({ type: "error", message: "Failed to load parts data." });
-      } finally {
-        setPartsLoading(false);
+    loadParts("");
+  }, [loadParts]);
+
+  // Debounced live search: fires on searchTerm change
+  useEffect(() => {
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+    debounceTimer.current = setTimeout(() => {
+      loadParts(searchTerm);
+    }, 400);
+
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
       }
     };
-    loadParts();
-  }, []);
+  }, [searchTerm, loadParts]);
 
   // Reset visible count when search term changes
   useEffect(() => {
     setVisibleCount(20);
   }, [searchTerm]);
 
-  // 2. Filter Parts (Memoized) — keyword-based: ALL words must match
-  const filteredParts = useMemo(() => {
-    const keywords = searchTerm.toLowerCase().split(/\s+/).filter(Boolean);
-    if (keywords.length === 0) return parts;
-    return parts.filter((part) => {
-      const name = part.name.toLowerCase();
-      const partNum = part.part_number.toLowerCase();
-      const brand = (part.brand || "").toLowerCase();
-      return keywords.every(
-        (kw) => name.includes(kw) || partNum.includes(kw) || brand.includes(kw)
-      );
-    });
-  }, [parts, searchTerm]);
+  // 2. Filter Parts (Now directly returned from the API, client-side filtering removed)
+  const filteredParts = parts;
 
   // 2.5 Multi-Cart Actions
   const handleAddNewCart = () => {
@@ -546,8 +639,7 @@ const POSPage = () => {
         }
       });
 
-      const updatedParts = await fetchParts();
-      setParts(updatedParts);
+      await loadParts(searchTerm);
 
       setAlertInfo({
         type: "success",
@@ -662,7 +754,17 @@ const POSPage = () => {
             <Car size={20} />
           </div>
           <div>
-            <h1 className="font-extrabold text-gray-800 text-sm tracking-tight leading-none">Active Repairs</h1>
+            <div className="flex items-center gap-1.5">
+              <h1 className="font-extrabold text-gray-800 text-sm tracking-tight leading-none">Active Repairs</h1>
+              <button
+                onClick={refreshCarts}
+                disabled={cartsLoading}
+                className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-100 transition-colors"
+                title="Sync Repairs with Database"
+              >
+                <RefreshCw size={12} className={cartsLoading ? "animate-spin" : ""} />
+              </button>
+            </div>
             <span className="text-[10px] text-gray-400 font-semibold">{carts.length} ongoing repair{carts.length > 1 ? 's' : ''}</span>
           </div>
         </div>

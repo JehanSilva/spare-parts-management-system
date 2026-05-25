@@ -89,3 +89,14 @@ class SaleItem(models.Model):
 
     def __str__(self):
         return f"{self.part.name} (x{self.quantity})"
+
+class ActiveCart(models.Model):
+    id = models.CharField(max_length=50, primary_key=True) # Matches the frontend cart.id
+    customer_name = models.CharField(max_length=100, blank=True, default='')
+    vehicle_number = models.CharField(max_length=20, blank=True, default='')
+    items = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Cart {self.id} - {self.customer_name or 'No Name'} ({self.vehicle_number or 'No Vehicle'})"

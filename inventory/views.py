@@ -6,8 +6,8 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer
 from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
 from .serializers import VehicleSerializer # <--- Make sure this is imported too!
 from django.shortcuts import get_object_or_404 # Ensure this is imported        
@@ -789,4 +789,49 @@ def bulk_upload_parts(request):
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
-        return Response({"error": f"Error processing file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"error": f"Error processing file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+def get_active_carts(request):
+    """
+    List all active repairs/carts from the database
+    """
+    carts = ActiveCart.objects.all().order_by('created_at')
+    serializer = ActiveCartSerializer(carts, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@transaction.atomic
+def sync_active_carts(request):
+    """
+    Synchronize the frontend carts state with the database.
+    Deletes any carts not in the incoming list, and inserts/updates the rest.
+    """
+    carts_data = request.data
+    if not isinstance(carts_data, list):
+        return Response({"error": "Expected a list of carts"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Extract all incoming cart IDs
+    incoming_ids = [c.get('id') for c in carts_data if c.get('id')]
+
+    # Delete database active carts that are no longer in the frontend list
+    ActiveCart.objects.exclude(id__in=incoming_ids).delete()
+
+    # Update or create incoming active carts
+    for cart in carts_data:
+        cart_id = cart.get('id')
+        if not cart_id:
+            continue
+        ActiveCart.objects.update_or_create(
+            id=cart_id,
+            defaults={
+                'customer_name': cart.get('customer_name', ''),
+                'vehicle_number': cart.get('vehicle_number', ''),
+                'items': cart.get('items', [])
+            }
+        )
+
+    # Return the full list of synchronized active carts
+    updated_carts = ActiveCart.objects.all().order_by('created_at')
+    serializer = ActiveCartSerializer(updated_carts, many=True)
+    return Response(serializer.data)

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Supplier, Part, Vehicle, Sale, SaleItem
+from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -125,3 +125,8 @@ class SaleSerializer(serializers.ModelSerializer):
         sale.save()
 
         return sale
+
+class ActiveCartSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ActiveCart
+        fields = '__all__'

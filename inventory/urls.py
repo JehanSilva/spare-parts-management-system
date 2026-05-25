@@ -37,4 +37,8 @@ urlpatterns = [
     
     # Daily Report
     path('reports/daily/', views.daily_report, name='daily_report'),
+
+    # Active Carts (POS Sync)
+    path('active-carts/', views.get_active_carts, name='get_active_carts'),
+    path('active-carts/sync/', views.sync_active_carts, name='sync_active_carts'),
 ]

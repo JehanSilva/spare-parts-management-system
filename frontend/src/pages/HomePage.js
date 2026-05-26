@@ -150,6 +150,14 @@ const HomePage = () => {
             gradient="from-indigo-400 to-indigo-600"
             desc="End-of-day sales, revenue & PDF export."
           />
+          <QuickActionCard
+            to="/employees"
+            title="Employees & Payroll"
+            icon={Users}
+            colorClass="text-red-600 bg-red-100"
+            gradient="from-red-400 to-red-600"
+            desc="Manage staff, mark daily attendance, and calculate monthly salaries."
+          />
         </div>
 
         {/* --- SECTION 2: Financial Stats Dashboard --- */}

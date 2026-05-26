@@ -13,6 +13,7 @@ import SupplierPage from "./pages/SupplierPage";
 import POSPage from "./pages/POSPage";
 import SalesHistoryPage from "./pages/SalesHistoryPage";
 import LoginPage from "./pages/LoginPage";
+import EmployeePage from "./pages/EmployeePage";
 import DailyReportPage from "./pages/DailyReportPage";
 import PrivateRoute from "./components/PrivateRoute";
 import useAutoLogout from "./hooks/useAutoLogout";
@@ -79,6 +80,14 @@ function App() {
             element={
               <PrivateRoute>
                 <VehiclePage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/employees"
+            element={
+              <PrivateRoute>
+                <EmployeePage />
               </PrivateRoute>
             }
           />

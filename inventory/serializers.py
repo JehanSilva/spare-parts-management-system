@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart
+from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -129,4 +129,27 @@ class SaleSerializer(serializers.ModelSerializer):
 class ActiveCartSerializer(serializers.ModelSerializer):
     class Meta:
         model = ActiveCart
+        fields = '__all__'
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Employee
+        fields = '__all__'
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField()
+    employee_role = serializers.ReadOnlyField(source='employee.role')
+
+    class Meta:
+        model = Attendance
+        fields = '__all__'
+
+    def get_employee_name(self, obj):
+        return f"{obj.employee.first_name} {obj.employee.last_name}"
+
+class PayrollSerializer(serializers.ModelSerializer):
+    employee_details = EmployeeSerializer(source='employee', read_only=True)
+
+    class Meta:
+        model = Payroll
         fields = '__all__'

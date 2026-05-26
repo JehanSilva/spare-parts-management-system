@@ -56,7 +56,7 @@
   /* --- METRIC CARDS in print --- */
   .print-metrics-grid {
     display: grid !important;
-    grid-template-columns: repeat(4, 1fr) !important;
+    grid-template-columns: repeat(5, 1fr) !important;
     gap: 12px !important;
     margin-bottom: 20px !important;
     page-break-inside: avoid !important;

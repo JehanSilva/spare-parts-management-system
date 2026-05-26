@@ -100,3 +100,80 @@ class ActiveCart(models.Model):
 
     def __str__(self):
         return f"Cart {self.id} - {self.customer_name or 'No Name'} ({self.vehicle_number or 'No Vehicle'})"
+
+from django.utils import timezone
+
+class Employee(models.Model):
+    SALARY_TYPE_CHOICES = [
+        ('DAILY', 'Daily Paid'),
+        ('MONTHLY', 'Monthly Paid'),
+    ]
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    email = models.EmailField(blank=True, null=True)
+    phone_numbers = models.JSONField(default=list, blank=True, null=True)
+    address = models.TextField(blank=True, null=True)
+    role = models.CharField(max_length=50, help_text="e.g., Mechanic, Cashier, Manager, Storekeeper")
+    date_joined = models.DateField(default=timezone.localdate)
+    salary_type = models.CharField(max_length=10, choices=SALARY_TYPE_CHOICES, default='DAILY')
+    salary_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Daily rate or Monthly salary depending on salary_type")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.first_name} {self.last_name} ({self.role})"
+
+class Attendance(models.Model):
+    STATUS_CHOICES = [
+        ('PRESENT', 'Present'),
+        ('HALF_DAY', 'Half Day'),
+        ('ABSENT', 'Absent'),
+        ('PAID_LEAVE', 'Paid Leave'),
+    ]
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='attendances')
+    date = models.DateField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PRESENT')
+    check_in_time = models.TimeField(null=True, blank=True)
+    check_out_time = models.TimeField(null=True, blank=True)
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        unique_together = ('employee', 'date')
+
+    def __str__(self):
+        return f"{self.employee.first_name} - {self.date} - {self.status}"
+
+class Payroll(models.Model):
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('PAID', 'Paid'),
+    ]
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='payrolls')
+    month = models.PositiveIntegerField() # 1-12
+    year = models.PositiveIntegerField()
+    days_present = models.DecimalField(max_digits=4, decimal_places=1, default=0.0)
+    days_paid_leave = models.DecimalField(max_digits=4, decimal_places=1, default=0.0)
+    days_absent = models.DecimalField(max_digits=4, decimal_places=1, default=0.0)
+    base_salary = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    allowances = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    deductions = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    net_salary = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='DRAFT')
+    paid_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('employee', 'month', 'year')
+
+    def save(self, *args, **kwargs):
+        from decimal import Decimal
+        base = Decimal(str(self.base_salary or 0.00))
+        allow = Decimal(str(self.allowances or 0.00))
+        deduct = Decimal(str(self.deductions or 0.00))
+        self.net_salary = base + allow - deduct
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.employee.first_name} - {self.year}/{self.month:02d} - {self.status}"

@@ -6,8 +6,9 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer
+from decimal import Decimal
 from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
 from .serializers import VehicleSerializer # <--- Make sure this is imported too!
 from django.shortcuts import get_object_or_404 # Ensure this is imported        
@@ -638,11 +639,15 @@ def daily_report(request):
 
     chart_data = [hours[h] for h in sorted(hours.keys())]
 
+    # Calculate ROI on COGS percentage
+    roi_percentage = (float(target_profit) / float(total_investment) * 100) if total_investment > 0 else 0.0
+
     return Response({
         "today_revenue": target_revenue,
         "today_profit": target_profit,
         "today_sales_count": target_sales_count,
         "total_investment": total_investment,
+        "roi_percentage": round(roi_percentage, 2),
         "percentage_change": round(percentage_change, 2),
         "avg_daily_revenue": round(avg_daily_revenue, 2),
         "items": items_list,
@@ -834,4 +839,256 @@ def sync_active_carts(request):
     # Return the full list of synchronized active carts
     updated_carts = ActiveCart.objects.all().order_by('created_at')
     serializer = ActiveCartSerializer(updated_carts, many=True)
-    return Response(serializer.data)
+    return Response(serializer.data)
+
+
+# --- EMPLOYEE VIEWS ---
+
+@api_view(['GET'])
+def get_employees(request):
+    """List all employees"""
+    employees = Employee.objects.all().order_by('-created_at')
+    serializer = EmployeeSerializer(employees, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+def add_employee(request):
+    """Add a new employee"""
+    serializer = EmployeeSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['PUT'])
+def update_employee(request, pk):
+    """Update employee details"""
+    employee = get_object_or_404(Employee, pk=pk)
+    serializer = EmployeeSerializer(employee, data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+def delete_employee(request, pk):
+    """Deactivate or delete an employee"""
+    employee = get_object_or_404(Employee, pk=pk)
+    # If the employee has attendance or payroll records, deactivate them rather than deleting
+    if employee.attendances.exists() or employee.payrolls.exists():
+        employee.is_active = False
+        employee.save()
+        return Response({"message": "Employee deactivated due to existing historical records."}, status=status.HTTP_200_OK)
+    
+    employee.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- ATTENDANCE VIEWS ---
+
+@api_view(['GET'])
+def get_attendance_sheet(request):
+    """
+    Get the attendance list for a specific date.
+    If no records exist in DB for some active employees for that date,
+    returns placeholder/default records with status='PRESENT' as a template.
+    """
+    date_str = request.query_params.get('date')
+    if not date_str:
+        return Response({"error": "Date parameter is required (YYYY-MM-DD)"}, status=status.HTTP_400_BAD_REQUEST)
+    
+    try:
+        from datetime import datetime
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Fetch active employees
+    active_employees = Employee.objects.filter(is_active=True).order_by('first_name')
+    
+    # Get existing records for this date
+    existing_attendances = {
+        att.employee_id: att for att in Attendance.objects.filter(date=target_date)
+    }
+
+    results = []
+    for emp in active_employees:
+        if emp.id in existing_attendances:
+            results.append(existing_attendances[emp.id])
+        else:
+            # Return unsaved template record
+            results.append(Attendance(
+                employee=emp,
+                date=target_date,
+                status='PRESENT'
+            ))
+
+    serializer = AttendanceSerializer(results, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@transaction.atomic
+def mark_attendance_sheet(request):
+    """
+    Save or update attendance in bulk for a specific date.
+    """
+    data = request.data
+    date_str = data.get('date')
+    attendances_data = data.get('attendances', [])
+
+    if not date_str:
+        return Response({"error": "Date is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        from datetime import datetime
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+
+    for att in attendances_data:
+        emp_id = att.get('employee')
+        status_val = att.get('status', 'PRESENT')
+        notes = att.get('notes', '')
+        
+        if not emp_id:
+            continue
+            
+        Attendance.objects.update_or_create(
+            employee_id=emp_id,
+            date=target_date,
+            defaults={
+                'status': status_val,
+                'notes': notes
+            }
+        )
+
+    return Response({"message": "Attendance marked successfully"}, status=status.HTTP_200_OK)
+
+
+# --- PAYROLL VIEWS ---
+
+@api_view(['GET'])
+def get_payroll_list(request):
+    """List payroll records for a selected month and year"""
+    month = request.query_params.get('month')
+    year = request.query_params.get('year')
+    
+    if not month or not year:
+        return Response({"error": "Month and Year parameters are required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    payroll_records = Payroll.objects.filter(month=month, year=year).order_by('employee__first_name')
+    serializer = PayrollSerializer(payroll_records, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+@transaction.atomic
+def generate_payroll_drafts(request):
+    """
+    Calculate and generate draft payroll records for a given month/year.
+    """
+    month = request.data.get('month')
+    year = request.data.get('year')
+    
+    if not month or not year:
+        return Response({"error": "Month and Year are required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        month = int(month)
+        year = int(year)
+    except ValueError:
+        return Response({"error": "Month and Year must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+
+    active_employees = Employee.objects.filter(is_active=True)
+    payroll_records = []
+    
+    for emp in active_employees:
+        # Calculate attendance counts for this month/year
+        attendances = Attendance.objects.filter(
+            employee=emp,
+            date__month=month,
+            date__year=year
+        )
+        
+        # Present: 1.0, Half-day: 0.5, Paid Leave: 1.0, Absent: 0.0
+        days_present = Decimal('0.0')
+        days_paid_leave = Decimal('0.0')
+        days_absent = Decimal('0.0')
+        
+        for att in attendances:
+            if att.status == 'PRESENT':
+                days_present += Decimal('1.0')
+            elif att.status == 'HALF_DAY':
+                days_present += Decimal('0.5')
+            elif att.status == 'PAID_LEAVE':
+                days_paid_leave += Decimal('1.0')
+            elif att.status == 'ABSENT':
+                days_absent += Decimal('1.0')
+
+        # Calculate base salary depending on salary_type
+        if emp.salary_type == 'DAILY':
+            base_salary = (days_present + days_paid_leave) * emp.salary_rate
+        else: # MONTHLY paid
+            base_salary = emp.salary_rate
+
+        # Get or create payroll record
+        payroll, created = Payroll.objects.get_or_create(
+            employee=emp,
+            month=month,
+            year=year,
+            defaults={
+                'days_present': days_present,
+                'days_paid_leave': days_paid_leave,
+                'days_absent': days_absent,
+                'base_salary': base_salary,
+                'allowances': Decimal('0.00'),
+                'deductions': Decimal('0.00'),
+                'status': 'DRAFT'
+            }
+        )
+        
+        if not created:
+            # Update dynamic fields but preserve manually added allowances/deductions
+            if payroll.status != 'PAID':
+                payroll.days_present = days_present
+                payroll.days_paid_leave = days_paid_leave
+                payroll.days_absent = days_absent
+                payroll.base_salary = base_salary
+                payroll.save()
+                
+        payroll_records.append(payroll)
+        
+    serializer = PayrollSerializer(payroll_records, many=True)
+    return Response(serializer.data)
+
+@api_view(['PUT'])
+def update_payroll_record(request, pk):
+    """Update allowances or deductions on a draft payroll record"""
+    payroll = get_object_or_404(Payroll, pk=pk)
+    
+    if payroll.status == 'PAID':
+        return Response({"error": "Cannot update a paid payroll record"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    allowances = request.data.get('allowances')
+    deductions = request.data.get('deductions')
+    
+    if allowances is not None:
+        payroll.allowances = allowances
+    if deductions is not None:
+        payroll.deductions = deductions
+        
+    payroll.save()
+    return Response(PayrollSerializer(payroll).data)
+
+@api_view(['POST'])
+def pay_payroll_record(request, pk):
+    """Mark a payroll record as Paid"""
+    payroll = get_object_or_404(Payroll, pk=pk)
+    
+    if payroll.status == 'PAID':
+        return Response({"error": "Payroll record is already paid"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    payroll.status = 'PAID'
+    payroll.paid_date = timezone.now().date()
+    payroll.save()
+    
+    return Response(PayrollSerializer(payroll).data)

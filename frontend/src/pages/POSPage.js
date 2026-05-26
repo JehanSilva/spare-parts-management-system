@@ -176,12 +176,13 @@ const POSPage = () => {
             items: c.items,
           })));
         }
+        // Only mark load as complete on success to prevent sync of empty state on failure
+        isInitialLoadCompleted.current = true;
       } catch (error) {
         console.error("Failed to load active carts", error);
         setAlertInfo({ type: "error", message: "Failed to load ongoing repairs from database." });
       } finally {
         setCartsLoading(false);
-        isInitialLoadCompleted.current = true;
       }
     };
     loadCarts();
@@ -254,6 +255,8 @@ const POSPage = () => {
           items: c.items,
         })));
       }
+      // Only mark load as complete on success to prevent sync of empty state on failure
+      isInitialLoadCompleted.current = true;
     } catch (error) {
       console.error("Failed to sync repairs", error);
       setAlertInfo({ type: "error", message: "Failed to sync repairs with database." });
@@ -374,6 +377,11 @@ const POSPage = () => {
   const executeDeleteCart = (cartId) => {
     setCarts((prev) => {
       const remaining = prev.filter((c) => c.id !== cartId);
+      if (remaining.length === 0) {
+        const newId = "cart_" + Date.now();
+        setActiveCartId(newId);
+        return [{ id: newId, customerName: "", vehicleNumber: "", items: [] }];
+      }
       if (activeCartId === cartId) {
         setActiveCartId(remaining[0].id);
       }

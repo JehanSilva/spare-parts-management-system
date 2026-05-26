@@ -102,4 +102,20 @@ export const fetchDailyReport = async (date) =>
 export const fetchActiveCarts = async () => (await API.get("/active-carts/")).data;
 export const syncActiveCarts = async (data) => (await API.post("/active-carts/sync/", data)).data;
 
+// --- EMPLOYEE SERVICES ---
+export const fetchEmployees = async () => (await API.get("/employees/")).data;
+export const createEmployee = async (data) => (await API.post("/employees/add/", data)).data;
+export const updateEmployee = async (id, data) => (await API.put(`/employees/${id}/update/`, data)).data;
+export const deleteEmployee = async (id) => await API.delete(`/employees/${id}/delete/`);
+
+// --- ATTENDANCE SERVICES ---
+export const fetchAttendanceSheet = async (date) => (await API.get("/attendance/", { params: { date } })).data;
+export const markAttendanceSheet = async (data) => (await API.post("/attendance/mark/", data)).data;
+
+// --- PAYROLL SERVICES ---
+export const fetchPayroll = async (month, year) => (await API.get("/payroll/", { params: { month, year } })).data;
+export const generatePayrollDrafts = async (data) => (await API.post("/payroll/generate/", data)).data;
+export const updatePayroll = async (id, data) => (await API.put(`/payroll/${id}/update/`, data)).data;
+export const payPayroll = async (id) => (await API.post(`/payroll/${id}/pay/`)).data;
+
 export default API;

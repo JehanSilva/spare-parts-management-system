@@ -10,6 +10,7 @@ import {
   X,
   FileText,
   LogOut,
+  Users,
 } from "lucide-react";
 import logoImg from "../assets/logo.png";
 import { logoutUser } from "../services/api";
@@ -32,6 +33,7 @@ const Navbar = () => {
     { path: "/inventory", label: "Inventory", icon: Package },
     { path: "/suppliers", label: "Suppliers", icon: Truck },
     { path: "/vehicles", label: "Vehicles", icon: Car },
+    { path: "/employees", label: "Employees", icon: Users },
     { path: "/sales-history", label: "Sales History", icon: FileText },
   ];
 

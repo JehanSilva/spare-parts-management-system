@@ -41,4 +41,20 @@ urlpatterns = [
     # Active Carts (POS Sync)
     path('active-carts/', views.get_active_carts, name='get_active_carts'),
     path('active-carts/sync/', views.sync_active_carts, name='sync_active_carts'),
+
+    # Employees
+    path('employees/', views.get_employees, name='get_employees'),
+    path('employees/add/', views.add_employee, name='add_employee'),
+    path('employees/<int:pk>/update/', views.update_employee, name='update_employee'),
+    path('employees/<int:pk>/delete/', views.delete_employee, name='delete_employee'),
+
+    # Attendance
+    path('attendance/', views.get_attendance_sheet, name='get_attendance_sheet'),
+    path('attendance/mark/', views.mark_attendance_sheet, name='mark_attendance_sheet'),
+
+    # Payroll
+    path('payroll/', views.get_payroll_list, name='get_payroll_list'),
+    path('payroll/generate/', views.generate_payroll_drafts, name='generate_payroll_drafts'),
+    path('payroll/<int:pk>/update/', views.update_payroll_record, name='update_payroll_record'),
+    path('payroll/<int:pk>/pay/', views.pay_payroll_record, name='pay_payroll_record'),
 ]

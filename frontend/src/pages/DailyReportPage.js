@@ -10,7 +10,8 @@ import {
   DollarSign,
   Package,
   ShoppingBag,
-  Activity
+  Activity,
+  Percent
 } from "lucide-react";
 import {
   BarChart,
@@ -83,6 +84,10 @@ const DailyReportPage = () => {
     );
   }
 
+  const roi = reportData.roi_percentage !== undefined
+    ? reportData.roi_percentage
+    : (reportData.total_investment > 0 ? ((reportData.today_profit / reportData.total_investment) * 100) : 0);
+
   return (
     <div className="min-h-screen print:min-h-0 bg-gray-50 print:bg-white pb-12 print:pb-0">
       <div className="max-w-6xl print:max-w-none print:w-full mx-auto p-4 md:p-8 print:p-0">
@@ -124,7 +129,7 @@ const DailyReportPage = () => {
           </div>
 
           {/* --- Key Metrics Grid --- */}
-          <div className="print-metrics-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-12 print:mb-6">
+          <div className="print-metrics-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 md:gap-6 mb-12 print:mb-6">
             
             {/* Sales Count */}
             <div className="print-metric-card bg-gray-50 p-6 rounded-2xl border border-gray-100">
@@ -155,10 +160,10 @@ const DailyReportPage = () => {
                     <Activity size={20} />
                   </div>
                </div>
-               <p className={`text-sm font-bold ${reportData.today_profit >= 0 ? 'text-green-800' : 'text-red-800'} uppercase tracking-wider mb-1 relative z-10`}>
+               <p className={`metric-label text-sm font-bold ${reportData.today_profit >= 0 ? 'text-green-800' : 'text-red-800'} uppercase tracking-wider mb-1 relative z-10`}>
                  {reportData.today_profit >= 0 ? 'Net Profit' : 'Net Loss'}
                </p>
-               <p className={`text-2xl font-black ${reportData.today_profit >= 0 ? 'text-gray-900' : 'text-red-700'} relative z-10`}>
+               <p className={`metric-value text-2xl font-black ${reportData.today_profit >= 0 ? 'text-gray-900' : 'text-red-700'} relative z-10`}>
                  {formatLKR(reportData.today_profit)}
                </p>
             </div>
@@ -172,6 +177,19 @@ const DailyReportPage = () => {
                </div>
                <p className="metric-label text-sm font-bold text-blue-800 uppercase tracking-wider mb-1">Cost of Goods Sold</p>
                <p className="metric-value text-2xl font-black text-gray-900">{formatLKR(reportData.total_investment)}</p>
+            </div>
+
+            {/* Return on Investment (ROI) */}
+            <div className={`print-metric-card ${roi >= 0 ? 'bg-purple-50 border-purple-100' : 'bg-red-50 border-red-100'} p-6 rounded-2xl border relative overflow-hidden print:border-gray-300 print:bg-white`}>
+               <div className="metric-icon flex items-center justify-between mb-4">
+                  <div className={`w-10 h-10 ${roi >= 0 ? 'bg-purple-100 text-purple-600' : 'bg-red-100 text-red-600'} rounded-lg flex items-center justify-center`}>
+                    <Percent size={20} />
+                  </div>
+               </div>
+               <p className={`metric-label text-sm font-bold ${roi >= 0 ? 'text-purple-800' : 'text-red-800'} uppercase tracking-wider mb-1`}>ROI on COGS</p>
+               <p className={`metric-value text-2xl font-black ${roi >= 0 ? 'text-gray-900' : 'text-red-700'}`}>
+                 {parseFloat(roi).toFixed(2)}%
+               </p>
             </div>
             
           </div>

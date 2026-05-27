@@ -47,10 +47,16 @@ urlpatterns = [
     path('employees/add/', views.add_employee, name='add_employee'),
     path('employees/<int:pk>/update/', views.update_employee, name='update_employee'),
     path('employees/<int:pk>/delete/', views.delete_employee, name='delete_employee'),
+    path('employees/<int:pk>/attendance/', views.get_employee_attendance, name='get_employee_attendance'),
 
     # Attendance
     path('attendance/', views.get_attendance_sheet, name='get_attendance_sheet'),
     path('attendance/mark/', views.mark_attendance_sheet, name='mark_attendance_sheet'),
+
+    # Holidays
+    path('holidays/', views.get_holidays, name='get_holidays'),
+    path('holidays/add/', views.add_holiday, name='add_holiday'),
+    path('holidays/<int:pk>/delete/', views.delete_holiday, name='delete_holiday'),
 
     # Payroll
     path('payroll/', views.get_payroll_list, name='get_payroll_list'),

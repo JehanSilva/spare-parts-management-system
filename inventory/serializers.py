@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll
+from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -152,4 +152,9 @@ class PayrollSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Payroll
+        fields = '__all__'
+
+class HolidaySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Holiday
         fields = '__all__'

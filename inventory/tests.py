@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -68,7 +68,8 @@ class BulkUploadAPITest(TestCase):
             'Cost Price': [750.00, 150.00],
             'Selling Price': [1000.00, 200.00],
             'Current Stock': [6, 4],
-            'Rack/Bin Location': ['Oil Filter Rack', 'Rack B']
+            'Rack/Bin Location': ['Oil Filter Rack', 'Rack B'],
+            'Fits Vehicles': ['Toyota Corolla (2020)', 'Toyota Corolla (2020), Honda Civic 2021']
         }
         df = pd.DataFrame(data)
         
@@ -96,6 +97,13 @@ class BulkUploadAPITest(TestCase):
         self.assertIsNotNone(self.existing_part.supplier)
         self.assertEqual(self.existing_part.supplier.name, 'Toyotsu Lanka (Pvt) Ltd')
         
+        # Verify compatible vehicles updated
+        self.assertEqual(self.existing_part.compatible_vehicles.count(), 1)
+        v1 = self.existing_part.compatible_vehicles.first()
+        self.assertEqual(v1.make, "Toyota")
+        self.assertEqual(v1.model, "Corolla")
+        self.assertEqual(v1.year, 2020)
+        
         # Verify new part created
         new_part = Part.objects.get(part_number='B16019120')
         self.assertEqual(new_part.name, 'New Part Test')
@@ -105,6 +113,16 @@ class BulkUploadAPITest(TestCase):
         self.assertEqual(new_part.stock_qty, 4)
         self.assertEqual(new_part.rack_location, 'Rack B')
         self.assertEqual(new_part.supplier.name, 'Test Supplier')
+        
+        # Verify new part compatible vehicles
+        self.assertEqual(new_part.compatible_vehicles.count(), 2)
+        v_list = list(new_part.compatible_vehicles.all().order_by('make'))
+        self.assertEqual(v_list[0].make, "Honda")
+        self.assertEqual(v_list[0].model, "Civic")
+        self.assertEqual(v_list[0].year, 2021)
+        self.assertEqual(v_list[1].make, "Toyota")
+        self.assertEqual(v_list[1].model, "Corolla")
+        self.assertEqual(v_list[1].year, 2020)
 
 
 class PartCalculationAPITest(TestCase):
@@ -506,6 +524,67 @@ class DailyReportAPITest(TestCase):
         self.assertEqual(float(response_no_date.data['today_profit']), 80.00)
         self.assertEqual(float(response_no_date.data['total_investment']), 200.00)
         self.assertEqual(float(response_no_date.data['roi_percentage']), 40.00)
+
+class HolidayAndCalendarAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        
+        self.employee = Employee.objects.create(
+            first_name="Jane",
+            last_name="Doe",
+            role="Accountant",
+            salary_type="MONTHLY",
+            salary_rate=60000.00,
+            working_days=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        )
+        
+    def test_employee_working_days(self):
+        self.assertEqual(self.employee.working_days, ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
+        
+    def test_get_employee_attendance(self):
+        Attendance.objects.create(
+            employee=self.employee,
+            date="2026-05-01",
+            status="PRESENT",
+            notes="On time"
+        )
+        url = reverse('get_employee_attendance', kwargs={'pk': self.employee.pk})
+        response = self.client.get(url, {"month": 5, "year": 2026})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['status'], 'PRESENT')
+        
+    def test_holiday_crud(self):
+        list_url = reverse('get_holidays')
+        add_url = reverse('add_holiday')
+        
+        # 1. List
+        response = self.client.get(list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 0)
+        
+        # 2. Add
+        add_payload = {
+            "date": "2026-05-01",
+            "name": "May Day"
+        }
+        response = self.client.post(add_url, add_payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Holiday.objects.count(), 1)
+        holiday_id = response.data['id']
+        
+        # 3. List again
+        response = self.client.get(list_url)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['name'], "May Day")
+        
+        # 4. Delete
+        delete_url = reverse('delete_holiday', kwargs={'pk': holiday_id})
+        response = self.client.delete(delete_url)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(Holiday.objects.count(), 0)
 
 
 

@@ -6,8 +6,8 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer
 from decimal import Decimal
 from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
 from .serializers import VehicleSerializer # <--- Make sure this is imported too!
@@ -654,6 +654,63 @@ def daily_report(request):
         "chart_data": chart_data
     })
 
+def parse_vehicle_string(vehicle_str, existing_makes):
+    import re
+    vehicle_str = vehicle_str.strip()
+    if not vehicle_str:
+        return None
+
+    # 1. Extract year: look for a 4-digit number starting with 19 or 20
+    year_match = re.search(r'\b(19\d{2}|20\d{2})\b', vehicle_str)
+    year = None
+    if year_match:
+        year = int(year_match.group(1))
+        span = year_match.span()
+        start_idx = span[0]
+        end_idx = span[1]
+        
+        # Check if there is '(' before and ')' after, and remove them
+        if start_idx > 0 and vehicle_str[start_idx - 1] == '(':
+            start_idx -= 1
+        if end_idx < len(vehicle_str) and vehicle_str[end_idx] == ')':
+            end_idx += 1
+            
+        vehicle_str = vehicle_str[:start_idx] + vehicle_str[end_idx:]
+
+    # Clean up spaces
+    vehicle_str = re.sub(r'\s+', ' ', vehicle_str).strip()
+    if not vehicle_str:
+        return None
+
+    # 2. Extract make and model
+    # Sort existing makes by length in descending order to match multi-word makes first
+    sorted_makes = sorted(existing_makes, key=len, reverse=True)
+    make_match = None
+    for m in sorted_makes:
+        if vehicle_str.lower() == m.lower():
+            make_match = m
+            vehicle_str = ""
+            break
+        elif vehicle_str.lower().startswith(m.lower() + ' '):
+            make_match = m
+            vehicle_str = vehicle_str[len(m):].strip()
+            break
+
+    if make_match:
+        make = make_match
+        model = vehicle_str if vehicle_str else "Unknown"
+    else:
+        # Fallback: first word is make, rest is model
+        parts = vehicle_str.split(' ')
+        make = parts[0]
+        model = ' '.join(parts[1:]) if len(parts) > 1 else "Unknown"
+
+    return {
+        'make': make.strip(),
+        'model': model.strip(),
+        'year': year
+    }
+
 @api_view(['POST'])
 def bulk_upload_parts(request):
     """
@@ -678,6 +735,13 @@ def bulk_upload_parts(request):
         created_count = 0
         updated_count = 0
         
+        # Get all existing unique makes for smart parsing of multi-word makes (e.g. "Land Rover")
+        existing_makes = list(Vehicle.objects.values_list('make', flat=True).distinct())
+        common_makes = ["Toyota", "Honda", "Nissan", "Mitsubishi", "Suzuki", "Mazda", "Hyundai", "Kia", "BMW", "Mercedes-Benz", "Audi", "Ford", "Chevrolet", "Land Rover", "Range Rover", "Lexus"]
+        for make in common_makes:
+            if make not in existing_makes:
+                existing_makes.append(make)
+                
         # Start transaction for safety
         with transaction.atomic():
             for index, row in df.iterrows():
@@ -719,6 +783,7 @@ def bulk_upload_parts(request):
                 sell_keys = ['selling price', 'selling_price', 'sell price', 'sell_price', 'price']
                 stock_keys = ['current stock', 'current_stock', 'stock qty', 'stock_qty', 'stock', 'qty']
                 location_keys = ['rack/bin location', 'rack / bin location', 'rack location', 'rack_location', 'location']
+                fits_keys = ['fits vehicles', 'fits_vehicles', 'compatible vehicles', 'compatible_vehicles', 'fits', 'vehicles']
                 
                 cost_val = next((row_dict[k] for k in cost_keys if k in row_dict), 0)
                 sell_val = next((row_dict[k] for k in sell_keys if k in row_dict), 0)
@@ -742,6 +807,34 @@ def bulk_upload_parts(request):
                     
                 rack_location = str(loc_val).strip() if pd.notna(loc_val) and str(loc_val).lower() != 'nan' else ""
                 
+                # Check for fits/compatible vehicles
+                has_fits_col = any(k in row_dict for k in fits_keys)
+                vehicle_objs = []
+                if has_fits_col:
+                    fits_val = next((row_dict[k] for k in fits_keys if k in row_dict), None)
+                    if pd.notna(fits_val) and str(fits_val).strip() != "" and str(fits_val).lower() != 'nan':
+                        import re
+                        vehicle_strs = re.split(r'[,;]+', str(fits_val))
+                        for v_str in vehicle_strs:
+                            parsed = parse_vehicle_string(v_str, existing_makes)
+                            if parsed:
+                                v_obj = Vehicle.objects.filter(
+                                    make__iexact=parsed['make'],
+                                    model__iexact=parsed['model'],
+                                    year=parsed['year']
+                                ).first()
+                                
+                                if not v_obj:
+                                    v_obj = Vehicle.objects.create(
+                                        make=parsed['make'],
+                                        model=parsed['model'],
+                                        year=parsed['year']
+                                    )
+                                    if parsed['make'] not in existing_makes:
+                                        existing_makes.append(parsed['make'])
+                                        
+                                vehicle_objs.append(v_obj)
+                                
                 # Find if part already exists
                 existing_part = Part.objects.filter(part_number=part_number).first()
                 
@@ -772,10 +865,12 @@ def bulk_upload_parts(request):
                         existing_part.sell_price = sell_price
                         
                     existing_part.save()
+                    if has_fits_col:
+                        existing_part.compatible_vehicles.set(vehicle_objs)
                     updated_count += 1
                 else:
                     # Create new part
-                    Part.objects.create(
+                    new_part = Part.objects.create(
                         part_number=part_number,
                         name=name,
                         brand=brand,
@@ -785,6 +880,8 @@ def bulk_upload_parts(request):
                         stock_qty=stock_qty,
                         rack_location=rack_location,
                     )
+                    if has_fits_col:
+                        new_part.compatible_vehicles.set(vehicle_objs)
                     created_count += 1
                     
         return Response({
@@ -881,6 +978,51 @@ def delete_employee(request, pk):
         return Response({"message": "Employee deactivated due to existing historical records."}, status=status.HTTP_200_OK)
     
     employee.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+@api_view(['GET'])
+def get_employee_attendance(request, pk):
+    """
+    Get attendance records for a single employee for a specific month and year.
+    """
+    employee = get_object_or_404(Employee, pk=pk)
+    month = request.query_params.get('month')
+    year = request.query_params.get('year')
+    
+    if not month or not year:
+        return Response({"error": "Month and Year parameters are required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        month = int(month)
+        year = int(year)
+    except ValueError:
+        return Response({"error": "Month and Year must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    attendances = Attendance.objects.filter(employee=employee, date__month=month, date__year=year).order_by('date')
+    serializer = AttendanceSerializer(attendances, many=True)
+    return Response(serializer.data)
+
+@api_view(['GET'])
+def get_holidays(request):
+    """List all global holidays"""
+    holidays = Holiday.objects.all().order_by('date')
+    serializer = HolidaySerializer(holidays, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+def add_holiday(request):
+    """Add a new holiday"""
+    serializer = HolidaySerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+def delete_holiday(request, pk):
+    """Delete a holiday"""
+    holiday = get_object_or_404(Holiday, pk=pk)
+    holiday.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 

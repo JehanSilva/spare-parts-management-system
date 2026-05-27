@@ -68,7 +68,8 @@ class BulkUploadAPITest(TestCase):
             'Cost Price': [750.00, 150.00],
             'Selling Price': [1000.00, 200.00],
             'Current Stock': [6, 4],
-            'Rack/Bin Location': ['Oil Filter Rack', 'Rack B']
+            'Rack/Bin Location': ['Oil Filter Rack', 'Rack B'],
+            'Fits Vehicles': ['Toyota Corolla (2020)', 'Toyota Corolla (2020), Honda Civic 2021']
         }
         df = pd.DataFrame(data)
         
@@ -96,6 +97,13 @@ class BulkUploadAPITest(TestCase):
         self.assertIsNotNone(self.existing_part.supplier)
         self.assertEqual(self.existing_part.supplier.name, 'Toyotsu Lanka (Pvt) Ltd')
         
+        # Verify compatible vehicles updated
+        self.assertEqual(self.existing_part.compatible_vehicles.count(), 1)
+        v1 = self.existing_part.compatible_vehicles.first()
+        self.assertEqual(v1.make, "Toyota")
+        self.assertEqual(v1.model, "Corolla")
+        self.assertEqual(v1.year, 2020)
+        
         # Verify new part created
         new_part = Part.objects.get(part_number='B16019120')
         self.assertEqual(new_part.name, 'New Part Test')
@@ -105,6 +113,16 @@ class BulkUploadAPITest(TestCase):
         self.assertEqual(new_part.stock_qty, 4)
         self.assertEqual(new_part.rack_location, 'Rack B')
         self.assertEqual(new_part.supplier.name, 'Test Supplier')
+        
+        # Verify new part compatible vehicles
+        self.assertEqual(new_part.compatible_vehicles.count(), 2)
+        v_list = list(new_part.compatible_vehicles.all().order_by('make'))
+        self.assertEqual(v_list[0].make, "Honda")
+        self.assertEqual(v_list[0].model, "Civic")
+        self.assertEqual(v_list[0].year, 2021)
+        self.assertEqual(v_list[1].make, "Toyota")
+        self.assertEqual(v_list[1].model, "Corolla")
+        self.assertEqual(v_list[1].year, 2020)
 
 
 class PartCalculationAPITest(TestCase):

@@ -6,8 +6,8 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer
 from decimal import Decimal
 from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
 from .serializers import VehicleSerializer # <--- Make sure this is imported too!
@@ -978,6 +978,51 @@ def delete_employee(request, pk):
         return Response({"message": "Employee deactivated due to existing historical records."}, status=status.HTTP_200_OK)
     
     employee.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+@api_view(['GET'])
+def get_employee_attendance(request, pk):
+    """
+    Get attendance records for a single employee for a specific month and year.
+    """
+    employee = get_object_or_404(Employee, pk=pk)
+    month = request.query_params.get('month')
+    year = request.query_params.get('year')
+    
+    if not month or not year:
+        return Response({"error": "Month and Year parameters are required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        month = int(month)
+        year = int(year)
+    except ValueError:
+        return Response({"error": "Month and Year must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+        
+    attendances = Attendance.objects.filter(employee=employee, date__month=month, date__year=year).order_by('date')
+    serializer = AttendanceSerializer(attendances, many=True)
+    return Response(serializer.data)
+
+@api_view(['GET'])
+def get_holidays(request):
+    """List all global holidays"""
+    holidays = Holiday.objects.all().order_by('date')
+    serializer = HolidaySerializer(holidays, many=True)
+    return Response(serializer.data)
+
+@api_view(['POST'])
+def add_holiday(request):
+    """Add a new holiday"""
+    serializer = HolidaySerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['DELETE'])
+def delete_holiday(request, pk):
+    """Delete a holiday"""
+    holiday = get_object_or_404(Holiday, pk=pk)
+    holiday.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 

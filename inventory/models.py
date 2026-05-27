@@ -103,6 +103,9 @@ class ActiveCart(models.Model):
 
 from django.utils import timezone
 
+def default_working_days():
+    return ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+
 class Employee(models.Model):
     SALARY_TYPE_CHOICES = [
         ('DAILY', 'Daily Paid'),
@@ -117,12 +120,20 @@ class Employee(models.Model):
     date_joined = models.DateField(default=timezone.localdate)
     salary_type = models.CharField(max_length=10, choices=SALARY_TYPE_CHOICES, default='DAILY')
     salary_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Daily rate or Monthly salary depending on salary_type")
+    working_days = models.JSONField(default=default_working_days, blank=True, null=True, help_text="List of working days of the week")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.first_name} {self.last_name} ({self.role})"
+
+class Holiday(models.Model):
+    date = models.DateField(unique=True)
+    name = models.CharField(max_length=100, blank=True)
+
+    def __str__(self):
+        return f"{self.date} - {self.name or 'Holiday'}"
 
 class Attendance(models.Model):
     STATUS_CHOICES = [

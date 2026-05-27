@@ -10,6 +10,10 @@ import {
   generatePayrollDrafts,
   updatePayroll,
   payPayroll,
+  fetchEmployeeAttendance,
+  fetchHolidays,
+  createHoliday,
+  deleteHoliday,
 } from "../services/api";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
@@ -29,6 +33,7 @@ import {
   Mail,
   MapPin,
   XCircle,
+  Sparkles,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 
@@ -53,6 +58,19 @@ const EmployeePage = () => {
   const [payrollList, setPayrollList] = useState([]);
   const [payrollLoading, setPayrollLoading] = useState(false);
   const [selectedPayRecord, setSelectedPayRecord] = useState(null); // for print payslip
+
+  // Holiday States
+  const [holidays, setHolidays] = useState([]);
+  const [holidaysLoading, setHolidaysLoading] = useState(false);
+  const [holidaySaving, setHolidaySaving] = useState(false);
+  const [newHolidayData, setNewHolidayData] = useState({ date: "", name: "" });
+
+  // Attendance Calendar States
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth() + 1);
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
+  const [empAttendance, setEmpAttendance] = useState([]);
+  const [empAttendanceLoading, setEmpAttendanceLoading] = useState(false);
 
   // Modal / Form States
   const [showEmpForm, setShowEmpForm] = useState(false);
@@ -130,6 +148,36 @@ const EmployeePage = () => {
     }
   };
 
+  const loadHolidays = async () => {
+    setHolidaysLoading(true);
+    try {
+      const data = await fetchHolidays();
+      setHolidays(data);
+    } catch (error) {
+      console.error("Failed to load holidays", error);
+      setAlertInfo({ type: "error", message: "Failed to load holidays." });
+    } finally {
+      setHolidaysLoading(false);
+    }
+  };
+
+  const loadEmployeeAttendance = async (empId, month, year) => {
+    if (!empId) {
+      setEmpAttendance([]);
+      return;
+    }
+    setEmpAttendanceLoading(true);
+    try {
+      const data = await fetchEmployeeAttendance(empId, month, year);
+      setEmpAttendance(data);
+    } catch (error) {
+      console.error("Failed to load employee attendance", error);
+      setAlertInfo({ type: "error", message: "Failed to load employee attendance details." });
+    } finally {
+      setEmpAttendanceLoading(false);
+    }
+  };
+
   // --- Effects ---
   useEffect(() => {
     if (activeTab === "employees") {
@@ -138,6 +186,14 @@ const EmployeePage = () => {
       loadAttendance(attendanceDate);
     } else if (activeTab === "payroll") {
       loadPayroll(payrollMonth, payrollYear);
+    } else if (activeTab === "calendar") {
+      loadEmployees();
+      loadHolidays();
+      if (selectedEmployeeId) {
+        loadEmployeeAttendance(selectedEmployeeId, calendarMonth, calendarYear);
+      }
+    } else if (activeTab === "holidays") {
+      loadHolidays();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
@@ -148,6 +204,13 @@ const EmployeePage = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attendanceDate]);
+
+  useEffect(() => {
+    if (activeTab === "calendar" && selectedEmployeeId) {
+      loadEmployeeAttendance(selectedEmployeeId, calendarMonth, calendarYear);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEmployeeId, calendarMonth, calendarYear]);
 
   // --- Employee Action Handlers ---
   const handleAddEmployeeClick = () => {
@@ -162,6 +225,7 @@ const EmployeePage = () => {
       salary_type: "DAILY",
       salary_rate: "",
       is_active: true,
+      working_days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
     });
     setShowEmpForm(true);
   };
@@ -180,6 +244,7 @@ const EmployeePage = () => {
       salary_type: emp.salary_type,
       salary_rate: emp.salary_rate,
       is_active: emp.is_active,
+      working_days: emp.working_days || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
     });
     setShowEmpForm(true);
   };
@@ -420,10 +485,10 @@ const EmployeePage = () => {
       </div>
 
       {/* --- TABS --- */}
-      <div className="flex border-b border-gray-200 mb-6 bg-white p-1.5 rounded-2xl shadow-sm gap-2 print:hidden">
+      <div className="flex flex-wrap border-b border-gray-200 mb-6 bg-white p-1.5 rounded-2xl shadow-sm gap-2 print:hidden">
         <button
           onClick={() => setActiveTab("employees")}
-          className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
             activeTab === "employees"
               ? "bg-red-900 text-white shadow-sm"
               : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
@@ -433,7 +498,7 @@ const EmployeePage = () => {
         </button>
         <button
           onClick={() => setActiveTab("attendance")}
-          className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
             activeTab === "attendance"
               ? "bg-red-900 text-white shadow-sm"
               : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
@@ -442,8 +507,28 @@ const EmployeePage = () => {
           <Calendar size={18} /> Daily Attendance
         </button>
         <button
+          onClick={() => setActiveTab("calendar")}
+          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
+            activeTab === "calendar"
+              ? "bg-red-900 text-white shadow-sm"
+              : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+          }`}
+        >
+          <Calendar size={18} /> Attendance Calendar
+        </button>
+        <button
+          onClick={() => setActiveTab("holidays")}
+          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
+            activeTab === "holidays"
+              ? "bg-red-900 text-white shadow-sm"
+              : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
+          }`}
+        >
+          <Sparkles size={18} /> Holidays
+        </button>
+        <button
           onClick={() => setActiveTab("payroll")}
-          className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
+          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
             activeTab === "payroll"
               ? "bg-red-900 text-white shadow-sm"
               : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
@@ -582,6 +667,15 @@ const EmployeePage = () => {
                     {/* Edit/Delete overlay */}
                     <div className="flex gap-2 justify-end mt-4 pt-3 border-t border-gray-50 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                       <button
+                        onClick={() => {
+                          setSelectedEmployeeId(emp.id);
+                          setActiveTab("calendar");
+                        }}
+                        className="px-3.5 py-1.5 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:text-purple-900 transition rounded-lg text-xs font-bold flex items-center gap-1"
+                      >
+                        <Calendar size={12} /> Calendar
+                      </button>
+                      <button
                         onClick={() => handleEditEmployeeClick(emp)}
                         className="px-3.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-900 transition rounded-lg text-xs font-bold flex items-center gap-1"
                       >
@@ -717,6 +811,422 @@ const EmployeePage = () => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: GLOBAL HOLIDAYS */}
+      {/* ========================================================================= */}
+      {activeTab === "holidays" && (
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm">
+            <h2 className="text-xl font-extrabold text-gray-800 mb-4 flex items-center gap-2">
+              <Sparkles className="text-red-800" size={20} /> Mark Custom Holiday
+            </h2>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newHolidayData.date) return;
+                setHolidaySaving(true);
+                try {
+                  await createHoliday(newHolidayData);
+                  setAlertInfo({ type: "success", message: "Holiday marked successfully!" });
+                  setNewHolidayData({ date: "", name: "" });
+                  loadHolidays();
+                } catch (error) {
+                  console.error("Failed to save holiday", error);
+                  setAlertInfo({
+                    type: "error",
+                    message: error.response?.data?.date?.[0] || "Failed to mark holiday.",
+                  });
+                } finally {
+                  setHolidaySaving(false);
+                }
+              }}
+              className="flex flex-col sm:flex-row gap-4 items-end"
+            >
+              <div className="flex-1 flex flex-col w-full">
+                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Holiday Date</label>
+                <input
+                  type="date"
+                  required
+                  value={newHolidayData.date}
+                  onChange={(e) => setNewHolidayData({ ...newHolidayData, date: e.target.value })}
+                  className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold w-full bg-white"
+                />
+              </div>
+              <div className="flex-[2] flex flex-col w-full">
+                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Holiday Name (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Christmas, Labour Day, Vesak"
+                  value={newHolidayData.name}
+                  onChange={(e) => setNewHolidayData({ ...newHolidayData, name: e.target.value })}
+                  className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold w-full bg-white"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={holidaySaving}
+                className="px-6 py-3 bg-red-800 hover:bg-red-900 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 hover:-translate-y-0.5 transition duration-150 disabled:bg-gray-400 w-full sm:w-auto"
+              >
+                {holidaySaving ? (
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                ) : (
+                  <Plus size={18} />
+                )}
+                Mark Holiday
+              </button>
+            </form>
+          </div>
+
+          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm">
+            <h2 className="text-xl font-extrabold text-gray-800 mb-4">Marked Global Holidays</h2>
+            {holidaysLoading ? (
+              <div className="flex flex-col items-center justify-center py-10 text-gray-500">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-900 mb-2"></div>
+                <p>Loading marked holidays...</p>
+              </div>
+            ) : holidays.length === 0 ? (
+              <div className="text-center py-10 border border-dashed border-gray-200 rounded-2xl">
+                <p className="text-gray-400 italic text-sm">No custom holidays marked yet.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {holidays.map((h) => (
+                  <div
+                    key={h.id}
+                    className="flex justify-between items-center p-4 bg-gray-50 hover:bg-gray-100/50 rounded-2xl border border-gray-200/40 transition duration-150"
+                  >
+                    <div>
+                      <div className="font-bold text-gray-800 text-sm">
+                        {new Date(h.date).toLocaleDateString("en-US", {
+                          weekday: "short",
+                          year: "numeric",
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </div>
+                      <div className="text-xs text-red-700 font-bold uppercase tracking-wider mt-0.5">
+                        {h.name || "Holiday"}
+                      </div>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (window.confirm("Are you sure you want to remove this holiday?")) {
+                          try {
+                            await deleteHoliday(h.id);
+                            setAlertInfo({ type: "success", message: "Holiday removed." });
+                            loadHolidays();
+                          } catch (error) {
+                            console.error("Failed to delete holiday", error);
+                            setAlertInfo({ type: "error", message: "Failed to remove holiday." });
+                          }
+                        }
+                      }}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors"
+                      title="Remove Holiday"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB: ATTENDANCE CALENDAR */}
+      {/* ========================================================================= */}
+      {activeTab === "calendar" && (
+        <div className="max-w-4xl mx-auto space-y-6">
+          {/* Select and Month selectors */}
+          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div className="flex flex-col w-full md:w-auto flex-1 max-w-sm">
+              <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Select Employee</label>
+              <select
+                className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer w-full"
+                value={selectedEmployeeId}
+                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+              >
+                <option value="">-- Choose Employee --</option>
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.first_name} {emp.last_name} ({emp.role})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex gap-4 w-full md:w-auto">
+              <div className="flex flex-col flex-1 sm:flex-initial">
+                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Month</label>
+                <select
+                  className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer min-w-[130px]"
+                  value={calendarMonth}
+                  onChange={(e) => setCalendarMonth(parseInt(e.target.value))}
+                >
+                  {months.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col flex-1 sm:flex-initial">
+                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Year</label>
+                <select
+                  className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer min-w-[100px]"
+                  value={calendarYear}
+                  onChange={(e) => setCalendarYear(parseInt(e.target.value))}
+                >
+                  {years.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Calendar Body */}
+          {!selectedEmployeeId ? (
+            <div className="bg-white p-12 rounded-3xl border border-gray-200 shadow-sm text-center">
+              <Calendar size={48} className="mx-auto text-gray-300 mb-3" />
+              <p className="text-gray-500 italic">Please select an employee above to view their attendance calendar.</p>
+            </div>
+          ) : empAttendanceLoading ? (
+            <div className="bg-white p-16 rounded-3xl border border-gray-200 shadow-sm text-center text-gray-500">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-900 mb-2 mx-auto"></div>
+              <p>Fetching attendance records...</p>
+            </div>
+          ) : (
+            <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-6">
+              {/* Header and Details summary */}
+              {(() => {
+                const emp = employees.find((e) => String(e.id) === String(selectedEmployeeId));
+                if (!emp) return null;
+
+                // Calendar helper calculations
+                const daysInMonth = new Date(calendarYear, calendarMonth, 0).getDate();
+                const firstDayIndex = new Date(calendarYear, calendarMonth - 1, 1).getDay(); // 0 = Sun
+
+                // Calculate summary metrics for the calendar
+                let presentCount = 0;
+                let halfDayCount = 0;
+                let absentCount = 0;
+                let paidLeaveCount = 0;
+                let holidayCount = 0;
+                let offDayCount = 0;
+                let pendingCount = 0;
+
+                const dayCells = [];
+                // Add empty cells for offset
+                for (let i = 0; i < firstDayIndex; i++) {
+                  dayCells.push({ isOffset: true, key: `offset-${i}` });
+                }
+
+                // Fill cells
+                for (let day = 1; day <= daysInMonth; day++) {
+                  const dateStr = `${calendarYear}-${String(calendarMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                  const cellDate = new Date(calendarYear, calendarMonth - 1, day);
+                  const isSunday = cellDate.getDay() === 0;
+
+                  // Find custom holiday
+                  const customHoliday = holidays.find((h) => h.date === dateStr);
+
+                  // Find custom working day name
+                  const dayOfWeekName = cellDate.toLocaleDateString("en-US", { weekday: "long" });
+                  const isWorkingDay = emp.working_days?.includes(dayOfWeekName);
+
+                  // Find DB attendance record
+                  const attRecord = empAttendance.find((a) => a.date === dateStr);
+
+                  let status = "PENDING"; // PENDING, PRESENT, HALF_DAY, ABSENT, PAID_LEAVE, HOLIDAY, OFF_DAY
+                  let label = "";
+
+                  if (attRecord) {
+                    status = attRecord.status;
+                    label = attRecord.notes || "";
+                    if (status === "PRESENT") presentCount++;
+                    else if (status === "HALF_DAY") halfDayCount++;
+                    else if (status === "ABSENT") absentCount++;
+                    else if (status === "PAID_LEAVE") paidLeaveCount++;
+                  } else {
+                    if (isSunday) {
+                      status = "HOLIDAY";
+                      label = "Holiday (Sunday)";
+                      holidayCount++;
+                    } else if (customHoliday) {
+                      status = "HOLIDAY";
+                      label = customHoliday.name || "Holiday";
+                      holidayCount++;
+                    } else if (!isWorkingDay) {
+                      status = "OFF_DAY";
+                      label = "Off Day";
+                      offDayCount++;
+                    } else {
+                      status = "PENDING";
+                      pendingCount++;
+                    }
+                  }
+
+                  dayCells.push({
+                    isOffset: false,
+                    day,
+                    dateStr,
+                    status,
+                    label,
+                    key: `day-${day}`,
+                  });
+                }
+
+                return (
+                  <>
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-4 gap-4">
+                      <div>
+                        <h2 className="text-xl font-bold text-gray-800">
+                          {emp.first_name} {emp.last_name}
+                        </h2>
+                        <span className="text-xs text-red-700/80 font-bold uppercase tracking-wide">
+                          {emp.role} • {emp.salary_type === "DAILY" ? "Daily Paid" : "Monthly Paid"}
+                        </span>
+                      </div>
+                      
+                      {/* Grid metrics summary */}
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-xl font-semibold border border-green-100">
+                          Present: <span className="font-bold">{presentCount}</span>
+                        </div>
+                        <div className="px-3 py-1.5 bg-orange-50 text-orange-700 rounded-xl font-semibold border border-orange-100">
+                          Half Day: <span className="font-bold">{halfDayCount}</span>
+                        </div>
+                        <div className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-xl font-semibold border border-blue-100">
+                          Paid Leave: <span className="font-bold">{paidLeaveCount}</span>
+                        </div>
+                        <div className="px-3 py-1.5 bg-red-50 text-red-700 rounded-xl font-semibold border border-red-100">
+                          Absent: <span className="font-bold">{absentCount}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Calendar grid */}
+                    <div>
+                      {/* Weekday headers */}
+                      <div className="grid grid-cols-7 gap-2 mb-2 text-center text-xs font-bold text-gray-400 uppercase tracking-wider">
+                        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((wd) => (
+                          <div key={wd} className="py-2">
+                            {wd}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Day cells */}
+                      <div className="grid grid-cols-7 gap-2">
+                        {dayCells.map((cell) => {
+                          if (cell.isOffset) {
+                            return <div key={cell.key} className="aspect-square bg-gray-50/30 rounded-2xl border border-dashed border-gray-100"></div>;
+                          }
+
+                          // Define cell styling based on status
+                          let statusStyles = "";
+                          let badgeStyles = "";
+
+                          switch (cell.status) {
+                            case "PRESENT":
+                              statusStyles = "bg-green-50 border-green-200 text-green-800 hover:bg-green-100/70";
+                              badgeStyles = "bg-green-500 text-white";
+                              break;
+                            case "HALF_DAY":
+                              statusStyles = "bg-orange-50 border-orange-200 text-orange-800 hover:bg-orange-100/70";
+                              badgeStyles = "bg-orange-500 text-white";
+                              break;
+                            case "PAID_LEAVE":
+                              statusStyles = "bg-blue-50 border-blue-200 text-blue-800 hover:bg-blue-100/70";
+                              badgeStyles = "bg-blue-500 text-white";
+                              break;
+                            case "ABSENT":
+                              statusStyles = "bg-red-50 border-red-200 text-red-800 hover:bg-red-100/70";
+                              badgeStyles = "bg-red-500 text-white";
+                              break;
+                            case "HOLIDAY":
+                              statusStyles = "bg-purple-50 border-purple-200 text-purple-800 hover:bg-purple-100/70";
+                              badgeStyles = "bg-purple-600 text-white";
+                              break;
+                            case "OFF_DAY":
+                              statusStyles = "bg-gray-100/80 border-gray-300/40 text-gray-500 hover:bg-gray-100";
+                              badgeStyles = "bg-gray-400 text-white";
+                              break;
+                            default: // PENDING
+                              statusStyles = "bg-white border-gray-200/80 text-gray-400 border-dashed hover:bg-gray-50";
+                              badgeStyles = "bg-gray-300 text-gray-700";
+                              break;
+                          }
+
+                          return (
+                            <div
+                              key={cell.key}
+                              className={`aspect-square p-2 border rounded-2xl flex flex-col justify-between transition-all duration-150 relative group ${statusStyles}`}
+                            >
+                              <span className="text-sm font-bold">{cell.day}</span>
+                              {cell.status !== "PENDING" && (
+                                <div className="flex flex-col items-start gap-1">
+                                  <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider leading-none ${badgeStyles}`}>
+                                    {cell.status === "PAID_LEAVE" ? "Leave" : cell.status.replace("_", " ")}
+                                  </span>
+                                  {cell.label && (
+                                    <span className="text-[9px] text-gray-400 line-clamp-1 group-hover:line-clamp-none font-medium bg-white/70 px-1 rounded shadow-sm border border-gray-100/50 block">
+                                      {cell.label}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Legend */}
+                    <div className="border-t border-gray-100 pt-4 flex flex-wrap gap-4 justify-center text-xs font-semibold text-gray-500">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 rounded bg-green-50 border border-green-200 inline-block shrink-0"></span>
+                        <span>Present</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 rounded bg-orange-50 border border-orange-200 inline-block shrink-0"></span>
+                        <span>Half Day</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 rounded bg-blue-50 border border-blue-200 inline-block shrink-0"></span>
+                        <span>Paid Leave</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 rounded bg-red-50 border border-red-200 inline-block shrink-0"></span>
+                        <span>Absent</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 rounded bg-purple-50 border border-purple-200 inline-block shrink-0"></span>
+                        <span>Holiday</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 rounded bg-gray-100 border border-gray-300 inline-block shrink-0"></span>
+                        <span>Off Day</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5 h-3.5 rounded bg-white border border-gray-200 border-dashed inline-block shrink-0"></span>
+                        <span>Pending</span>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 
@@ -1052,6 +1562,36 @@ const EmployeePage = () => {
                   value={empFormData.address}
                   onChange={(e) => setEmpFormData({ ...empFormData, address: e.target.value })}
                 />
+              </div>
+
+              {/* Working Days */}
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] text-gray-400 font-extrabold uppercase">Working Days of the Week</label>
+                <div className="flex flex-wrap gap-2">
+                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => {
+                    const isSelected = empFormData.working_days?.includes(day);
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        onClick={() => {
+                          const current = empFormData.working_days || [];
+                          const next = current.includes(day)
+                            ? current.filter((d) => d !== day)
+                            : [...current, day];
+                          setEmpFormData({ ...empFormData, working_days: next });
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                          isSelected
+                            ? "bg-red-900 text-white border-red-900 shadow-sm"
+                            : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
+                        }`}
+                      >
+                        {day.slice(0, 3)}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Inactive Toggle Switch in Modal */}

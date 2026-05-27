@@ -107,10 +107,17 @@ export const fetchEmployees = async () => (await API.get("/employees/")).data;
 export const createEmployee = async (data) => (await API.post("/employees/add/", data)).data;
 export const updateEmployee = async (id, data) => (await API.put(`/employees/${id}/update/`, data)).data;
 export const deleteEmployee = async (id) => await API.delete(`/employees/${id}/delete/`);
+export const fetchEmployeeAttendance = async (empId, month, year) =>
+  (await API.get(`/employees/${empId}/attendance/`, { params: { month, year } })).data;
 
 // --- ATTENDANCE SERVICES ---
 export const fetchAttendanceSheet = async (date) => (await API.get("/attendance/", { params: { date } })).data;
 export const markAttendanceSheet = async (data) => (await API.post("/attendance/mark/", data)).data;
+
+// --- HOLIDAY SERVICES ---
+export const fetchHolidays = async () => (await API.get("/holidays/")).data;
+export const createHoliday = async (data) => (await API.post("/holidays/add/", data)).data;
+export const deleteHoliday = async (id) => await API.delete(`/holidays/${id}/delete/`);
 
 // --- PAYROLL SERVICES ---
 export const fetchPayroll = async (month, year) => (await API.get("/payroll/", { params: { month, year } })).data;

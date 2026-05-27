@@ -137,12 +137,12 @@ const SupplierPage = () => {
 
   // --- 4. Client-side Search ---
   const filteredSuppliers = suppliers.filter((s) => {
-    const searchLower = searchTerm.toLowerCase();
+    const searchLower = searchTerm.trim().toLowerCase();
     const matchesName = s.name.toLowerCase().includes(searchLower);
     const matchesContacts = s.contacts && s.contacts.some(
       (c) =>
         (c.name && c.name.toLowerCase().includes(searchLower)) ||
-        (c.phones && c.phones.some((p) => p.includes(searchTerm)))
+        (c.phones && c.phones.some((p) => p.includes(searchTerm.trim())))
     );
     return matchesName || matchesContacts;
   });

@@ -129,9 +129,9 @@ const VehiclePage = () => {
   // --- 4. Filter Logic ---
   const filteredVehicles = vehicles.filter(
     (v) =>
-      v.make.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      v.model.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (v.year && v.year.toString().includes(searchTerm))
+      v.make.toLowerCase().includes(searchTerm.trim().toLowerCase()) ||
+      v.model.toLowerCase().includes(searchTerm.trim().toLowerCase()) ||
+      (v.year && v.year.toString().includes(searchTerm.trim()))
   );
 
   return (

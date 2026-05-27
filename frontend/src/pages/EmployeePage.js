@@ -347,10 +347,10 @@ const EmployeePage = () => {
 
   // --- Filtering ---
   const filteredEmployees = employees.filter((emp) => {
-    const searchLower = searchTerm.toLowerCase();
+    const searchLower = searchTerm.trim().toLowerCase();
     const fullName = `${emp.first_name} ${emp.last_name}`.toLowerCase();
     const matchesPhone = emp.phone_numbers && Array.isArray(emp.phone_numbers) && emp.phone_numbers.some(
-      (p) => p.number && p.number.includes(searchTerm)
+      (p) => p.number && p.number.includes(searchTerm.trim())
     );
     const matchesSearch =
       fullName.includes(searchLower) ||

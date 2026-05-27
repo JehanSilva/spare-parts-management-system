@@ -177,7 +177,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const filteredVehicles = vehicles.filter((v) => {
     const yearStr = v.year ? `${v.year} ` : "";
     const fullName = `${yearStr}${v.make} ${v.model}`.toLowerCase();
-    return fullName.includes(vehicleSearch.toLowerCase());
+    return fullName.includes(vehicleSearch.trim().toLowerCase());
   });
 
   const handleSubmit = async (e) => {

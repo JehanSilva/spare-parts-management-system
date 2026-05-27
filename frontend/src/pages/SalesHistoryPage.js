@@ -318,14 +318,14 @@ const SalesHistoryPage = () => {
   };
 
   const filteredSales = sales.filter((sale) => {
-    const searchLower = searchTerm.toLowerCase();
+    const searchLower = searchTerm.trim().toLowerCase();
     
     // Check if the sale matches the search term (Customer, Vehicle, ID, or Items)
     const matchSearch =
-      !searchTerm ||
+      !searchTerm.trim() ||
       sale.customer_name.toLowerCase().includes(searchLower) ||
       (sale.vehicle_number && sale.vehicle_number.toLowerCase().includes(searchLower)) ||
-      sale.id.includes(searchTerm) ||
+      sale.id.includes(searchTerm.trim()) ||
       sale.items.some((item) => {
         const pName = (item.part_name || "").toLowerCase();
         const pNum = getPartNumber(item.part || item.part_id).toLowerCase();

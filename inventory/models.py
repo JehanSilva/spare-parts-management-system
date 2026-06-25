@@ -188,3 +188,24 @@ class Payroll(models.Model):
 
     def __str__(self):
         return f"{self.employee.first_name} - {self.year}/{self.month:02d} - {self.status}"
+
+
+class RestockRecord(models.Model):
+    """
+    Records a single supplier's contribution to a restock event.
+    A single 'Quick Restock' action can generate multiple RestockRecords
+    (one per supplier entry). This is the source of truth for purchase history.
+    """
+    part = models.ForeignKey(Part, on_delete=models.CASCADE, related_name='restock_records')
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name='restock_records')
+    quantity = models.PositiveIntegerField()
+    buy_price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Unit buy price from this supplier for this batch")
+    restocked_at = models.DateTimeField(auto_now_add=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['-restocked_at']
+
+    def __str__(self):
+        supplier_name = self.supplier.name if self.supplier else "Unknown"
+        return f"{self.part.name} | {supplier_name} | Qty: {self.quantity} @ {self.buy_price}"

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   Search,
   Plus,
@@ -12,13 +12,13 @@ import {
   Download,
 } from "lucide-react";
 import {
-  fetchParts,
   deletePart,
   createPart,
   updatePart,
   fetchSuppliers,
   bulkUploadParts,
 } from "../services/api";
+import { useParts } from "../context/PartsContext";
 import AddPartForm from "../components/forms/AddPartForm";
 import QuickRestockModal from "../components/forms/QuickRestockModal";
 import AlertComponent from "../components/AlertComponent";
@@ -248,20 +248,21 @@ const generateStockReportPDF = (parts, supplierName) => {
 };
 
 const InventoryPage = () => {
-  const [parts, setParts] = useState([]);
+  // ── Cache ────────────────────────────────────────────────────────────────
+  const { allParts, partsLoading: loading, invalidateParts } = useParts();
+
   const [showForm, setShowForm] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
   const [editingPart, setEditingPart] = useState(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
 
-  // Filter States
+  // ── Filter States ────────────────────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedBrand, setSelectedBrand] = useState("");
   const [selectedSupplier, setSelectedSupplier] = useState("");
   const [suppliers, setSuppliers] = useState([]);
-  
+
   const [stockFilter, setStockFilter] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get("filter") || "all";
@@ -273,139 +274,96 @@ const InventoryPage = () => {
     return isNaN(val) ? 2 : val;
   });
 
-  // Alert & Modal States
+  // ── Alert & Modal States ─────────────────────────────────────────────────
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const [deleteId, setDeleteId] = useState(null);
-  const [selectedPart, setSelectedPart] = useState(null); // For details modal
+  const [selectedPart, setSelectedPart] = useState(null);
   const pressTimer = useRef(null);
-  const debounceTimer = useRef(null);
 
   const startPress = (part) => {
     pressTimer.current = setTimeout(() => {
       setSelectedPart(part);
-    }, 500); // 500ms for long press
+    }, 500);
   };
 
   const endPress = () => {
-    if (pressTimer.current) {
-      clearTimeout(pressTimer.current);
-    }
+    if (pressTimer.current) clearTimeout(pressTimer.current);
   };
 
-  // --- Load suppliers on mount ---
+  // ── Load suppliers once (small list, no need to cache) ──────────────────
   useEffect(() => {
-    const loadSuppliers = async () => {
-      try {
-        const data = await fetchSuppliers();
-        setSuppliers(data);
-      } catch (err) {
-        console.error("Failed to load suppliers", err);
-      }
-    };
-    loadSuppliers();
-  }, []);
-
-  // --- 1. Load Data ---
-  const loadData = useCallback(async (search, brand, stock, supplier, threshold = lowStockThreshold) => {
-    setLoading(true);
-    const parsedThreshold = parseInt(threshold, 10);
-    const apiThreshold = isNaN(parsedThreshold) ? 2 : parsedThreshold;
-
-    try {
-      const partsData = await fetchParts({
-        search: search,
-        brand: brand,
-        ...(stock !== "all" && { stock_status: stock }),
-        ...(stock === "low" && { low_stock_threshold: apiThreshold }),
-        ...(supplier && { supplier: supplier }),
-      });
-      setParts(partsData);
-    } catch (error) {
-      console.error("Failed to load parts", error);
-      setAlertInfo({
-        type: "error",
-        message: "Failed to load inventory data.",
-      });
-    }
-    setLoading(false);
-  }, [lowStockThreshold]);
-
-  // Initial load
-  useEffect(() => {
-    loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+    fetchSuppliers()
+      .then(setSuppliers)
+      .catch((err) => console.error("Failed to load suppliers", err));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // --- Debounced live search: fires on searchTerm or selectedBrand change ---
-  useEffect(() => {
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
+  // ── Client-side filtering — instant, zero network calls ──────────────────
+  const parts = useMemo(() => {
+    let result = allParts;
+
+    // Text search: name, part_number, brand, compatible vehicles, description
+    if (searchTerm.trim()) {
+      const keywords = searchTerm.trim().toLowerCase().split(/\s+/);
+      result = result.filter((p) =>
+        keywords.every((keyword) =>
+          p.name?.toLowerCase().includes(keyword) ||
+          p.part_number?.toLowerCase().includes(keyword) ||
+          p.description?.toLowerCase().includes(keyword) ||
+          p.brand?.toLowerCase().includes(keyword) ||
+          p.compatible_vehicles?.some(
+            (v) =>
+              typeof v === "object" &&
+              (
+                (v.make?.toLowerCase() || "").includes(keyword) ||
+                (v.model?.toLowerCase() || "").includes(keyword) ||
+                String(v.year || "").includes(keyword)
+              )
+          )
+        )
+      );
     }
-    debounceTimer.current = setTimeout(() => {
-      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
-    }, 400);
 
-    return () => {
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-      }
-    };
-  }, [searchTerm, selectedBrand]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Brand filter
+    if (selectedBrand.trim()) {
+      const b = selectedBrand.trim().toLowerCase();
+      result = result.filter((p) => p.brand?.toLowerCase().includes(b));
+    }
 
-  // --- 2. Action Handlers ---
+    // Supplier filter
+    if (selectedSupplier) {
+      result = result.filter(
+        (p) => String(p.supplier) === String(selectedSupplier)
+      );
+    }
 
-  const handleStockFilter = (filter) => {
-    setStockFilter(filter);
-    
-    // Trigger load data immediately with the new filter
-    setLoading(true);
-    fetchParts({
-      search: searchTerm,
-      brand: selectedBrand,
-      ...(filter !== "all" && { stock_status: filter }),
-      ...(filter === "low" && { low_stock_threshold: lowStockThreshold }),
-      ...(selectedSupplier && { supplier: selectedSupplier }),
-    }).then(data => {
-      setParts(data);
-      setLoading(false);
-    }).catch(() => { setLoading(false); });
-  };
+    // Stock status filters
+    if (stockFilter === "out") {
+      result = result.filter((p) => p.stock_qty === 0);
+    } else if (stockFilter === "low") {
+      const threshold = parseInt(lowStockThreshold, 10);
+      result = result.filter(
+        (p) => p.stock_qty > 0 && p.stock_qty <= (isNaN(threshold) ? 2 : threshold)
+      );
+    } else if (stockFilter === "no_price") {
+      result = result.filter(
+        (p) =>
+          !p.buy_price ||
+          parseFloat(p.buy_price) <= 0 ||
+          !p.sell_price ||
+          parseFloat(p.sell_price) <= 0 ||
+          !p.image
+      );
+    }
 
-  const handleSupplierChange = (supplierId) => {
-    setSelectedSupplier(supplierId);
-    
-    // Trigger load data immediately with the new supplier
-    setLoading(true);
-    fetchParts({
-      search: searchTerm,
-      brand: selectedBrand,
-      ...(stockFilter !== "all" && { stock_status: stockFilter }),
-      ...(stockFilter === "low" && { low_stock_threshold: lowStockThreshold }),
-      ...(supplierId && { supplier: supplierId }),
-    }).then(data => {
-      setParts(data);
-      setLoading(false);
-    }).catch(() => { setLoading(false); });
-  };
+    return result;
+  }, [allParts, searchTerm, selectedBrand, selectedSupplier, stockFilter, lowStockThreshold]);
 
-  const handleThresholdChange = (val) => {
-    setLowStockThreshold(val);
-    
-    // Parse value to pass to API; if empty/invalid, default to 2
-    const parsedVal = parseInt(val, 10);
-    const apiThreshold = isNaN(parsedVal) ? 2 : parsedVal;
+  // ── Filter handlers — just update state, useMemo does the rest ───────────
+  const handleStockFilter = (filter) => setStockFilter(filter);
 
-    setLoading(true);
-    fetchParts({
-      search: searchTerm,
-      brand: selectedBrand,
-      stock_status: "low",
-      low_stock_threshold: apiThreshold,
-      ...(selectedSupplier && { supplier: selectedSupplier }),
-    }).then(data => {
-      setParts(data);
-      setLoading(false);
-    }).catch(() => { setLoading(false); });
-  };
+  const handleSupplierChange = (supplierId) => setSelectedSupplier(supplierId);
+
+  const handleThresholdChange = (val) => setLowStockThreshold(val);
 
   const handleClearFilters = () => {
     setSearchTerm("");
@@ -413,7 +371,6 @@ const InventoryPage = () => {
     setSelectedSupplier("");
     setStockFilter("all");
     setLowStockThreshold(2);
-    loadData("", "", "all", "", 2);
   };
 
   const handleDownloadReport = () => {
@@ -444,7 +401,7 @@ const InventoryPage = () => {
     try {
       const response = await bulkUploadParts(file);
       setAlertInfo({ type: "success", message: response.message || "Excel file processed successfully!" });
-      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+      invalidateParts();
     } catch (error) {
       console.error("Upload Error:", error);
       const errorMsg = error.response?.data?.error || "Failed to upload file.";
@@ -452,7 +409,7 @@ const InventoryPage = () => {
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
-        fileInputRef.current.value = ""; // Reset input
+        fileInputRef.current.value = "";
       }
     }
   };
@@ -465,11 +422,10 @@ const InventoryPage = () => {
   // Step B: Execute Delete
   const executeDelete = async () => {
     if (!deleteId) return;
-
     try {
       await deletePart(deleteId);
       setAlertInfo({ type: "success", message: "Part deleted successfully!" });
-      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+      invalidateParts();
     } catch (error) {
       setAlertInfo({
         type: "error",
@@ -485,50 +441,30 @@ const InventoryPage = () => {
     setEditingPart(null);
   };
 
-  // --- 3. Form Submit Handler (Handles Images via FormData) ---
   const handleFormSubmit = async (formData) => {
     setAlertInfo({ type: "", message: "" });
-
     try {
       if (editingPart) {
-        // Update Part
         await updatePart(editingPart.id, formData);
-        setAlertInfo({
-          type: "success",
-          message: "Part Updated Successfully!",
-        });
+        setAlertInfo({ type: "success", message: "Part Updated Successfully!" });
       } else {
-        // Create Part
         const response = await createPart(formData);
-
-        // Handle "Smart Update" messages
         if (response.message) {
           setAlertInfo({ type: "success", message: response.message });
         } else {
-          setAlertInfo({
-            type: "success",
-            message: "New Part Added Successfully!",
-          });
+          setAlertInfo({ type: "success", message: "New Part Added Successfully!" });
         }
       }
-
-      loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+      invalidateParts();
       handleFormClose();
     } catch (error) {
       console.error("Save Error:", error);
-
       if (error.response && error.response.data) {
         const errorData = error.response.data;
         const errorMessages = Object.values(errorData).flat().join("\n");
-        setAlertInfo({
-          type: "error",
-          message: `Failed to save:\n${errorMessages}`,
-        });
+        setAlertInfo({ type: "error", message: `Failed to save:\n${errorMessages}` });
       } else {
-        setAlertInfo({
-          type: "error",
-          message: "Network error. Please check connection.",
-        });
+        setAlertInfo({ type: "error", message: "Network error. Please check connection." });
       }
     }
   };
@@ -555,7 +491,7 @@ const InventoryPage = () => {
           onClose={() => setShowRestockModal(false)}
           onSuccess={(msg) => {
             setAlertInfo({ type: "success", message: msg });
-            loadData(searchTerm, selectedBrand, stockFilter, selectedSupplier);
+            invalidateParts();
           }}
         />
       )}
@@ -644,48 +580,53 @@ const InventoryPage = () => {
         />
       )}
 
-      {/* Search & Filter Bar — live search, no submit button */}
-      <div
-        className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-4 grid grid-cols-1 md:grid-cols-4 gap-3"
-      >
-        <div className="relative md:col-span-2">
-          <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+      {/* Search & Filter Bar */}
+      <div className="bg-white px-4 py-3 rounded-lg shadow-sm border border-gray-200 mb-4 flex flex-col md:flex-row gap-2 items-stretch md:items-center">
+        {/* Search — clear button lives inside the input */}
+        <div className="relative flex-[2] min-w-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
           <input
             type="text"
             placeholder="Search by Name, Vehicle Model, Brand, or Part No..."
-            className="w-full pl-10 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
+            className={`w-full h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none text-sm pl-9 ${searchTerm ? "pr-8" : "pr-3"}`}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          {(searchTerm || selectedBrand || selectedSupplier || stockFilter !== "all") && (
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 transition-colors"
+              title="Clear all filters"
+            >
+              <XCircle size={17} />
+            </button>
+          )}
         </div>
-        <input
-          type="text"
-          placeholder="Filter by Brand"
-          className="p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
-          value={selectedBrand}
-          onChange={(e) => setSelectedBrand(e.target.value)}
-        />
-        <div className="flex gap-2">
+
+        {/* Brand */}
+        <div className="flex-1 min-w-0">
+          <input
+            type="text"
+            placeholder="Filter by Brand"
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none text-sm"
+            value={selectedBrand}
+            onChange={(e) => setSelectedBrand(e.target.value)}
+          />
+        </div>
+
+        {/* Supplier */}
+        <div className="flex-1 min-w-0">
           <select
             value={selectedSupplier}
             onChange={(e) => handleSupplierChange(e.target.value)}
-            className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none bg-white text-gray-700"
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none bg-white text-sm text-gray-700"
           >
             <option value="">All Suppliers</option>
             {suppliers.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
-          {(searchTerm || selectedBrand || selectedSupplier || stockFilter !== "all") && (
-            <button
-              type="button"
-              onClick={handleClearFilters}
-              className="bg-white border border-red-200 text-red-600 px-3 py-2 rounded hover:bg-red-50 flex items-center justify-center gap-1 font-bold transition-colors shrink-0"
-              title="Clear all filters"
-            >
-              <XCircle size={18} />
-            </button>
-          )}
         </div>
       </div>
 

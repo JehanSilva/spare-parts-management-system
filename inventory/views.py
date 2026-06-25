@@ -6,8 +6,8 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer
 from decimal import Decimal
 from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
 from .serializers import VehicleSerializer # <--- Make sure this is imported too!
@@ -258,36 +258,100 @@ def delete_part(request, pk):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 @api_view(['POST'])
+@transaction.atomic
 def restock_part(request, pk):
     """
-    Quick Restock: Add stock and calculate new weighted average buy price
+    Bulk Restock: Accepts one or more supplier entries (supplier, quantity, buy_price)
+    and atomically:
+      1. Creates a RestockRecord for each entry.
+      2. Recalculates the part's weighted average buy price.
+      3. Updates the part's stock_qty.
+    
+    Payload:
+    {
+        "entries": [
+            { "supplier_id": 1, "quantity": 10, "buy_price": 1500.00, "notes": "" },
+            { "supplier_id": 2, "quantity": 5,  "buy_price": 1450.00, "notes": "" }
+        ]
+    }
     """
     part = get_object_or_404(Part, pk=pk)
-    
-    try:
-        add_qty = int(request.data.get('added_quantity', 0))
-        new_buy_price = float(request.data.get('new_buy_price', 0))
-    except (ValueError, TypeError):
-        return Response({"error": "Invalid quantity or price format."}, status=status.HTTP_400_BAD_REQUEST)
-        
-    if add_qty <= 0:
-        return Response({"error": "Added quantity must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
-        
-    # Weighted Average Cost Calculation
+    entries_data = request.data.get('entries', [])
+
+    if not entries_data:
+        return Response({"error": "At least one restock entry is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Validate all entries first
+    serializer = RestockEntrySerializer(data=entries_data, many=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    validated_entries = serializer.validated_data
+
+    # --- Weighted Average Cost Calculation ---
+    # Start with existing stock value
     old_qty = part.stock_qty
-    old_val = old_qty * float(part.buy_price)
-    new_val = add_qty * new_buy_price
-    
-    total_qty = old_qty + add_qty
-    
-    # Calculate new average
-    new_avg_price = round((old_val + new_val) / total_qty, 2)
-    
-    part.stock_qty = total_qty
+    running_value = old_qty * float(part.buy_price)
+    total_added_qty = 0
+
+    records_to_create = []
+    for entry in validated_entries:
+        supplier_id = entry.get('supplier_id')
+        qty = entry['quantity']
+        price = float(entry['buy_price'])
+        notes = entry.get('notes', '')
+
+        # Resolve supplier
+        supplier_obj = None
+        if supplier_id:
+            try:
+                supplier_obj = Supplier.objects.get(pk=supplier_id)
+            except Supplier.DoesNotExist:
+                return Response(
+                    {"error": f"Supplier with id {supplier_id} does not exist."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        running_value += qty * price
+        total_added_qty += qty
+
+        records_to_create.append(RestockRecord(
+            part=part,
+            supplier=supplier_obj,
+            quantity=qty,
+            buy_price=entry['buy_price'],
+            notes=notes,
+        ))
+
+    # Bulk create all restock records
+    RestockRecord.objects.bulk_create(records_to_create)
+
+    # Update part stock and weighted avg price
+    new_total_qty = old_qty + total_added_qty
+    new_avg_price = round(running_value / new_total_qty, 2)
+
+    part.stock_qty = new_total_qty
     part.buy_price = new_avg_price
     part.save()
-    
-    return Response(PartSerializer(part).data)
+
+    return Response({
+        "part": PartSerializer(part).data,
+        "records_created": len(records_to_create),
+        "total_added_qty": total_added_qty,
+        "new_avg_buy_price": new_avg_price,
+    })
+
+
+@api_view(['GET'])
+def get_restock_history(request, pk):
+    """
+    Returns the last 20 restock records for a given part.
+    """
+    part = get_object_or_404(Part, pk=pk)
+    records = RestockRecord.objects.filter(part=part).select_related('supplier')[:20]
+    serializer = RestockRecordSerializer(records, many=True)
+    return Response(serializer.data)
+
 
 # --- SALES & BILLING VIEWS ---
 @api_view(['POST'])

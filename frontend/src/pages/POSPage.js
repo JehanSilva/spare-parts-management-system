@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
-import { fetchParts, createSale, fetchActiveCarts, syncActiveCarts } from "../services/api";
+import { createSale, fetchActiveCarts, syncActiveCarts } from "../services/api";
+import { useParts } from "../context/PartsContext";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
@@ -122,7 +123,8 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
 });
 
 const POSPage = () => {
-  const [parts, setParts] = useState([]);
+  // ── Parts cache ──────────────────────────────────────────────────────────
+  const { allParts, partsLoading, invalidateParts } = useParts();
   const [selectedPart, setSelectedPart] = useState(null);
   
   const [carts, setCarts] = useState([]);
@@ -291,7 +293,6 @@ const POSPage = () => {
   }, [activeCartId]);
 
   const [loading, setLoading] = useState(false);
-  const [partsLoading, setPartsLoading] = useState(true);
   const [saleSuccess, setSaleSuccess] = useState(null);
 
   // Alerts
@@ -305,49 +306,33 @@ const POSPage = () => {
     documentTitle: `Invoice-${saleSuccess?.id || "New"}`,
   });
 
-  const debounceTimer = useRef(null);
-
-  // 1. Load Parts from backend (supports search parameter)
-  const loadParts = useCallback(async (search) => {
-    setPartsLoading(true);
-    try {
-      const data = await fetchParts({ search });
-      setParts(data);
-    } catch (error) {
-      setAlertInfo({ type: "error", message: "Failed to load parts data." });
-    } finally {
-      setPartsLoading(false);
-    }
-  }, []);
-
-  // Initial load on mount
-  useEffect(() => {
-    loadParts("");
-  }, [loadParts]);
-
-  // Debounced live search: fires on searchTerm change
-  useEffect(() => {
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
-    }
-    debounceTimer.current = setTimeout(() => {
-      loadParts(searchTerm);
-    }, 400);
-
-    return () => {
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-      }
-    };
-  }, [searchTerm, loadParts]);
+  // ── Client-side search — instant, zero network calls ──────────────────
+  const filteredParts = useMemo(() => {
+    if (!searchTerm.trim()) return allParts;
+    const keywords = searchTerm.trim().toLowerCase().split(/\s+/);
+    return allParts.filter((p) =>
+      keywords.every((keyword) =>
+        p.name?.toLowerCase().includes(keyword) ||
+        p.part_number?.toLowerCase().includes(keyword) ||
+        p.description?.toLowerCase().includes(keyword) ||
+        p.brand?.toLowerCase().includes(keyword) ||
+        p.compatible_vehicles?.some(
+          (v) =>
+            typeof v === "object" &&
+            (
+              (v.make?.toLowerCase() || "").includes(keyword) ||
+              (v.model?.toLowerCase() || "").includes(keyword) ||
+              String(v.year || "").includes(keyword)
+            )
+        )
+      )
+    );
+  }, [allParts, searchTerm]);
 
   // Reset visible count when search term changes
   useEffect(() => {
     setVisibleCount(20);
   }, [searchTerm]);
-
-  // 2. Filter Parts (Now directly returned from the API, client-side filtering removed)
-  const filteredParts = parts;
 
   // 2.5 Multi-Cart Actions
   const handleAddNewCart = () => {
@@ -622,7 +607,7 @@ const POSPage = () => {
 
       const enrichedItems = result.items.map((saleItem) => {
         const partId = saleItem.part || saleItem.part_id;
-        const originalPart = parts.find((p) => p.id === partId);
+        const originalPart = allParts.find((p) => p.id === partId);
         return {
           ...saleItem,
           part_number: originalPart ? originalPart.part_number : "",
@@ -647,7 +632,8 @@ const POSPage = () => {
         }
       });
 
-      await loadParts(searchTerm);
+      // Invalidate cache so stock levels update across all pages
+      invalidateParts();
 
       setAlertInfo({
         type: "success",

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday
+from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -158,3 +158,24 @@ class HolidaySerializer(serializers.ModelSerializer):
     class Meta:
         model = Holiday
         fields = '__all__'
+
+# --- RESTOCK ---
+class RestockEntrySerializer(serializers.Serializer):
+    """
+    Represents a single supplier entry within a bulk restock request.
+    """
+    supplier_id = serializers.IntegerField(required=False, allow_null=True)
+    quantity = serializers.IntegerField(min_value=1)
+    buy_price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class RestockRecordSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RestockRecord
+        fields = ['id', 'part', 'supplier', 'supplier_name', 'quantity', 'buy_price', 'restocked_at', 'notes']
+
+    def get_supplier_name(self, obj):
+        return obj.supplier.name if obj.supplier else 'Unknown / No Supplier'

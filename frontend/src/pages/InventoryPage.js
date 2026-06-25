@@ -644,48 +644,53 @@ const InventoryPage = () => {
         />
       )}
 
-      {/* Search & Filter Bar — live search, no submit button */}
-      <div
-        className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-4 grid grid-cols-1 md:grid-cols-4 gap-3"
-      >
-        <div className="relative md:col-span-2">
-          <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+      {/* Search & Filter Bar */}
+      <div className="bg-white px-4 py-3 rounded-lg shadow-sm border border-gray-200 mb-4 flex flex-col md:flex-row gap-2 items-stretch md:items-center">
+        {/* Search — clear button lives inside the input */}
+        <div className="relative flex-[2] min-w-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
           <input
             type="text"
             placeholder="Search by Name, Vehicle Model, Brand, or Part No..."
-            className="w-full pl-10 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
+            className={`w-full h-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none text-sm pl-9 ${searchTerm ? "pr-8" : "pr-3"}`}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          {(searchTerm || selectedBrand || selectedSupplier || stockFilter !== "all") && (
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-500 transition-colors"
+              title="Clear all filters"
+            >
+              <XCircle size={17} />
+            </button>
+          )}
         </div>
-        <input
-          type="text"
-          placeholder="Filter by Brand"
-          className="p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none"
-          value={selectedBrand}
-          onChange={(e) => setSelectedBrand(e.target.value)}
-        />
-        <div className="flex gap-2">
+
+        {/* Brand */}
+        <div className="flex-1 min-w-0">
+          <input
+            type="text"
+            placeholder="Filter by Brand"
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none text-sm"
+            value={selectedBrand}
+            onChange={(e) => setSelectedBrand(e.target.value)}
+          />
+        </div>
+
+        {/* Supplier */}
+        <div className="flex-1 min-w-0">
           <select
             value={selectedSupplier}
             onChange={(e) => handleSupplierChange(e.target.value)}
-            className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 focus:outline-none bg-white text-gray-700"
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none bg-white text-sm text-gray-700"
           >
             <option value="">All Suppliers</option>
             {suppliers.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
-          {(searchTerm || selectedBrand || selectedSupplier || stockFilter !== "all") && (
-            <button
-              type="button"
-              onClick={handleClearFilters}
-              className="bg-white border border-red-200 text-red-600 px-3 py-2 rounded hover:bg-red-50 flex items-center justify-center gap-1 font-bold transition-colors shrink-0"
-              title="Clear all filters"
-            >
-              <XCircle size={18} />
-            </button>
-          )}
         </div>
       </div>
 

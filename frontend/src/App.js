@@ -17,6 +17,7 @@ import EmployeePage from "./pages/EmployeePage";
 import DailyReportPage from "./pages/DailyReportPage";
 import PrivateRoute from "./components/PrivateRoute";
 import useAutoLogout from "./hooks/useAutoLogout";
+import { PartsProvider } from "./context/PartsContext";
 
 // Helper component to hide Navbar on Login page
 const Layout = ({ children }) => {
@@ -37,7 +38,8 @@ function App() {
   useAutoLogout();
   return (
     <Router>
-      <Layout>
+      <PartsProvider>
+        <Layout>
         <Routes>
           {/* Public Route */}
           <Route path="/login" element={<LoginPage />} />
@@ -108,7 +110,8 @@ function App() {
             }
           />
         </Routes>
-      </Layout>
+        </Layout>
+      </PartsProvider>
     </Router>
   );
 }

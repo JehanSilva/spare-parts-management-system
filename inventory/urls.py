@@ -2,6 +2,16 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Customers
+    path('customers/', views.get_customers, name='get_customers'),
+    path('customers/add/', views.add_customer, name='add_customer'),
+    path('customers/lookup/', views.lookup_customer_by_vehicle, name='lookup_customer_by_vehicle'),
+    path('customers/<int:pk>/update/', views.update_customer, name='update_customer'),
+    path('customers/<int:pk>/delete/', views.delete_customer, name='delete_customer'),
+    path('customers/<int:pk>/vehicles/add/', views.add_vehicle_to_customer, name='add_vehicle_to_customer'),
+    path('customers/vehicles/<int:vehicle_pk>/delete/', views.delete_customer_vehicle, name='delete_customer_vehicle'),
+    path('customers/vehicles/<int:vehicle_pk>/update/', views.update_customer_vehicle, name='update_customer_vehicle'),
+
     # Suppliers
     path('suppliers/', views.get_suppliers, name='get_suppliers'),      # GET only
     path('suppliers/add/', views.add_supplier, name='add_supplier'),    # POST only
@@ -17,12 +27,15 @@ urlpatterns = [
     path('parts/<uuid:pk>/delete/', views.delete_part, name='delete_part'),
     path('parts/<uuid:pk>/restock/', views.restock_part, name='restock_part'),
     path('parts/<uuid:pk>/restock-history/', views.get_restock_history, name='get_restock_history'),
+    path('parts/<uuid:part_pk>/restock/<int:record_pk>/return/', views.return_restock_record, name='return_restock_record'),
+    path('parts/<uuid:part_pk>/restock/<int:record_pk>/edit/', views.edit_restock_record, name='edit_restock_record'),
 
     # Sales
     path('sales/create/', views.create_sale, name='create_sale'),
     path('sales/', views.get_all_sales, name='get_all_sales'),
     path('sales/<uuid:pk>/update/', views.update_sale, name='update_sale'),
     path('sales/<uuid:pk>/cancel/', views.cancel_sale, name='cancel_sale'),
+    path('sales/<uuid:pk>/mark-paid/', views.mark_sale_paid, name='mark_sale_paid'),
 
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),

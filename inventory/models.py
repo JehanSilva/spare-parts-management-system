@@ -45,18 +45,63 @@ class Part(models.Model):
     def __str__(self):
         return f"{self.name} ({self.brand})"
 
+class Customer(models.Model):
+    """
+    Represents a real-world customer who brings their vehicle in for service.
+    A customer can have multiple registered vehicles (CustomerVehicle).
+    """
+    name = models.CharField(max_length=100)
+    phone = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+    address = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class CustomerVehicle(models.Model):
+    """
+    A specific registered vehicle (by plate number) owned by a Customer.
+    This is NOT the Vehicle make/model catalog used for parts compatibility.
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='vehicles')
+    vehicle_number = models.CharField(max_length=20, unique=True, help_text="Vehicle registration plate number")
+    make = models.CharField(max_length=50, blank=True, help_text="e.g., Toyota")
+    model = models.CharField(max_length=50, blank=True, help_text="e.g., Corolla")
+    year = models.PositiveIntegerField(null=True, blank=True)
+    color = models.CharField(max_length=50, blank=True, help_text="e.g., Pearl White")
+    current_mileage = models.PositiveIntegerField(null=True, blank=True, help_text="Current odometer reading in km")
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.vehicle_number} ({self.customer.name})"
+
+
+
 class Sale(models.Model):
     STATUS_CHOICES = [
         ('COMPLETED', 'Completed'),
         ('CANCELLED', 'Cancelled'),
     ]
+    PAYMENT_STATUS_CHOICES = [
+        ('PAID', 'Paid'),
+        ('CREDIT', 'Credit (Pay Later)'),
+    ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey('Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     customer_name = models.CharField(max_length=100)
     vehicle_number = models.CharField(max_length=20, blank=True, null=True, help_text="Optional vehicle reg number")
     created_at = models.DateTimeField(auto_now_add=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='COMPLETED')
     cancel_reason = models.TextField(blank=True, null=True, help_text="Reason why this sale was cancelled")
+    payment_status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default='PAID')
+    credit_note = models.TextField(blank=True, null=True, help_text="Note about the credit sale, e.g. when the customer will pay")
+    credit_settled_at = models.DateTimeField(null=True, blank=True, help_text="When this credit sale was marked as received")
 
     def __str__(self):
         return f"Sale {str(self.id)[:8]} - {self.customer_name} ({self.status})"
@@ -196,12 +241,27 @@ class RestockRecord(models.Model):
     A single 'Quick Restock' action can generate multiple RestockRecords
     (one per supplier entry). This is the source of truth for purchase history.
     """
+    STATUS_ACTIVE = 'ACTIVE'
+    STATUS_PARTIALLY_RETURNED = 'PARTIALLY_RETURNED'
+    STATUS_FULLY_RETURNED = 'FULLY_RETURNED'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_PARTIALLY_RETURNED, 'Partially Returned'),
+        (STATUS_FULLY_RETURNED, 'Fully Returned'),
+    ]
+
     part = models.ForeignKey(Part, on_delete=models.CASCADE, related_name='restock_records')
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name='restock_records')
     quantity = models.PositiveIntegerField()
     buy_price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Unit buy price from this supplier for this batch")
     restocked_at = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(blank=True)
+
+    # Return tracking
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    returned_quantity = models.PositiveIntegerField(default=0)
+    return_reason = models.TextField(blank=True)
+    returned_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-restocked_at']

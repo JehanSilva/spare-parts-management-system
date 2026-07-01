@@ -6,16 +6,124 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer
 from decimal import Decimal
-from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
-from .serializers import VehicleSerializer # <--- Make sure this is imported too!
-from django.shortcuts import get_object_or_404 # Ensure this is imported        
+from .models import Vehicle
+from .serializers import VehicleSerializer
+from django.shortcuts import get_object_or_404
 from django.db.models import Sum, F
-from .models import Sale # Ensure Sale is imported
 from django.db import transaction
 from django.db.models import Q
+
+# --- CUSTOMER VIEWS ---
+@api_view(['GET'])
+def get_customers(request):
+    """List all customers, optionally search by name or phone."""
+    search = request.query_params.get('search', '').strip()
+    qs = Customer.objects.prefetch_related('vehicles').order_by('name')
+    if search:
+        qs = qs.filter(Q(name__icontains=search) | Q(phone__icontains=search))
+    serializer = CustomerSerializer(qs, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['POST'])
+def add_customer(request):
+    """Create a new customer. Vehicles can be added separately."""
+    serializer = CustomerSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PUT'])
+def update_customer(request, pk):
+    """Update a customer's details."""
+    customer = get_object_or_404(Customer, pk=pk)
+    serializer = CustomerSerializer(customer, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+def delete_customer(request, pk):
+    """Delete a customer and their vehicles."""
+    customer = get_object_or_404(Customer, pk=pk)
+    customer.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+def lookup_customer_by_vehicle(request):
+    """
+    GET /customers/lookup/?vehicle_number=ABC123
+    Returns the customer linked to that vehicle number, or 404 if not found.
+    """
+    vehicle_number = request.query_params.get('vehicle_number', '').strip().upper()
+    if not vehicle_number:
+        return Response({'error': 'vehicle_number query param is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        customer_vehicle = CustomerVehicle.objects.select_related('customer').prefetch_related('customer__vehicles').get(
+            vehicle_number__iexact=vehicle_number
+        )
+        customer = customer_vehicle.customer
+        serializer = CustomerSerializer(customer)
+        return Response({'found': True, 'customer': serializer.data, 'vehicle': CustomerVehicleSerializer(customer_vehicle).data})
+    except CustomerVehicle.DoesNotExist:
+        return Response({'found': False}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+def add_vehicle_to_customer(request, pk):
+    """
+    POST /customers/<pk>/vehicles/add/
+    Adds a new vehicle registration to an existing customer.
+    """
+    customer = get_object_or_404(Customer, pk=pk)
+    data = {**request.data, 'customer': customer.pk}
+    # Normalize vehicle number to uppercase
+    if 'vehicle_number' in data:
+        data['vehicle_number'] = data['vehicle_number'].strip().upper()
+    serializer = CustomerVehicleSerializer(data=data)
+    if serializer.is_valid():
+        serializer.save()
+        # Return full customer object with updated vehicles list
+        return Response(CustomerSerializer(customer).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+def delete_customer_vehicle(request, vehicle_pk):
+    """
+    DELETE /customers/vehicles/<vehicle_pk>/delete/
+    Removes a specific vehicle registration.
+    """
+    vehicle = get_object_or_404(CustomerVehicle, pk=vehicle_pk)
+    vehicle.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['PATCH'])
+def update_customer_vehicle(request, vehicle_pk):
+    """
+    PATCH /customers/vehicles/<vehicle_pk>/update/
+    Updates vehicle details (make, model, year, color, mileage, notes).
+    vehicle_number cannot be changed to maintain data integrity.
+    """
+    vehicle = get_object_or_404(CustomerVehicle, pk=vehicle_pk)
+    # Prevent vehicle_number from being changed via this endpoint
+    data = {k: v for k, v in request.data.items() if k != 'vehicle_number'}
+    serializer = CustomerVehicleSerializer(vehicle, data=data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 # --- VEHICLE VIEWS ---
 @api_view(['PUT'])
@@ -205,26 +313,37 @@ def add_part(request):
     """
     data = request.data
     part_number = data.get('part_number')
-    
+
     # 1. Check if a part with this Part Number already exists
     # We use .filter().first() to avoid crashing if it doesn't exist
     existing_part = Part.objects.filter(part_number=part_number).first()
-    
+
     if existing_part:
         # --- SMART UPDATE MODE ---
         new_qty = int(data.get('stock_qty', 0))
-        
+
         # Update Quantity
         existing_part.stock_qty += new_qty
-        
+
+        buy_price_for_record = existing_part.buy_price
         # Update Prices (Optional: Remove these lines if you don't want to overwrite prices)
         if 'buy_price' in data:
             existing_part.buy_price = data['buy_price']
+            buy_price_for_record = Decimal(str(data['buy_price']))
         if 'sell_price' in data:
             existing_part.sell_price = data['sell_price']
-            
+
         existing_part.save()
-        
+
+        if new_qty > 0:
+            RestockRecord.objects.create(
+                part=existing_part,
+                supplier=existing_part.supplier,
+                quantity=new_qty,
+                buy_price=buy_price_for_record,
+                notes="Added via Add Part form (duplicate part number)",
+            )
+
         return Response({
             "message": f"Part exists. Stock increased by {new_qty}. Total: {existing_part.stock_qty}",
             "id": existing_part.id,
@@ -234,9 +353,17 @@ def add_part(request):
     # --- CREATE NEW MODE ---
     serializer = PartSerializer(data=data)
     if serializer.is_valid():
-        serializer.save()
+        part = serializer.save()
+        if part.stock_qty > 0:
+            RestockRecord.objects.create(
+                part=part,
+                supplier=part.supplier,
+                quantity=part.stock_qty,
+                buy_price=part.buy_price,
+                notes="Initial stock on item creation",
+            )
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['PUT'])
@@ -353,6 +480,125 @@ def get_restock_history(request, pk):
     return Response(serializer.data)
 
 
+@api_view(['POST'])
+@transaction.atomic
+def return_restock_record(request, part_pk, record_pk):
+    """
+    Return some or all stock from a specific restock record.
+    Deducts from part.stock_qty and recalculates the weighted average buy price.
+
+    Payload: { "quantity": <int>, "reason": "<str>" }
+    """
+    part = get_object_or_404(Part, pk=part_pk)
+    record = get_object_or_404(RestockRecord, pk=record_pk, part=part)
+
+    return_qty = int(request.data.get('quantity', 0))
+    reason = request.data.get('reason', '').strip()
+
+    if return_qty <= 0:
+        return Response({"error": "Return quantity must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+
+    available_to_return = record.quantity - record.returned_quantity
+    if return_qty > available_to_return:
+        return Response(
+            {"error": f"Cannot return {return_qty}. Only {available_to_return} unit(s) available to return."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if return_qty > part.stock_qty:
+        return Response(
+            {"error": f"Cannot return {return_qty} units. Current stock is only {part.stock_qty}."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not reason:
+        return Response({"error": "A return reason is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Recalculate weighted average after removing the returned units
+    old_stock_value = float(part.stock_qty) * float(part.buy_price)
+    return_value = return_qty * float(record.buy_price)
+    new_stock_qty = part.stock_qty - return_qty
+
+    if new_stock_qty > 0:
+        part.buy_price = round((old_stock_value - return_value) / new_stock_qty, 2)
+    part.stock_qty = new_stock_qty
+    part.save()
+
+    # Update the restock record
+    record.returned_quantity += return_qty
+    record.return_reason = reason
+    record.returned_at = timezone.now()
+    if record.returned_quantity >= record.quantity:
+        record.status = RestockRecord.STATUS_FULLY_RETURNED
+    else:
+        record.status = RestockRecord.STATUS_PARTIALLY_RETURNED
+    record.save()
+
+    return Response(RestockRecordSerializer(record).data)
+
+
+@api_view(['PUT'])
+@transaction.atomic
+def edit_restock_record(request, part_pk, record_pk):
+    """
+    Edit the quantity and/or buy_price on a restock record.
+    Adjusts part.stock_qty and recalculates the weighted average buy price.
+
+    Payload: { "quantity": <int>, "buy_price": "<decimal>" }
+    """
+    part = get_object_or_404(Part, pk=part_pk)
+    record = get_object_or_404(RestockRecord, pk=record_pk, part=part)
+
+    new_quantity = int(request.data.get('quantity', record.quantity))
+    new_buy_price = Decimal(str(request.data.get('buy_price', record.buy_price)))
+
+    if new_quantity < record.returned_quantity:
+        return Response(
+            {"error": f"Quantity cannot be less than already returned amount ({record.returned_quantity})."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if new_buy_price <= 0:
+        return Response({"error": "Buy price must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Active (non-returned) units before and after the edit
+    old_active_qty = record.quantity - record.returned_quantity
+    new_active_qty = new_quantity - record.returned_quantity
+    qty_diff = new_active_qty - old_active_qty
+
+    new_stock_qty = part.stock_qty + qty_diff
+    if new_stock_qty < 0:
+        return Response(
+            {"error": "This edit would result in negative stock. Reduce the quantity difference."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Recalculate weighted average:
+    # Remove old contribution, add new contribution
+    old_stock_value = float(part.stock_qty) * float(part.buy_price)
+    old_contribution = old_active_qty * float(record.buy_price)
+    new_contribution = new_active_qty * float(new_buy_price)
+    new_stock_value = old_stock_value - old_contribution + new_contribution
+
+    if new_stock_qty > 0:
+        part.buy_price = round(new_stock_value / new_stock_qty, 2)
+    part.stock_qty = new_stock_qty
+    part.save()
+
+    record.quantity = new_quantity
+    record.buy_price = new_buy_price
+    # Refresh status based on updated quantity
+    if record.returned_quantity == 0:
+        record.status = RestockRecord.STATUS_ACTIVE
+    elif record.returned_quantity >= new_quantity:
+        record.status = RestockRecord.STATUS_FULLY_RETURNED
+    else:
+        record.status = RestockRecord.STATUS_PARTIALLY_RETURNED
+    record.save()
+
+    return Response(RestockRecordSerializer(record).data)
+
+
 # --- SALES & BILLING VIEWS ---
 @api_view(['POST'])
 @transaction.atomic # <--- 1. This Decorator makes the entire function safe
@@ -360,7 +606,13 @@ def create_sale(request):
     data = request.data
     customer_name = data.get('customer_name')
     vehicle_number = data.get('vehicle_number', '')
+    customer_id = data.get('customer') or None
     items_data = data.get('items', [])
+
+    payment_status = data.get('payment_status', 'PAID')
+    if payment_status not in ('PAID', 'CREDIT'):
+        payment_status = 'PAID'
+    credit_note = data.get('credit_note', '') if payment_status == 'CREDIT' else ''
 
     if not items_data:
         return Response({"error": "No items in sale"}, status=status.HTTP_400_BAD_REQUEST)
@@ -392,7 +644,10 @@ def create_sale(request):
     sale = Sale.objects.create(
         customer_name=customer_name,
         vehicle_number=vehicle_number,
-        total_amount=total_amount
+        customer_id=customer_id,
+        total_amount=total_amount,
+        payment_status=payment_status,
+        credit_note=credit_note,
     )
 
     # 4. Process Items (Now safe to deduct)
@@ -465,7 +720,23 @@ def cancel_sale(request, pk):
     sale.cancel_reason = cancel_reason
     sale.status = 'CANCELLED'
     sale.save()
-    
+
+    return Response(SaleSerializer(sale).data)
+
+@api_view(['POST'])
+def mark_sale_paid(request, pk):
+    """
+    Mark a credit (pay-later) sale as received/settled.
+    """
+    sale = get_object_or_404(Sale, pk=pk)
+
+    if sale.payment_status != 'CREDIT':
+        return Response({"error": "This sale is not a pending credit sale."}, status=status.HTTP_400_BAD_REQUEST)
+
+    sale.payment_status = 'PAID'
+    sale.credit_settled_at = timezone.now()
+    sale.save()
+
     return Response(SaleSerializer(sale).data)
 
 # --- REPORTING VIEW ---

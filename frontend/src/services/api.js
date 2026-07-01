@@ -71,6 +71,10 @@ export const restockPart = async (id, entries) =>
   (await API.post(`/parts/${id}/restock/`, { entries })).data;
 export const fetchRestockHistory = async (id) =>
   (await API.get(`/parts/${id}/restock-history/`)).data;
+export const returnRestockRecord = async (partId, recordId, data) =>
+  (await API.post(`/parts/${partId}/restock/${recordId}/return/`, data)).data;
+export const editRestockRecord = async (partId, recordId, data) =>
+  (await API.put(`/parts/${partId}/restock/${recordId}/edit/`, data)).data;
 
 
 export const fetchSuppliers = async () => (await API.get("/suppliers/")).data;
@@ -96,6 +100,8 @@ export const updateSale = async (id, data) =>
   (await API.patch(`/sales/${id}/update/`, data)).data;
 export const cancelSale = async (id, data) =>
   (await API.post(`/sales/${id}/cancel/`, data)).data;
+export const markSaleAsPaid = async (id) =>
+  (await API.post(`/sales/${id}/mark-paid/`)).data;
 export const fetchDashboardStats = async (period = 'all') =>
   (await API.get("/dashboard/stats/", { params: { period } })).data;
 export const fetchDailyReport = async (date) =>
@@ -126,5 +132,19 @@ export const fetchPayroll = async (month, year) => (await API.get("/payroll/", {
 export const generatePayrollDrafts = async (data) => (await API.post("/payroll/generate/", data)).data;
 export const updatePayroll = async (id, data) => (await API.put(`/payroll/${id}/update/`, data)).data;
 export const payPayroll = async (id) => (await API.post(`/payroll/${id}/pay/`)).data;
+
+// --- CUSTOMER SERVICES ---
+export const fetchCustomers = async (search = '') => (await API.get("/customers/", { params: search ? { search } : {} })).data;
+export const createCustomer = async (data) => (await API.post("/customers/add/", data)).data;
+export const updateCustomer = async (id, data) => (await API.put(`/customers/${id}/update/`, data)).data;
+export const deleteCustomer = async (id) => await API.delete(`/customers/${id}/delete/`);
+export const lookupCustomerByVehicle = async (vehicleNumber) =>
+  (await API.get("/customers/lookup/", { params: { vehicle_number: vehicleNumber } })).data;
+export const addVehicleToCustomer = async (customerId, data) =>
+  (await API.post(`/customers/${customerId}/vehicles/add/`, data)).data;
+export const deleteCustomerVehicle = async (vehicleId) =>
+  await API.delete(`/customers/vehicles/${vehicleId}/delete/`);
+export const updateCustomerVehicle = async (vehicleId, data) =>
+  (await API.patch(`/customers/vehicles/${vehicleId}/update/`, data)).data;
 
 export default API;

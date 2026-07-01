@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Supplier, Part, Vehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord
+from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -7,11 +7,31 @@ class SupplierSerializer(serializers.ModelSerializer):
         model = Supplier
         fields = '__all__'
 
-# --- 2. VEHICLE ---
+# --- 2. VEHICLE (Parts Compatibility Catalog) ---
 class VehicleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Vehicle
         fields = '__all__'
+
+
+# --- 2b. CUSTOMER VEHICLE (Real registered plates per customer) ---
+class CustomerVehicleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerVehicle
+        fields = '__all__'
+
+
+# --- 2c. CUSTOMER ---
+class CustomerSerializer(serializers.ModelSerializer):
+    vehicles = CustomerVehicleSerializer(many=True, read_only=True)
+    total_sales = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Customer
+        fields = ['id', 'name', 'phone', 'email', 'address', 'created_at', 'updated_at', 'vehicles', 'total_sales']
+
+    def get_total_sales(self, obj):
+        return obj.sales.filter(status='COMPLETED').count()
 
 # --- 3. PART ---
 class PartSerializer(serializers.ModelSerializer):
@@ -82,7 +102,11 @@ class SaleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Sale
-        fields = ['id', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items', 'status', 'cancel_reason']
+        fields = [
+            'id', 'customer', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items',
+            'status', 'cancel_reason', 'payment_status', 'credit_note', 'credit_settled_at',
+        ]
+        read_only_fields = ['credit_settled_at']
 
     def create(self, validated_data):
         """
@@ -175,7 +199,11 @@ class RestockRecordSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RestockRecord
-        fields = ['id', 'part', 'supplier', 'supplier_name', 'quantity', 'buy_price', 'restocked_at', 'notes']
+        fields = [
+            'id', 'part', 'supplier', 'supplier_name',
+            'quantity', 'buy_price', 'restocked_at', 'notes',
+            'status', 'returned_quantity', 'return_reason', 'returned_at',
+        ]
 
     def get_supplier_name(self, obj):
         return obj.supplier.name if obj.supplier else 'Unknown / No Supplier'

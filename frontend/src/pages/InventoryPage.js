@@ -483,7 +483,11 @@ const InventoryPage = () => {
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
       {/* --- DETAILS MODAL --- */}
-      <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />
+      <PartDetailsModal
+        part={selectedPart}
+        onClose={() => setSelectedPart(null)}
+        onPartUpdated={invalidateParts}
+      />
 
       {/* --- QUICK RESTOCK MODAL --- */}
       {showRestockModal && (

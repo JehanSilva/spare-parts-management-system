@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchSales, fetchParts, updateSale, cancelSale } from "../services/api";
+import { fetchSales, fetchParts, updateSale, cancelSale, markSaleAsPaid } from "../services/api";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
@@ -18,6 +18,9 @@ import {
   XCircle,
   AlertCircle,
   Trash2,
+  UserCheck,
+  Wallet,
+  CheckCircle,
 } from "lucide-react";
 
 // --- Edit Sale Modal Component ---
@@ -202,12 +205,58 @@ const CancelSaleModal = ({ isOpen, sale, onClose, onConfirm }) => {
   );
 };
 
+// --- Mark Credit as Received Modal Component ---
+const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
+  if (!isOpen || !sale) return null;
+
+  const formatLKR = (amount) =>
+    new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-scale-in">
+        <div className="bg-green-700 p-4 text-white flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <Wallet size={20} />
+            <h3 className="font-bold text-lg">Mark Credit as Received</h3>
+          </div>
+          <button onClick={onClose} className="hover:bg-green-600 p-1 rounded-full"><XCircle size={20} /></button>
+        </div>
+        <div className="p-6 space-y-4 text-left">
+          <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-900">
+            <p>
+              Confirm that <span className="font-bold">{sale.customer_name}</span> has paid the outstanding{" "}
+              <span className="font-bold">{formatLKR(sale.total_amount)}</span> for this sale.
+            </p>
+          </div>
+          {sale.credit_note && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-xs text-amber-800 italic">
+              "{sale.credit_note}"
+            </div>
+          )}
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition">Cancel</button>
+            <button
+              onClick={onConfirm}
+              disabled={loading}
+              className="flex-1 py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition shadow-lg shadow-green-200 disabled:opacity-60 flex items-center justify-center gap-2"
+            >
+              {loading ? "Saving..." : (<><CheckCircle size={16} /> Mark as Received</>)}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const SalesHistoryPage = () => {
   const [sales, setSales] = useState([]);
   const [parts, setParts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterDate, setFilterDate] = useState("");
+  const [paymentFilter, setPaymentFilter] = useState("ALL"); // ALL | CREDIT
   const [expandedSaleId, setExpandedSaleId] = useState(null);
 
   // --- Modal & Alert State ---
@@ -215,6 +264,8 @@ const SalesHistoryPage = () => {
   const [saleToEdit, setSaleToEdit] = useState(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [saleToCancel, setSaleToCancel] = useState(null);
+  const [saleToMarkPaid, setSaleToMarkPaid] = useState(null);
+  const [markPaidLoading, setMarkPaidLoading] = useState(false);
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
 
   // --- Printing State ---
@@ -317,9 +368,31 @@ const SalesHistoryPage = () => {
     }
   };
 
+  const handleMarkPaidClick = (sale, e) => {
+    e.stopPropagation();
+    setSaleToMarkPaid(sale);
+  };
+
+  const handleConfirmMarkPaid = async () => {
+    setMarkPaidLoading(true);
+    try {
+      const result = await markSaleAsPaid(saleToMarkPaid.id);
+      setSales(sales.map(s => s.id === result.id ? result : s));
+      setSaleToMarkPaid(null);
+      setAlertInfo({ type: "success", message: "Marked as received — credit settled!" });
+    } catch (error) {
+      setAlertInfo({ type: "error", message: "Failed to mark sale as received." });
+    } finally {
+      setMarkPaidLoading(false);
+    }
+  };
+
+  const outstandingCreditSales = sales.filter((s) => s.payment_status === "CREDIT");
+  const outstandingCreditTotal = outstandingCreditSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+
   const filteredSales = sales.filter((sale) => {
     const searchLower = searchTerm.trim().toLowerCase();
-    
+
     // Check if the sale matches the search term (Customer, Vehicle, ID, or Items)
     const matchSearch =
       !searchTerm.trim() ||
@@ -336,7 +409,9 @@ const SalesHistoryPage = () => {
     // sale.created_at is typically "YYYY-MM-DDTHH:MM..."
     const matchDate = !filterDate || sale.created_at.startsWith(filterDate);
 
-    return matchSearch && matchDate;
+    const matchPayment = paymentFilter !== "CREDIT" || sale.payment_status === "CREDIT";
+
+    return matchSearch && matchDate && matchPayment;
   });
 
   const formatDate = (dateString) => {
@@ -376,11 +451,19 @@ const SalesHistoryPage = () => {
         onConfirm={handleExecuteCancel}
       />
 
-      <EditSaleModal 
+      <EditSaleModal
         isOpen={isEditModalOpen}
         sale={saleToEdit}
         onClose={() => setIsEditModalOpen(false)}
         onSave={handleUpdateSale}
+      />
+
+      <MarkPaidModal
+        isOpen={!!saleToMarkPaid}
+        sale={saleToMarkPaid}
+        onClose={() => setSaleToMarkPaid(null)}
+        onConfirm={handleConfirmMarkPaid}
+        loading={markPaidLoading}
       />
 
       <div className="mb-6 md:mb-8">
@@ -398,6 +481,31 @@ const SalesHistoryPage = () => {
           <Receipt ref={receiptRef} sale={selectedSaleForPrint} />
         )}
       </div>
+
+      {/* Outstanding Credit Summary */}
+      {outstandingCreditSales.length > 0 && (
+        <div className="max-w-3xl w-full mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-100 rounded-lg text-amber-700">
+              <Wallet size={20} />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">Outstanding Credit</p>
+              <p className="text-lg font-extrabold text-amber-900">{formatLKR(outstandingCreditTotal)} <span className="text-xs font-medium text-amber-600">across {outstandingCreditSales.length} sale{outstandingCreditSales.length > 1 ? "s" : ""}</span></p>
+            </div>
+          </div>
+          <button
+            onClick={() => setPaymentFilter(paymentFilter === "CREDIT" ? "ALL" : "CREDIT")}
+            className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
+              paymentFilter === "CREDIT"
+                ? "bg-amber-600 text-white"
+                : "bg-white text-amber-700 border border-amber-300 hover:bg-amber-100"
+            }`}
+          >
+            {paymentFilter === "CREDIT" ? "Showing Credit Only" : "View Credit Sales"}
+          </button>
+        </div>
+      )}
 
       {/* Filters Area */}
       <div className="flex flex-col md:flex-row gap-4 mb-6 max-w-3xl w-full">
@@ -497,8 +605,13 @@ const SalesHistoryPage = () => {
                               </span>
                             </div>
                           )}
+                          {sale.status !== 'CANCELLED' && sale.payment_status === 'CREDIT' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase w-fit mt-1">
+                              <UserCheck size={10} /> Credit — Pending
+                            </span>
+                          )}
                        </div>
-                      <span className={`text-lg font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : 'text-green-700'}`}>
+                      <span className={`text-lg font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : 'text-green-700'}`}>
                         {formatLKR(sale.total_amount)}
                       </span>
                     </div>
@@ -520,8 +633,8 @@ const SalesHistoryPage = () => {
                         onClick={(e) => printReceipt(sale, e)}
                         disabled={sale.status === 'CANCELLED'}
                         className={`flex-1 py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition-all active:scale-95 ${
-                          sale.status === 'CANCELLED' 
-                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                          sale.status === 'CANCELLED'
+                          ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                           : 'bg-gray-800 text-white hover:bg-gray-900'
                         }`}
                         title={sale.status === 'CANCELLED' ? "Cannot print receipt for cancelled sales" : "Print Receipt"}
@@ -536,6 +649,15 @@ const SalesHistoryPage = () => {
                       </button>
                     </div>
 
+                    {sale.status !== 'CANCELLED' && sale.payment_status === 'CREDIT' && (
+                      <button
+                        onClick={(e) => handleMarkPaidClick(sale, e)}
+                        className="w-full bg-green-50 text-green-700 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-green-100 transition-all active:scale-95 mb-3 font-bold border border-green-200"
+                      >
+                        <Wallet size={16} /> Mark as Received
+                      </button>
+                    )}
+
                     {sale.status !== 'CANCELLED' ? (
                       <button
                         onClick={(e) => handleCancelClick(sale, e)}
@@ -547,6 +669,15 @@ const SalesHistoryPage = () => {
                       <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-3.5 mb-4 text-xs">
                         <span className="font-bold block uppercase tracking-wider text-[10px] text-red-700 mb-1">Reason for Cancellation</span>
                         <p className="italic font-medium">"{sale.cancel_reason || "Not specified"}"</p>
+                      </div>
+                    )}
+
+                    {sale.credit_note && (
+                      <div className="bg-amber-50 text-amber-800 border border-amber-100 rounded-xl p-3.5 mb-4 text-xs">
+                        <span className="font-bold block uppercase tracking-wider text-[10px] text-amber-700 mb-1">
+                          Credit Note {sale.payment_status !== 'CREDIT' && '(Settled)'}
+                        </span>
+                        <p className="italic font-medium">"{sale.credit_note}"</p>
                       </div>
                     )}
 
@@ -664,7 +795,7 @@ const SalesHistoryPage = () => {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex flex-col items-end">
-                          <span className={`font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : 'text-green-700'}`}>
+                          <span className={`font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : 'text-green-700'}`}>
                             {formatLKR(sale.total_amount)}
                           </span>
                           {sale.status === 'CANCELLED' && (
@@ -674,6 +805,11 @@ const SalesHistoryPage = () => {
                                 ({sale.cancel_reason || "Not specified"})
                               </span>
                             </div>
+                          )}
+                          {sale.status !== 'CANCELLED' && sale.payment_status === 'CREDIT' && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-bold uppercase">
+                              <UserCheck size={9} /> Credit — Pending
+                            </span>
                           )}
                         </div>
                       </td>
@@ -698,6 +834,15 @@ const SalesHistoryPage = () => {
                           >
                             <Edit2 size={16} />
                           </button>
+                          {sale.status !== 'CANCELLED' && sale.payment_status === 'CREDIT' && (
+                            <button
+                              onClick={(e) => handleMarkPaidClick(sale, e)}
+                              className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg transition"
+                              title="Mark as Received"
+                            >
+                              <Wallet size={16} />
+                            </button>
+                          )}
                           {sale.status !== 'CANCELLED' ? (
                             <button
                               onClick={(e) => handleCancelClick(sale, e)}
@@ -730,6 +875,14 @@ const SalesHistoryPage = () => {
                                <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-4 mb-4 text-sm max-w-xl">
                                  <span className="font-bold block uppercase tracking-wider text-xs text-red-700 mb-1">Reason for Cancellation</span>
                                  <p className="italic font-medium">"{sale.cancel_reason || "Not specified"}"</p>
+                               </div>
+                             )}
+                             {sale.credit_note && (
+                               <div className="bg-amber-50 text-amber-800 border border-amber-100 rounded-xl p-4 mb-4 text-sm max-w-xl">
+                                 <span className="font-bold block uppercase tracking-wider text-xs text-amber-700 mb-1">
+                                   Credit Note {sale.payment_status !== 'CREDIT' && '(Settled)'}
+                                 </span>
+                                 <p className="italic font-medium">"{sale.credit_note}"</p>
                                </div>
                              )}
                             <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">

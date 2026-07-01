@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
-import { createSale, fetchActiveCarts, syncActiveCarts, lookupCustomerByVehicle, createCustomer, addVehicleToCustomer } from "../services/api";
+import { createSale, fetchActiveCarts, syncActiveCarts, lookupCustomerByVehicle, createCustomer, addVehicleToCustomer, fetchCustomers } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
@@ -24,6 +24,7 @@ import {
   RefreshCw,
   User,
   UserPlus,
+  UserCheck,
   BadgeCheck,
   Loader2,
 } from "lucide-react";
@@ -84,9 +85,8 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
               loading="lazy"
               decoding="async"
               onLoad={() => setImgLoaded(true)}
-              className={`w-full h-full object-cover transition-opacity duration-500 ${
-                imgLoaded ? "opacity-100" : "opacity-0"
-              }`}
+              className={`w-full h-full object-cover transition-opacity duration-500 ${imgLoaded ? "opacity-100" : "opacity-0"
+                }`}
             />
           </>
         ) : (
@@ -130,7 +130,7 @@ const POSPage = () => {
   // ── Parts cache ──────────────────────────────────────────────────────────
   const { allParts, partsLoading, invalidateParts } = useParts();
   const [selectedPart, setSelectedPart] = useState(null);
-  
+
   const [carts, setCarts] = useState([]);
   const [activeCartId, setActiveCartId] = useState("");
   const [cartsLoading, setCartsLoading] = useState(true);
@@ -149,10 +149,10 @@ const POSPage = () => {
           vehicleNumber: c.vehicle_number,
           items: c.items,
         }));
-        
+
         if (mapped.length > 0) {
           setCarts(mapped);
-          
+
           // Set active cart id
           const savedActiveId = localStorage.getItem("pos_active_cart_id");
           if (savedActiveId && mapped.some((c) => c.id === savedActiveId)) {
@@ -173,7 +173,7 @@ const POSPage = () => {
           ];
           setCarts(initialCarts);
           setActiveCartId(newId);
-          
+
           // Sync this initial cart to the backend immediately
           await syncActiveCarts(initialCarts.map((c) => ({
             id: c.id,
@@ -306,10 +306,21 @@ const POSPage = () => {
   // --- Vehicle Lookup State ---
   const [vehicleLookupStatus, setVehicleLookupStatus] = useState("idle"); // idle | searching | found | not_found
   const [linkedCustomer, setLinkedCustomer] = useState(null); // { id, name, phone, ... }
-  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [linkMode, setLinkMode] = useState(null); // null | 'new' | 'existing'
   const [registerForm, setRegisterForm] = useState({ name: "", phone: "" });
   const [registerLoading, setRegisterLoading] = useState(false);
   const vehicleLookupTimer = useRef(null);
+
+  // --- Existing Customer Search State (for linking a vehicle to an existing customer) ---
+  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
+  const [customerSearchResults, setCustomerSearchResults] = useState([]);
+  const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
+  const [linkingCustomerId, setLinkingCustomerId] = useState(null);
+  const customerSearchTimer = useRef(null);
+
+  // --- Credit Sale (Pay Later) State ---
+  const [isCredit, setIsCredit] = useState(false);
+  const [creditNote, setCreditNote] = useState("");
 
   // Print Ref
   const receiptRef = useRef();
@@ -401,7 +412,9 @@ const POSPage = () => {
     );
     // Reset lookup state
     setLinkedCustomer(null);
-    setShowRegisterForm(false);
+    setLinkMode(null);
+    setCustomerSearchTerm("");
+    setCustomerSearchResults([]);
     setVehicleLookupStatus("idle");
 
     // Debounce vehicle number lookup
@@ -452,7 +465,7 @@ const POSPage = () => {
           c.id === activeCartId ? { ...c, customerName: newCustomer.name } : c
         )
       );
-      setShowRegisterForm(false);
+      setLinkMode(null);
       setAlertInfo({ type: "success", message: `${newCustomer.name} registered and linked!` });
     } catch (err) {
       setAlertInfo({ type: "error", message: err.response?.data?.name?.[0] || "Failed to register customer." });
@@ -461,12 +474,63 @@ const POSPage = () => {
     }
   };
 
+  // Debounced search for existing customers when linking a vehicle
+  useEffect(() => {
+    if (linkMode !== "existing") return;
+    if (customerSearchTimer.current) clearTimeout(customerSearchTimer.current);
+    if (!customerSearchTerm.trim()) {
+      setCustomerSearchResults([]);
+      return;
+    }
+    setCustomerSearchLoading(true);
+    customerSearchTimer.current = setTimeout(async () => {
+      try {
+        const results = await fetchCustomers(customerSearchTerm.trim());
+        setCustomerSearchResults(results);
+      } catch {
+        setCustomerSearchResults([]);
+      } finally {
+        setCustomerSearchLoading(false);
+      }
+    }, 400);
+    return () => {
+      if (customerSearchTimer.current) clearTimeout(customerSearchTimer.current);
+    };
+  }, [customerSearchTerm, linkMode]);
+
+  // Link the current vehicle to an existing, already-registered customer
+  const handleLinkExistingCustomer = async (customer) => {
+    setLinkingCustomerId(customer.id);
+    try {
+      const updatedCustomer = await addVehicleToCustomer(customer.id, { vehicle_number: vehicleNumber.trim() });
+      setLinkedCustomer(updatedCustomer);
+      setVehicleLookupStatus("found");
+      setCarts((prev) =>
+        prev.map((c) =>
+          c.id === activeCartId ? { ...c, customerName: updatedCustomer.name } : c
+        )
+      );
+      setLinkMode(null);
+      setCustomerSearchTerm("");
+      setCustomerSearchResults([]);
+      setAlertInfo({ type: "success", message: `Vehicle linked to ${updatedCustomer.name}!` });
+    } catch (err) {
+      setAlertInfo({ type: "error", message: err.response?.data?.vehicle_number?.[0] || "Failed to link vehicle to customer." });
+    } finally {
+      setLinkingCustomerId(null);
+    }
+  };
+
   // Reset lookup when active cart changes
   useEffect(() => {
     setLinkedCustomer(null);
-    setShowRegisterForm(false);
+    setLinkMode(null);
+    setCustomerSearchTerm("");
+    setCustomerSearchResults([]);
     setVehicleLookupStatus("idle");
     setRegisterForm({ name: "", phone: "" });
+    setIsCredit(false);
+    setCreditNote("");
   }, [activeCartId]);
 
   // 3. Add to Cart
@@ -668,6 +732,8 @@ const POSPage = () => {
       customer_name: customerName,
       vehicle_number: vehicleNumber,
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
+      payment_status: isCredit ? "CREDIT" : "PAID",
+      ...(isCredit ? { credit_note: creditNote.trim() } : {}),
       items: cart.map((item) => {
         const originalPrice = parseFloat(item.sell_price);
         const discountAmount = parseFloat(item.discountAmount) || 0;
@@ -719,7 +785,7 @@ const POSPage = () => {
 
       setAlertInfo({
         type: "success",
-        message: "Sale completed successfully!",
+        message: isCredit ? "Sale completed and recorded as Credit (Pay Later)." : "Sale completed successfully!",
       });
     } catch (error) {
       console.error("Sale Error:", error);
@@ -739,14 +805,19 @@ const POSPage = () => {
   return saleSuccess ? (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm">
       <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-200/50 p-8 md:p-10 max-w-lg w-full text-center relative overflow-hidden">
-        
+
         {/* Success Icon */}
-        <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-slow ring-8 ring-green-50/50">
-           <CheckCircle className="text-green-500 w-12 h-12" strokeWidth={3} />
+        <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-slow ring-8 ${saleSuccess.payment_status === "CREDIT" ? "bg-amber-50 ring-amber-50/50" : "bg-green-50 ring-green-50/50"
+          }`}>
+          {saleSuccess.payment_status === "CREDIT" ? (
+            <UserCheck className="text-amber-500 w-12 h-12" strokeWidth={3} />
+          ) : (
+            <CheckCircle className="text-green-500 w-12 h-12" strokeWidth={3} />
+          )}
         </div>
-        
+
         <h1 className="text-3xl md:text-4xl font-extrabold text-gray-800 mb-2 tracking-tight">
-          Payment Successful!
+          {saleSuccess.payment_status === "CREDIT" ? "Sale Recorded on Credit" : "Payment Successful!"}
         </h1>
         <p className="text-gray-400 mb-8 font-medium">
           Transaction ID <span className="text-gray-600 font-mono">#{saleSuccess.id.substring(0, 8)}</span>
@@ -754,26 +825,39 @@ const POSPage = () => {
 
         {/* Receipt Summary - Softened */}
         <div className="bg-gray-50/80 rounded-2xl p-6 mb-8 text-left space-y-4">
-           <div className="flex justify-between items-center pb-4 border-b border-gray-100 border-dashed">
-              <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">Total Paid</span>
-              <span className="text-2xl font-black text-gray-800">LKR {parseFloat(saleSuccess.total_amount).toLocaleString()}</span>
-           </div>
-           <div className="space-y-2 pt-2">
-               <div className="flex justify-between items-center text-sm">
-                  <span className="text-gray-500">Customer</span>
-                  <span className="font-bold text-gray-700">{saleSuccess.customer_name}</span>
-               </div>
-               {saleSuccess.vehicle_number && (
-                  <div className="flex justify-between items-center text-sm">
-                     <span className="text-gray-500">Vehicle</span>
-                     <span className="font-bold text-gray-700 flex items-center gap-1.5"><Car size={14} className="text-gray-400"/>{saleSuccess.vehicle_number}</span>
-                  </div>
-               )}
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-gray-500">Items</span>
-                  <span className="font-bold text-gray-700">{saleSuccess.items.length} purchased</span>
-               </div>
-           </div>
+          <div className="flex justify-between items-center pb-4 border-b border-gray-100 border-dashed">
+            <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">
+              {saleSuccess.payment_status === "CREDIT" ? "Amount Due" : "Total Paid"}
+            </span>
+            <span className="text-2xl font-black text-gray-800">LKR {parseFloat(saleSuccess.total_amount).toLocaleString()}</span>
+          </div>
+          <div className="space-y-2 pt-2">
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-gray-500">Customer</span>
+              <span className="font-bold text-gray-700">{saleSuccess.customer_name}</span>
+            </div>
+            {saleSuccess.vehicle_number && (
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-gray-500">Vehicle</span>
+                <span className="font-bold text-gray-700 flex items-center gap-1.5"><Car size={14} className="text-gray-400" />{saleSuccess.vehicle_number}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center text-sm">
+              <span className="text-gray-500">Items</span>
+              <span className="font-bold text-gray-700">{saleSuccess.items.length} purchased</span>
+            </div>
+            {saleSuccess.payment_status === "CREDIT" && (
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-gray-500">Payment</span>
+                <span className="font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full text-xs">Credit (Pay Later)</span>
+              </div>
+            )}
+            {saleSuccess.payment_status === "CREDIT" && saleSuccess.credit_note && (
+              <div className="text-xs text-gray-500 italic bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-1">
+                "{saleSuccess.credit_note}"
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-4">
@@ -849,8 +933,8 @@ const POSPage = () => {
         <div className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0">
           {carts.map((c, index) => {
             const isActive = c.id === activeCartId;
-            const displayName = c.vehicleNumber 
-              ? c.vehicleNumber 
+            const displayName = c.vehicleNumber
+              ? c.vehicleNumber
               : (c.customerName ? c.customerName : `Repair ${index + 1}`);
             const subText = c.vehicleNumber && c.customerName ? c.customerName : "";
 
@@ -858,11 +942,10 @@ const POSPage = () => {
               <div
                 key={c.id}
                 onClick={() => setActiveCartId(c.id)}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 transition-all duration-200 shrink-0 cursor-pointer select-none relative group ${
-                  isActive
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 transition-all duration-200 shrink-0 cursor-pointer select-none relative group ${isActive
                     ? "bg-red-50 border-red-500 text-red-700 shadow-sm"
                     : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300"
-                }`}
+                  }`}
               >
                 <Car size={13} className={isActive ? "text-red-500" : "text-gray-400"} />
                 <div className="flex flex-col text-left">
@@ -876,9 +959,8 @@ const POSPage = () => {
                   )}
                 </div>
                 {c.items.length > 0 && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold leading-none ${
-                    isActive ? "bg-red-200 text-red-800" : "bg-gray-200 text-gray-700"
-                  }`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold leading-none ${isActive ? "bg-red-200 text-red-800" : "bg-gray-200 text-gray-700"
+                    }`}>
                     {c.items.length}
                   </span>
                 )}
@@ -898,7 +980,7 @@ const POSPage = () => {
               </div>
             );
           })}
-          
+
           {/* Add New Cart Button */}
           <button
             onClick={handleAddNewCart}
@@ -912,387 +994,489 @@ const POSPage = () => {
 
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         {/* LEFT SIDE: PRODUCT LIST */}
-      <div
-        className={`w-full md:w-2/3 flex flex-col h-full bg-gray-50 transition-all duration-300 ${
-          mobileView === "cart" ? "hidden md:flex" : "flex"
-        }`}
-      >
-        <div className="p-3 bg-white shadow-sm z-10">
-          <div className="relative">
-            <Search className="absolute left-3 top-3 text-gray-400" size={20} />
-            <input
-              type="text"
-              placeholder="Search part name, number, brand..."
-              className="w-full pl-10 p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white transition-colors focus:ring-2 focus:ring-red-500 outline-none text-base md:text-sm"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-3 pb-24 md:pb-4">
-          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {partsLoading ? (
-               /* Skeleton Loader Grid */
-               Array.from({ length: 12 }).map((_, i) => (
-                 <div key={i} className="bg-white border border-gray-100 rounded-xl p-0 overflow-hidden shadow-sm animate-pulse">
-                   <div className="h-28 bg-gray-200"></div>
-                   <div className="p-3 space-y-2">
-                     <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                     <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-                     <div className="flex justify-between pt-2">
-                       <div className="h-3 bg-gray-200 rounded w-1/3"></div>
-                       <div className="h-4 bg-gray-200 rounded w-1/4"></div>
-                     </div>
-                   </div>
-                 </div>
-               ))
-            ) : (
-              visibleParts.map((part) => (
-                <ProductItem 
-                  key={part.id} 
-                  part={part} 
-                  onAddToCart={addToCart} 
-                  onShowDetails={setSelectedPart}
-                />
-              ))
-            )}
-          </div>
-          
-          {/* Load More Button */}
-          {visibleCount < filteredParts.length && (
-            <div className="mt-6 flex flex-col items-center justify-center pb-8">
-              <p className="text-xs text-gray-400 mb-2 font-medium">
-                Showing {visibleCount} of {filteredParts.length} parts
-              </p>
-              <button
-                onClick={() => setVisibleCount((prev) => prev + 20)}
-                className="group relative bg-white border-2 border-red-50 text-red-600 font-bold py-2.5 px-8 rounded-full hover:bg-red-50 hover:border-red-100 active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
-              >
-                <span>Load More Parts</span>
-                <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-extrabold group-hover:bg-red-200 transition-colors">
-                  +{filteredParts.length - visibleCount}
-                </span>
-                <ChevronUp className="rotate-180 w-4 h-4" />
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* RIGHT SIDE: CART */}
-      <div
-        className={`w-full md:w-1/3 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl z-20 
-          ${mobileView === "products" ? "hidden md:flex" : "flex"}
-      `}
-      >
-        {/* Mobile Header for Cart View */}
-        <div className="md:hidden p-3 bg-white border-b border-gray-100 flex items-center justify-between">
-            <button 
-                onClick={() => setMobileView("products")}
-                className="flex items-center gap-1 text-gray-600 font-medium active:bg-gray-100 px-2 py-1 rounded"
-            >
-                <ArrowLeft size={18}/> Back to Products
-            </button>
-            <h2 className="font-bold text-gray-800">Your Cart</h2>
-            <div className="w-8"></div> {/* Spacer */}
-        </div>
-
-        <div className="hidden md:flex p-4 bg-gray-900 text-white shadow-md z-10 justify-between items-center">
-          <h2 className="text-lg font-bold flex items-center gap-2">
-            <ShoppingCart className="w-5 h-5" /> Current Sale
-          </h2>
-          {cart.length > 0 && (
-            <button
-              onClick={handleClearCartRequest}
-              className="text-xs bg-red-600 hover:bg-red-500 text-white px-2.5 py-1.5 rounded-full flex items-center gap-1 transition"
-            >
-              <Trash2 size={12} /> Clear
-            </button>
-          )}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50/50">
-          {cart.length === 0 ? (
-            <div className="text-center text-gray-400 mt-20 flex flex-col items-center">
-              <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                <ShoppingCart size={32} className="opacity-40" />
-              </div>
-              <p className="text-lg font-semibold text-gray-500">Cart is empty</p>
-              <p className="text-sm">Select items to start a sale</p>
-            </div>
-          ) : (
-            cart.map((item) => {
-              const original = parseFloat(item.sell_price);
-              const discountVal = parseFloat(item.discountAmount) || 0;
-              const final = original - discountVal;
-
-              // Calculate remaining unit profitability based on buy_price
-              const buyPrice = parseFloat(item.buy_price || 0);
-              const currentProfit = final - buyPrice;
-              const currentMargin = final > 0 ? ((currentProfit / final) * 100).toFixed(1) : "0.0";
-              const currentMarkup = buyPrice > 0 ? ((currentProfit / buyPrice) * 100).toFixed(1) : "0.0";
-
-              let profitColorClass = "bg-green-50 text-green-700 border-green-100";
-              let profitText = `Margin: ${currentMargin}% (Markup: ${currentMarkup}%)`;
-
-              if (currentProfit === 0) {
-                profitColorClass = "bg-amber-50 text-amber-700 border-amber-100";
-                profitText = "Break Even (0%)";
-              } else if (currentProfit < 0) {
-                profitColorClass = "bg-red-50 text-red-700 border-red-200 animate-pulse font-bold";
-                profitText = `Loss: Margin: ${currentMargin}%`;
-              }
-
-              const percentValue = item.discountPercentInput !== undefined 
-                ? item.discountPercentInput 
-                : (item.discountAmount ? parseFloat(((item.discountAmount / original) * 100).toFixed(2)).toString() : '');
-
-              return (
-                <div
-                  key={item.id}
-                  className="flex flex-col bg-white p-3 rounded-xl shadow-sm border border-gray-200"
-                >
-                  {/* Row 1: Title, details and remove */}
-                  <div className="flex justify-between items-start mb-2.5">
-                    <div className="flex-1 pr-2">
-                      <h4 className="font-bold text-sm text-gray-800 line-clamp-2">
-                        {item.name}
-                      </h4>
-                      <p className="text-[10px] text-gray-500 font-mono">
-                        {item.part_number} • {item.brand}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => removeFromCart(item.id)}
-                      className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors shrink-0"
-                    >
-                      <XCircle size={18} />
-                    </button>
-                  </div>
-
-                  {/* Row 2: Quantity controls & Final Price */}
-                  <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-gray-100 border-dashed">
-                    {/* Quantity Control */}
-                    <div className="flex items-center bg-gray-100 rounded-lg h-9">
-                      <button
-                        onClick={() => updateQuantity(item.id, -1)}
-                        className="w-9 h-full flex items-center justify-center hover:text-red-600 active:bg-gray-200 rounded-l-lg transition-colors"
-                      >
-                        <Minus size={14} />
-                      </button>
-                      <span className="w-8 text-center text-sm font-bold">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() => updateQuantity(item.id, 1)}
-                        className="w-9 h-full flex items-center justify-center hover:text-green-600 active:bg-gray-200 rounded-r-lg transition-colors"
-                      >
-                        <Plus size={14} />
-                      </button>
-                    </div>
-
-                    {/* Price Display */}
-                    <div className="text-right">
-                      {item.discountAmount > 0 && (
-                        <p className="text-[10px] text-gray-400 line-through">
-                          {original.toLocaleString()}
-                        </p>
-                      )}
-                      <p className={`font-bold text-sm ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
-                        LKR {final.toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Row 3: Discounts Inputs & Profitability badge */}
-                  <div className="mt-2.5 space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-1">
-                        <Tag size={12} className="text-gray-400" />
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Discount</span>
-                      </div>
-                      
-                      <div className="flex items-center gap-2">
-                        {/* Rupee Input */}
-                        <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                          <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
-                          <input
-                            type="number"
-                            min="0"
-                            placeholder="0"
-                            value={item.discountAmount === 0 ? '' : item.discountAmount}
-                            onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
-                            className="w-14 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
-                          />
-                        </div>
-                        
-                        {/* Percentage Input */}
-                        <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            placeholder="0"
-                            value={percentValue}
-                            onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
-                            className="w-10 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
-                          />
-                          <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Profitability Badge */}
-                    <div className="flex items-center justify-between text-[10px] pt-1">
-                      <span className="text-gray-400 font-medium">Remaining Profit:</span>
-                      <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
-                        {profitText}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-          {/* BOTTOM ACTION AREA */}
-        <div className="p-4 bg-white border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-30">
-          
-          {/* Vehicle Number with smart lookup */}
-          <div className="mb-3">
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-              Vehicle No.
-            </label>
+        <div
+          className={`w-full md:w-2/3 flex flex-col h-full bg-gray-50 transition-all duration-300 ${mobileView === "cart" ? "hidden md:flex" : "flex"
+            }`}
+        >
+          <div className="p-3 bg-white shadow-sm z-10">
             <div className="relative">
-              <Car size={15} className="absolute left-2.5 top-3 text-gray-400" />
+              <Search className="absolute left-3 top-3 text-gray-400" size={20} />
               <input
-                value={vehicleNumber}
-                onChange={(e) => handleVehicleNumberChange(e.target.value)}
-                className={`w-full pl-8 pr-8 py-2.5 bg-gray-50 border rounded-lg focus:bg-white outline-none text-base md:text-sm transition-all ${
-                  vehicleLookupStatus === "found"
-                    ? "border-green-400 focus:ring-1 focus:ring-green-400"
-                    : vehicleLookupStatus === "not_found"
-                    ? "border-amber-400 focus:ring-1 focus:ring-amber-400"
-                    : "border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500"
-                }`}
-                placeholder="Type plate number..."
+                type="text"
+                placeholder="Search part name, number, brand..."
+                className="w-full pl-10 p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white transition-colors focus:ring-2 focus:ring-red-500 outline-none text-base md:text-sm"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
               />
-              <div className="absolute right-2.5 top-3">
-                {vehicleLookupStatus === "searching" && <Loader2 size={14} className="text-gray-400 animate-spin" />}
-                {vehicleLookupStatus === "found" && <BadgeCheck size={15} className="text-green-500" />}
-                {vehicleLookupStatus === "not_found" && <UserPlus size={14} className="text-amber-500" />}
-              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3 pb-24 md:pb-4">
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {partsLoading ? (
+                /* Skeleton Loader Grid */
+                Array.from({ length: 12 }).map((_, i) => (
+                  <div key={i} className="bg-white border border-gray-100 rounded-xl p-0 overflow-hidden shadow-sm animate-pulse">
+                    <div className="h-28 bg-gray-200"></div>
+                    <div className="p-3 space-y-2">
+                      <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                      <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                      <div className="flex justify-between pt-2">
+                        <div className="h-3 bg-gray-200 rounded w-1/3"></div>
+                        <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                visibleParts.map((part) => (
+                  <ProductItem
+                    key={part.id}
+                    part={part}
+                    onAddToCart={addToCart}
+                    onShowDetails={setSelectedPart}
+                  />
+                ))
+              )}
             </div>
 
-            {/* Found: show linked customer chip */}
-            {vehicleLookupStatus === "found" && linkedCustomer && (
-              <div className="mt-1.5 flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
-                <User size={12} className="text-green-600 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-green-800 truncate">{linkedCustomer.name}</p>
-                  {linkedCustomer.phone && <p className="text-[10px] text-green-600">{linkedCustomer.phone}</p>}
-                </div>
-                <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">Linked</span>
-              </div>
-            )}
-
-            {/* Not found: show register CTA */}
-            {vehicleLookupStatus === "not_found" && !showRegisterForm && (
-              <div className="mt-1.5 flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered</p>
+            {/* Load More Button */}
+            {visibleCount < filteredParts.length && (
+              <div className="mt-6 flex flex-col items-center justify-center pb-8">
+                <p className="text-xs text-gray-400 mb-2 font-medium">
+                  Showing {visibleCount} of {filteredParts.length} parts
+                </p>
                 <button
-                  onClick={() => { setShowRegisterForm(true); setRegisterForm({ name: "", phone: "" }); }}
-                  className="flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-lg transition-colors"
+                  onClick={() => setVisibleCount((prev) => prev + 20)}
+                  className="group relative bg-white border-2 border-red-50 text-red-600 font-bold py-2.5 px-8 rounded-full hover:bg-red-50 hover:border-red-100 active:scale-95 transition-all shadow-sm hover:shadow-md flex items-center gap-2"
                 >
-                  <UserPlus size={11} /> Register
+                  <span>Load More Parts</span>
+                  <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-extrabold group-hover:bg-red-200 transition-colors">
+                    +{filteredParts.length - visibleCount}
+                  </span>
+                  <ChevronUp className="rotate-180 w-4 h-4" />
                 </button>
               </div>
             )}
+          </div>
+        </div>
 
-            {/* Inline register form */}
-            {showRegisterForm && (
-              <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
-                <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
-                  <UserPlus size={11} /> New Customer
-                </p>
-                <input
-                  type="text"
-                  placeholder="Customer Name *"
-                  value={registerForm.name}
-                  onChange={e => setRegisterForm(p => ({ ...p, name: e.target.value }))}
-                  className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
-                <input
-                  type="text"
-                  placeholder="Phone (optional)"
-                  value={registerForm.phone}
-                  onChange={e => setRegisterForm(p => ({ ...p, phone: e.target.value }))}
-                  className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
-                <div className="flex gap-2">
+        {/* RIGHT SIDE: CART */}
+        <div
+          className={`w-full md:w-1/3 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl z-20 
+          ${mobileView === "products" ? "hidden md:flex" : "flex"}
+      `}
+        >
+          {/* Mobile Header for Cart View */}
+          <div className="md:hidden p-3 bg-white border-b border-gray-100 flex items-center justify-between">
+            <button
+              onClick={() => setMobileView("products")}
+              className="flex items-center gap-1 text-gray-600 font-medium active:bg-gray-100 px-2 py-1 rounded"
+            >
+              <ArrowLeft size={18} /> Back to Products
+            </button>
+            <h2 className="font-bold text-gray-800">Your Cart</h2>
+            <div className="w-8"></div> {/* Spacer */}
+          </div>
+
+          <div className="hidden md:flex p-4 bg-gray-900 text-white shadow-md z-10 justify-between items-center">
+            <h2 className="text-lg font-bold flex items-center gap-2">
+              <ShoppingCart className="w-5 h-5" /> Current Sale
+            </h2>
+            {cart.length > 0 && (
+              <button
+                onClick={handleClearCartRequest}
+                className="text-xs bg-red-600 hover:bg-red-500 text-white px-2.5 py-1.5 rounded-full flex items-center gap-1 transition"
+              >
+                <Trash2 size={12} /> Clear
+              </button>
+            )}
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50/50">
+            {cart.length === 0 ? (
+              <div className="text-center text-gray-400 mt-20 flex flex-col items-center">
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                  <ShoppingCart size={32} className="opacity-40" />
+                </div>
+                <p className="text-lg font-semibold text-gray-500">Cart is empty</p>
+                <p className="text-sm">Select items to start a sale</p>
+              </div>
+            ) : (
+              cart.map((item) => {
+                const original = parseFloat(item.sell_price);
+                const discountVal = parseFloat(item.discountAmount) || 0;
+                const final = original - discountVal;
+
+                // Calculate remaining unit profitability based on buy_price
+                const buyPrice = parseFloat(item.buy_price || 0);
+                const currentProfit = final - buyPrice;
+                const currentMargin = final > 0 ? ((currentProfit / final) * 100).toFixed(1) : "0.0";
+                const currentMarkup = buyPrice > 0 ? ((currentProfit / buyPrice) * 100).toFixed(1) : "0.0";
+
+                let profitColorClass = "bg-green-50 text-green-700 border-green-100";
+                let profitText = `Margin: ${currentMargin}% (Markup: ${currentMarkup}%)`;
+
+                if (currentProfit === 0) {
+                  profitColorClass = "bg-amber-50 text-amber-700 border-amber-100";
+                  profitText = "Break Even (0%)";
+                } else if (currentProfit < 0) {
+                  profitColorClass = "bg-red-50 text-red-700 border-red-200 animate-pulse font-bold";
+                  profitText = `Loss: Margin: ${currentMargin}%`;
+                }
+
+                const percentValue = item.discountPercentInput !== undefined
+                  ? item.discountPercentInput
+                  : (item.discountAmount ? parseFloat(((item.discountAmount / original) * 100).toFixed(2)).toString() : '');
+
+                return (
+                  <div
+                    key={item.id}
+                    className="flex flex-col bg-white p-3 rounded-xl shadow-sm border border-gray-200"
+                  >
+                    {/* Row 1: Title, details and remove */}
+                    <div className="flex justify-between items-start mb-2.5">
+                      <div className="flex-1 pr-2">
+                        <h4 className="font-bold text-sm text-gray-800 line-clamp-2">
+                          {item.name}
+                        </h4>
+                        <p className="text-[10px] text-gray-500 font-mono">
+                          {item.part_number} • {item.brand}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => removeFromCart(item.id)}
+                        className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors shrink-0"
+                      >
+                        <XCircle size={18} />
+                      </button>
+                    </div>
+
+                    {/* Row 2: Quantity controls & Final Price */}
+                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-gray-100 border-dashed">
+                      {/* Quantity Control */}
+                      <div className="flex items-center bg-gray-100 rounded-lg h-9">
+                        <button
+                          onClick={() => updateQuantity(item.id, -1)}
+                          className="w-9 h-full flex items-center justify-center hover:text-red-600 active:bg-gray-200 rounded-l-lg transition-colors"
+                        >
+                          <Minus size={14} />
+                        </button>
+                        <span className="w-8 text-center text-sm font-bold">
+                          {item.quantity}
+                        </span>
+                        <button
+                          onClick={() => updateQuantity(item.id, 1)}
+                          className="w-9 h-full flex items-center justify-center hover:text-green-600 active:bg-gray-200 rounded-r-lg transition-colors"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+
+                      {/* Price Display */}
+                      <div className="text-right">
+                        {item.discountAmount > 0 && (
+                          <p className="text-[10px] text-gray-400 line-through">
+                            {original.toLocaleString()}
+                          </p>
+                        )}
+                        <p className={`font-bold text-sm ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
+                          LKR {final.toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Row 3: Discounts Inputs & Profitability badge */}
+                    <div className="mt-2.5 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1">
+                          <Tag size={12} className="text-gray-400" />
+                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Discount</span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {/* Rupee Input */}
+                          <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                            <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="0"
+                              value={item.discountAmount === 0 ? '' : item.discountAmount}
+                              onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
+                              className="w-14 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
+                            />
+                          </div>
+
+                          {/* Percentage Input */}
+                          <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              placeholder="0"
+                              value={percentValue}
+                              onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
+                              className="w-10 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
+                            />
+                            <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Profitability Badge */}
+                      <div className="flex items-center justify-between text-[10px] pt-1">
+                        <span className="text-gray-400 font-medium">Remaining Profit:</span>
+                        <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
+                          {profitText}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* BOTTOM ACTION AREA */}
+          <div className="shrink-0 bg-white border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-30 flex flex-col">
+
+            {/* Scrollable: Vehicle + Customer + lookup panels (capped so Total/Checkout stay pinned) */}
+            <div className="p-3 pb-2 overflow-y-auto max-h-[38vh]">
+
+              {/* Vehicle No. & Customer Name side-by-side to save vertical space */}
+              <div className="flex gap-2.5">
+                {/* Vehicle Number with smart lookup */}
+                <div className="flex-1 min-w-0">
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                    Vehicle No.
+                  </label>
+                  <div className="relative">
+                    <Car size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={vehicleNumber}
+                      onChange={(e) => handleVehicleNumberChange(e.target.value)}
+                      className={`w-full pl-7 pr-7 py-2 bg-gray-50 border rounded-lg focus:bg-white outline-none text-sm transition-all ${vehicleLookupStatus === "found"
+                          ? "border-green-400 focus:ring-1 focus:ring-green-400"
+                          : vehicleLookupStatus === "not_found"
+                            ? "border-amber-400 focus:ring-1 focus:ring-amber-400"
+                            : "border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                        }`}
+                      placeholder="Plate number..."
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                      {vehicleLookupStatus === "searching" && <Loader2 size={13} className="text-gray-400 animate-spin" />}
+                      {vehicleLookupStatus === "found" && <BadgeCheck size={14} className="text-green-500" />}
+                      {vehicleLookupStatus === "not_found" && <UserPlus size={13} className="text-amber-500" />}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Customer Name — hidden once linked, since the chip below already shows the name */}
+                {!(vehicleLookupStatus === "found" && linkedCustomer) && (
+                  <div className="flex-1 min-w-0">
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                      Customer Name <span className="text-red-400">*</span>
+                    </label>
+                    <div className="relative">
+                      <User size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        value={customerName}
+                        onChange={(e) => handleCustomerNameChange(e.target.value)}
+                        className="w-full pl-7 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm transition-all"
+                        placeholder="Required"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Found: show linked customer chip (replaces the Customer Name field above) */}
+              {vehicleLookupStatus === "found" && linkedCustomer && (
+                <div className="mt-2 flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
+                  <User size={12} className="text-green-600 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-green-800 truncate">{linkedCustomer.name}</p>
+                    {linkedCustomer.phone && <p className="text-[10px] text-green-600">{linkedCustomer.phone}</p>}
+                  </div>
+                  <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">Linked</span>
+                </div>
+              )}
+
+              {/* Not found: show New vs Existing customer choice */}
+              {vehicleLookupStatus === "not_found" && !linkMode && (
+                <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 space-y-1.5">
+                  <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered</p>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => { setLinkMode("new"); setRegisterForm({ name: "", phone: "" }); }}
+                      className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-lg transition-colors"
+                    >
+                      <UserPlus size={11} /> New Customer
+                    </button>
+                    <button
+                      onClick={() => { setLinkMode("existing"); setCustomerSearchTerm(""); setCustomerSearchResults([]); }}
+                      className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded-lg transition-colors"
+                    >
+                      <UserCheck size={11} /> Existing Customer
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline register form (New Customer) */}
+              {linkMode === "new" && (
+                <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
+                  <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
+                    <UserPlus size={11} /> New Customer
+                  </p>
+                  <input
+                    type="text"
+                    placeholder="Customer Name *"
+                    value={registerForm.name}
+                    onChange={e => setRegisterForm(p => ({ ...p, name: e.target.value }))}
+                    className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Phone (optional)"
+                    value={registerForm.phone}
+                    onChange={e => setRegisterForm(p => ({ ...p, phone: e.target.value }))}
+                    className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setLinkMode(null)}
+                      className="flex-1 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleRegisterCustomer}
+                      disabled={registerLoading}
+                      className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {registerLoading ? "Saving..." : "Save & Link"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Inline existing customer search & select */}
+              {linkMode === "existing" && (
+                <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
+                  <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
+                    <UserCheck size={11} /> Link Existing Customer
+                  </p>
+                  <div className="relative">
+                    <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400" />
+                    <input
+                      type="text"
+                      autoFocus
+                      placeholder="Search by name or phone..."
+                      value={customerSearchTerm}
+                      onChange={e => setCustomerSearchTerm(e.target.value)}
+                      className="w-full pl-7 pr-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                  </div>
+
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {customerSearchLoading ? (
+                      <p className="text-[11px] text-gray-400 text-center py-2 flex items-center justify-center gap-1">
+                        <Loader2 size={12} className="animate-spin" /> Searching...
+                      </p>
+                    ) : customerSearchTerm.trim() && customerSearchResults.length === 0 ? (
+                      <p className="text-[11px] text-gray-400 text-center py-2">No customers found.</p>
+                    ) : (
+                      customerSearchResults.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => handleLinkExistingCustomer(c)}
+                          disabled={linkingCustomerId === c.id}
+                          className="w-full flex items-center justify-between gap-2 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50/60 rounded-lg px-2.5 py-1.5 transition-colors disabled:opacity-60 text-left"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-gray-800 truncate">{c.name}</p>
+                            {c.phone && <p className="text-[10px] text-gray-500">{c.phone}</p>}
+                          </div>
+                          <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full shrink-0">
+                            {linkingCustomerId === c.id ? "Linking..." : "Select"}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+
                   <button
-                    onClick={() => setShowRegisterForm(false)}
-                    className="flex-1 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                    onClick={() => setLinkMode(null)}
+                    className="w-full py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
                   >
                     Cancel
                   </button>
-                  <button
-                    onClick={handleRegisterCustomer}
-                    disabled={registerLoading}
-                    className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
-                  >
-                    {registerLoading ? "Saving..." : "Save & Link"}
-                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Pinned: Total + Checkout (always visible regardless of lookup panel state) */}
+            <div className="px-3 pt-2 pb-3 border-t border-gray-100">
+
+              {/* Credit Sale Toggle */}
+              <label className="flex items-center justify-between gap-2 mb-2 cursor-pointer select-none">
+                <span className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
+                  <UserCheck size={13} className={isCredit ? "text-amber-600" : "text-gray-400"} />
+                  Sell on Credit
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsCredit((v) => !v)}
+                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${isCredit ? "bg-amber-500" : "bg-gray-300"}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${isCredit ? "translate-x-4" : ""}`} />
+                </button>
+              </label>
+
+              {isCredit && (
+                <textarea
+                  value={creditNote}
+                  onChange={(e) => setCreditNote(e.target.value)}
+                  placeholder="Credit note (optional) — e.g. will pay by Friday"
+                  rows={2}
+                  className="w-full mb-2 px-2.5 py-2 text-xs bg-amber-50 border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400 resize-none placeholder-amber-400/70"
+                />
+              )}
+
+              <div className="flex justify-between items-end mb-2.5">
+                <span className="text-sm font-medium text-gray-500">{isCredit ? "Amount Due" : "Total Amount"}</span>
+                <div className="text-right">
+                  <span className="text-2xl font-bold text-gray-900 tracking-tight">
+                    <span className="text-base text-gray-400 font-normal mr-1">LKR</span>
+                    {totalAmount.toLocaleString()}
+                  </span>
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Customer Name */}
-          <div className="mb-4">
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-              Customer Name <span className="text-red-400">*</span>
-            </label>
-            <div className="relative">
-              <User size={15} className="absolute left-2.5 top-3 text-gray-400" />
-              <input
-                value={customerName}
-                onChange={(e) => handleCustomerNameChange(e.target.value)}
-                className="w-full pl-8 p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
-                placeholder="Required"
-              />
+              <button
+                onClick={handleCheckout}
+                disabled={loading || cart.length === 0}
+                className={`w-full py-3.5 rounded-xl text-white font-bold text-lg shadow-lg transition-all flex justify-center items-center gap-2
+                  ${loading
+                    ? "bg-gray-300 cursor-not-allowed shadow-none"
+                    : isCredit
+                      ? "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-[0.98] shadow-amber-200"
+                      : "bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98] shadow-red-200"
+                  }`}
+              >
+                {loading ? (
+                  <span className="flex items-center gap-2"><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Processing...</span>
+                ) : isCredit ? (
+                  <>Complete Sale (Credit) <UserCheck size={20} /></>
+                ) : (
+                  <>Complete Sale <CheckCircle size={20} /></>
+                )}
+              </button>
             </div>
           </div>
-
-          <div className="flex justify-between items-end mb-4">
-            <span className="text-sm font-medium text-gray-500">Total Amount</span>
-            <div className="text-right">
-                <span className="text-3xl font-bold text-gray-900 tracking-tight">
-                <span className="text-lg text-gray-400 font-normal mr-1">LKR</span>
-                {totalAmount.toLocaleString()}
-                </span>
-            </div>
-          </div>
-          
-          <button
-            onClick={handleCheckout}
-            disabled={loading || cart.length === 0}
-            className={`w-full py-4 rounded-xl text-white font-bold text-lg shadow-lg shadow-red-200 transition-all flex justify-center items-center gap-2 
-                ${loading 
-                    ? "bg-gray-300 cursor-not-allowed" 
-                    : "bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98]"
-                }`}
-          >
-            {loading ? (
-                <span className="flex items-center gap-2"><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> Processing...</span>
-            ) : (
-                <>Complete Sale <CheckCircle size={20}/></>
-            )}
-          </button>
         </div>
-      </div>
 
       </div>
 
@@ -1300,10 +1484,10 @@ const POSPage = () => {
       {mobileView === "products" && (
         <div className="md:hidden fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-md border-t border-gray-200 p-3 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] z-40 pb-safe">
           <div className="flex gap-3">
-             <div className="flex-1 flex flex-col justify-center px-2">
-                <span className="text-xs text-gray-500 font-medium">{totalItems} items</span>
-                <span className="text-lg font-bold text-gray-900">LKR {totalAmount.toLocaleString()}</span>
-             </div>
+            <div className="flex-1 flex flex-col justify-center px-2">
+              <span className="text-xs text-gray-500 font-medium">{totalItems} items</span>
+              <span className="text-lg font-bold text-gray-900">LKR {totalAmount.toLocaleString()}</span>
+            </div>
             <button
               onClick={() => setMobileView("cart")}
               className="flex-1 bg-gray-900 text-white px-4 py-3 rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"

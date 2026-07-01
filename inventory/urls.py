@@ -35,6 +35,7 @@ urlpatterns = [
     path('sales/', views.get_all_sales, name='get_all_sales'),
     path('sales/<uuid:pk>/update/', views.update_sale, name='update_sale'),
     path('sales/<uuid:pk>/cancel/', views.cancel_sale, name='cancel_sale'),
+    path('sales/<uuid:pk>/mark-paid/', views.mark_sale_paid, name='mark_sale_paid'),
 
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),

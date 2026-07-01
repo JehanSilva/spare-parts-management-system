@@ -87,6 +87,10 @@ class Sale(models.Model):
         ('COMPLETED', 'Completed'),
         ('CANCELLED', 'Cancelled'),
     ]
+    PAYMENT_STATUS_CHOICES = [
+        ('PAID', 'Paid'),
+        ('CREDIT', 'Credit (Pay Later)'),
+    ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey('Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     customer_name = models.CharField(max_length=100)
@@ -95,6 +99,9 @@ class Sale(models.Model):
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='COMPLETED')
     cancel_reason = models.TextField(blank=True, null=True, help_text="Reason why this sale was cancelled")
+    payment_status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default='PAID')
+    credit_note = models.TextField(blank=True, null=True, help_text="Note about the credit sale, e.g. when the customer will pay")
+    credit_settled_at = models.DateTimeField(null=True, blank=True, help_text="When this credit sale was marked as received")
 
     def __str__(self):
         return f"Sale {str(self.id)[:8]} - {self.customer_name} ({self.status})"

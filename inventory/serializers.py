@@ -102,7 +102,11 @@ class SaleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Sale
-        fields = ['id', 'customer', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items', 'status', 'cancel_reason']
+        fields = [
+            'id', 'customer', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items',
+            'status', 'cancel_reason', 'payment_status', 'credit_note', 'credit_settled_at',
+        ]
+        read_only_fields = ['credit_settled_at']
 
     def create(self, validated_data):
         """

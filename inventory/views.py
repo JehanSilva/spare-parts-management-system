@@ -606,7 +606,13 @@ def create_sale(request):
     data = request.data
     customer_name = data.get('customer_name')
     vehicle_number = data.get('vehicle_number', '')
+    customer_id = data.get('customer') or None
     items_data = data.get('items', [])
+
+    payment_status = data.get('payment_status', 'PAID')
+    if payment_status not in ('PAID', 'CREDIT'):
+        payment_status = 'PAID'
+    credit_note = data.get('credit_note', '') if payment_status == 'CREDIT' else ''
 
     if not items_data:
         return Response({"error": "No items in sale"}, status=status.HTTP_400_BAD_REQUEST)
@@ -638,7 +644,10 @@ def create_sale(request):
     sale = Sale.objects.create(
         customer_name=customer_name,
         vehicle_number=vehicle_number,
-        total_amount=total_amount
+        customer_id=customer_id,
+        total_amount=total_amount,
+        payment_status=payment_status,
+        credit_note=credit_note,
     )
 
     # 4. Process Items (Now safe to deduct)
@@ -711,7 +720,23 @@ def cancel_sale(request, pk):
     sale.cancel_reason = cancel_reason
     sale.status = 'CANCELLED'
     sale.save()
-    
+
+    return Response(SaleSerializer(sale).data)
+
+@api_view(['POST'])
+def mark_sale_paid(request, pk):
+    """
+    Mark a credit (pay-later) sale as received/settled.
+    """
+    sale = get_object_or_404(Sale, pk=pk)
+
+    if sale.payment_status != 'CREDIT':
+        return Response({"error": "This sale is not a pending credit sale."}, status=status.HTTP_400_BAD_REQUEST)
+
+    sale.payment_status = 'PAID'
+    sale.credit_settled_at = timezone.now()
+    sale.save()
+
     return Response(SaleSerializer(sale).data)
 
 # --- REPORTING VIEW ---

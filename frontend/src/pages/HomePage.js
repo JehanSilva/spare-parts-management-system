@@ -16,6 +16,8 @@ import {
   ArrowRight,
   FileText,
   TrendingDown,
+  User,
+  History,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -135,6 +137,14 @@ const HomePage = () => {
             desc="Manage distributor relationships."
           />
           <QuickActionCard
+            to="/customers"
+            title="Customers"
+            icon={User}
+            colorClass="text-teal-600 bg-teal-100"
+            gradient="from-teal-400 to-teal-600"
+            desc="Manage customer profiles & their vehicles."
+          />
+          <QuickActionCard
             to="/vehicles"
             title="Vehicles"
             icon={Car}
@@ -149,6 +159,14 @@ const HomePage = () => {
             colorClass="text-indigo-600 bg-indigo-100"
             gradient="from-indigo-400 to-indigo-600"
             desc="End-of-day sales, revenue & PDF export."
+          />
+          <QuickActionCard
+            to="/sales-history"
+            title="Sales History"
+            icon={History}
+            colorClass="text-pink-600 bg-pink-100"
+            gradient="from-pink-400 to-pink-600"
+            desc="Browse past invoices & transaction records."
           />
           <QuickActionCard
             to="/employees"

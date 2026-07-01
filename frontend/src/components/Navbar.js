@@ -10,8 +10,6 @@ import {
   X,
   FileText,
   LogOut,
-  Users,
-  User,
 } from "lucide-react";
 import logoImg from "../assets/logo.png";
 import { logoutUser } from "../services/api";
@@ -32,10 +30,8 @@ const Navbar = () => {
     { path: "/", label: "Home", icon: Home },
     { path: "/pos", label: "POS", icon: ShoppingCart },
     { path: "/inventory", label: "Inventory", icon: Package },
-    { path: "/customers", label: "Customers", icon: User },
     { path: "/suppliers", label: "Suppliers", icon: Truck },
     { path: "/vehicles", label: "Vehicles", icon: Car },
-    { path: "/employees", label: "Employees", icon: Users },
     { path: "/sales-history", label: "Sales History", icon: FileText },
   ];
 

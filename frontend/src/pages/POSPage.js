@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
-import { createSale, fetchActiveCarts, syncActiveCarts } from "../services/api";
+import { createSale, fetchActiveCarts, syncActiveCarts, lookupCustomerByVehicle, createCustomer, addVehicleToCustomer } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
@@ -22,6 +22,10 @@ import {
   XCircle,
   Tag,
   RefreshCw,
+  User,
+  UserPlus,
+  BadgeCheck,
+  Loader2,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -299,6 +303,14 @@ const POSPage = () => {
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // --- Vehicle Lookup State ---
+  const [vehicleLookupStatus, setVehicleLookupStatus] = useState("idle"); // idle | searching | found | not_found
+  const [linkedCustomer, setLinkedCustomer] = useState(null); // { id, name, phone, ... }
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [registerForm, setRegisterForm] = useState({ name: "", phone: "" });
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const vehicleLookupTimer = useRef(null);
+
   // Print Ref
   const receiptRef = useRef();
   const handlePrint = useReactToPrint({
@@ -383,10 +395,79 @@ const POSPage = () => {
   };
 
   const handleVehicleNumberChange = (veh) => {
+    const upperVeh = veh.toUpperCase();
     setCarts((prev) =>
-      prev.map((c) => (c.id === activeCartId ? { ...c, vehicleNumber: veh } : c))
+      prev.map((c) => (c.id === activeCartId ? { ...c, vehicleNumber: upperVeh } : c))
     );
+    // Reset lookup state
+    setLinkedCustomer(null);
+    setShowRegisterForm(false);
+    setVehicleLookupStatus("idle");
+
+    // Debounce vehicle number lookup
+    if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
+    if (upperVeh.length >= 3) {
+      setVehicleLookupStatus("searching");
+      vehicleLookupTimer.current = setTimeout(async () => {
+        try {
+          const result = await lookupCustomerByVehicle(upperVeh);
+          if (result.found) {
+            setLinkedCustomer(result.customer);
+            setVehicleLookupStatus("found");
+            // Auto-fill customer name
+            setCarts((prev) =>
+              prev.map((c) =>
+                c.id === activeCartId ? { ...c, customerName: result.customer.name } : c
+              )
+            );
+          } else {
+            setVehicleLookupStatus("not_found");
+          }
+        } catch {
+          setVehicleLookupStatus("idle");
+        }
+      }, 600);
+    }
   };
+
+  // Register new customer + vehicle from POS
+  const handleRegisterCustomer = async () => {
+    if (!registerForm.name.trim()) {
+      setAlertInfo({ type: "error", message: "Please enter customer name." });
+      return;
+    }
+    setRegisterLoading(true);
+    try {
+      // 1. Create customer
+      const newCustomer = await createCustomer({ name: registerForm.name, phone: registerForm.phone });
+      // 2. Add vehicle to customer
+      if (vehicleNumber.trim()) {
+        await addVehicleToCustomer(newCustomer.id, { vehicle_number: vehicleNumber.trim() });
+      }
+      // 3. Link to cart
+      setLinkedCustomer(newCustomer);
+      setVehicleLookupStatus("found");
+      setCarts((prev) =>
+        prev.map((c) =>
+          c.id === activeCartId ? { ...c, customerName: newCustomer.name } : c
+        )
+      );
+      setShowRegisterForm(false);
+      setAlertInfo({ type: "success", message: `${newCustomer.name} registered and linked!` });
+    } catch (err) {
+      setAlertInfo({ type: "error", message: err.response?.data?.name?.[0] || "Failed to register customer." });
+    } finally {
+      setRegisterLoading(false);
+    }
+  };
+
+  // Reset lookup when active cart changes
+  useEffect(() => {
+    setLinkedCustomer(null);
+    setShowRegisterForm(false);
+    setVehicleLookupStatus("idle");
+    setRegisterForm({ name: "", phone: "" });
+  }, [activeCartId]);
 
   // 3. Add to Cart
   const addToCart = useCallback((part) => {
@@ -586,6 +667,7 @@ const POSPage = () => {
     const salePayload = {
       customer_name: customerName,
       vehicle_number: vehicleNumber,
+      ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
       items: cart.map((item) => {
         const originalPrice = parseFloat(item.sell_price);
         const discountAmount = parseFloat(item.discountAmount) || 0;
@@ -1075,29 +1157,111 @@ const POSPage = () => {
           )}
         </div>
 
-        {/* BOTTOM ACTION AREA */}
+          {/* BOTTOM ACTION AREA */}
         <div className="p-4 bg-white border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-30">
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div>
-              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                Customer Name
-              </label>
-              <input
-                value={customerName}
-                onChange={(e) => handleCustomerNameChange(e.target.value)}
-                className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
-                placeholder="Required"
-              />
-            </div>
-            <div>
-              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                Vehicle No.
-              </label>
+          
+          {/* Vehicle Number with smart lookup */}
+          <div className="mb-3">
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Vehicle No.
+            </label>
+            <div className="relative">
+              <Car size={15} className="absolute left-2.5 top-3 text-gray-400" />
               <input
                 value={vehicleNumber}
                 onChange={(e) => handleVehicleNumberChange(e.target.value)}
-                className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
-                placeholder="Optional"
+                className={`w-full pl-8 pr-8 py-2.5 bg-gray-50 border rounded-lg focus:bg-white outline-none text-base md:text-sm transition-all ${
+                  vehicleLookupStatus === "found"
+                    ? "border-green-400 focus:ring-1 focus:ring-green-400"
+                    : vehicleLookupStatus === "not_found"
+                    ? "border-amber-400 focus:ring-1 focus:ring-amber-400"
+                    : "border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                }`}
+                placeholder="Type plate number..."
+              />
+              <div className="absolute right-2.5 top-3">
+                {vehicleLookupStatus === "searching" && <Loader2 size={14} className="text-gray-400 animate-spin" />}
+                {vehicleLookupStatus === "found" && <BadgeCheck size={15} className="text-green-500" />}
+                {vehicleLookupStatus === "not_found" && <UserPlus size={14} className="text-amber-500" />}
+              </div>
+            </div>
+
+            {/* Found: show linked customer chip */}
+            {vehicleLookupStatus === "found" && linkedCustomer && (
+              <div className="mt-1.5 flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
+                <User size={12} className="text-green-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-green-800 truncate">{linkedCustomer.name}</p>
+                  {linkedCustomer.phone && <p className="text-[10px] text-green-600">{linkedCustomer.phone}</p>}
+                </div>
+                <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">Linked</span>
+              </div>
+            )}
+
+            {/* Not found: show register CTA */}
+            {vehicleLookupStatus === "not_found" && !showRegisterForm && (
+              <div className="mt-1.5 flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered</p>
+                <button
+                  onClick={() => { setShowRegisterForm(true); setRegisterForm({ name: "", phone: "" }); }}
+                  className="flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-lg transition-colors"
+                >
+                  <UserPlus size={11} /> Register
+                </button>
+              </div>
+            )}
+
+            {/* Inline register form */}
+            {showRegisterForm && (
+              <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
+                <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
+                  <UserPlus size={11} /> New Customer
+                </p>
+                <input
+                  type="text"
+                  placeholder="Customer Name *"
+                  value={registerForm.name}
+                  onChange={e => setRegisterForm(p => ({ ...p, name: e.target.value }))}
+                  className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Phone (optional)"
+                  value={registerForm.phone}
+                  onChange={e => setRegisterForm(p => ({ ...p, phone: e.target.value }))}
+                  className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowRegisterForm(false)}
+                    className="flex-1 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRegisterCustomer}
+                    disabled={registerLoading}
+                    className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    {registerLoading ? "Saving..." : "Save & Link"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Customer Name */}
+          <div className="mb-4">
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Customer Name <span className="text-red-400">*</span>
+            </label>
+            <div className="relative">
+              <User size={15} className="absolute left-2.5 top-3 text-gray-400" />
+              <input
+                value={customerName}
+                onChange={(e) => handleCustomerNameChange(e.target.value)}
+                className="w-full pl-8 p-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-base md:text-sm transition-all"
+                placeholder="Required"
               />
             </div>
           </div>

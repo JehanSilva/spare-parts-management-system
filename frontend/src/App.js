@@ -10,6 +10,7 @@ import HomePage from "./pages/HomePage";
 import InventoryPage from "./pages/InventoryPage";
 import VehiclePage from "./pages/VehiclePage";
 import SupplierPage from "./pages/SupplierPage";
+import CustomerPage from "./pages/CustomerPage";
 import POSPage from "./pages/POSPage";
 import SalesHistoryPage from "./pages/SalesHistoryPage";
 import LoginPage from "./pages/LoginPage";
@@ -74,6 +75,14 @@ function App() {
             element={
               <PrivateRoute>
                 <SupplierPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/customers"
+            element={
+              <PrivateRoute>
+                <CustomerPage />
               </PrivateRoute>
             }
           />

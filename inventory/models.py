@@ -45,12 +45,50 @@ class Part(models.Model):
     def __str__(self):
         return f"{self.name} ({self.brand})"
 
+class Customer(models.Model):
+    """
+    Represents a real-world customer who brings their vehicle in for service.
+    A customer can have multiple registered vehicles (CustomerVehicle).
+    """
+    name = models.CharField(max_length=100)
+    phone = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+    address = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class CustomerVehicle(models.Model):
+    """
+    A specific registered vehicle (by plate number) owned by a Customer.
+    This is NOT the Vehicle make/model catalog used for parts compatibility.
+    """
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='vehicles')
+    vehicle_number = models.CharField(max_length=20, unique=True, help_text="Vehicle registration plate number")
+    make = models.CharField(max_length=50, blank=True, help_text="e.g., Toyota")
+    model = models.CharField(max_length=50, blank=True, help_text="e.g., Corolla")
+    year = models.PositiveIntegerField(null=True, blank=True)
+    color = models.CharField(max_length=50, blank=True, help_text="e.g., Pearl White")
+    current_mileage = models.PositiveIntegerField(null=True, blank=True, help_text="Current odometer reading in km")
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.vehicle_number} ({self.customer.name})"
+
+
+
 class Sale(models.Model):
     STATUS_CHOICES = [
         ('COMPLETED', 'Completed'),
         ('CANCELLED', 'Cancelled'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey('Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     customer_name = models.CharField(max_length=100)
     vehicle_number = models.CharField(max_length=20, blank=True, null=True, help_text="Optional vehicle reg number")
     created_at = models.DateTimeField(auto_now_add=True)

@@ -6,16 +6,124 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer
 from decimal import Decimal
-from .models import Vehicle # <--- Make sure Vehicle is imported at the top!
-from .serializers import VehicleSerializer # <--- Make sure this is imported too!
-from django.shortcuts import get_object_or_404 # Ensure this is imported        
+from .models import Vehicle
+from .serializers import VehicleSerializer
+from django.shortcuts import get_object_or_404
 from django.db.models import Sum, F
-from .models import Sale # Ensure Sale is imported
 from django.db import transaction
 from django.db.models import Q
+
+# --- CUSTOMER VIEWS ---
+@api_view(['GET'])
+def get_customers(request):
+    """List all customers, optionally search by name or phone."""
+    search = request.query_params.get('search', '').strip()
+    qs = Customer.objects.prefetch_related('vehicles').order_by('name')
+    if search:
+        qs = qs.filter(Q(name__icontains=search) | Q(phone__icontains=search))
+    serializer = CustomerSerializer(qs, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['POST'])
+def add_customer(request):
+    """Create a new customer. Vehicles can be added separately."""
+    serializer = CustomerSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PUT'])
+def update_customer(request, pk):
+    """Update a customer's details."""
+    customer = get_object_or_404(Customer, pk=pk)
+    serializer = CustomerSerializer(customer, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+def delete_customer(request, pk):
+    """Delete a customer and their vehicles."""
+    customer = get_object_or_404(Customer, pk=pk)
+    customer.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+def lookup_customer_by_vehicle(request):
+    """
+    GET /customers/lookup/?vehicle_number=ABC123
+    Returns the customer linked to that vehicle number, or 404 if not found.
+    """
+    vehicle_number = request.query_params.get('vehicle_number', '').strip().upper()
+    if not vehicle_number:
+        return Response({'error': 'vehicle_number query param is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        customer_vehicle = CustomerVehicle.objects.select_related('customer').prefetch_related('customer__vehicles').get(
+            vehicle_number__iexact=vehicle_number
+        )
+        customer = customer_vehicle.customer
+        serializer = CustomerSerializer(customer)
+        return Response({'found': True, 'customer': serializer.data, 'vehicle': CustomerVehicleSerializer(customer_vehicle).data})
+    except CustomerVehicle.DoesNotExist:
+        return Response({'found': False}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+def add_vehicle_to_customer(request, pk):
+    """
+    POST /customers/<pk>/vehicles/add/
+    Adds a new vehicle registration to an existing customer.
+    """
+    customer = get_object_or_404(Customer, pk=pk)
+    data = {**request.data, 'customer': customer.pk}
+    # Normalize vehicle number to uppercase
+    if 'vehicle_number' in data:
+        data['vehicle_number'] = data['vehicle_number'].strip().upper()
+    serializer = CustomerVehicleSerializer(data=data)
+    if serializer.is_valid():
+        serializer.save()
+        # Return full customer object with updated vehicles list
+        return Response(CustomerSerializer(customer).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+def delete_customer_vehicle(request, vehicle_pk):
+    """
+    DELETE /customers/vehicles/<vehicle_pk>/delete/
+    Removes a specific vehicle registration.
+    """
+    vehicle = get_object_or_404(CustomerVehicle, pk=vehicle_pk)
+    vehicle.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['PATCH'])
+def update_customer_vehicle(request, vehicle_pk):
+    """
+    PATCH /customers/vehicles/<vehicle_pk>/update/
+    Updates vehicle details (make, model, year, color, mileage, notes).
+    vehicle_number cannot be changed to maintain data integrity.
+    """
+    vehicle = get_object_or_404(CustomerVehicle, pk=vehicle_pk)
+    # Prevent vehicle_number from being changed via this endpoint
+    data = {k: v for k, v in request.data.items() if k != 'vehicle_number'}
+    serializer = CustomerVehicleSerializer(vehicle, data=data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 # --- VEHICLE VIEWS ---
 @api_view(['PUT'])

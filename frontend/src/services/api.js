@@ -131,4 +131,18 @@ export const generatePayrollDrafts = async (data) => (await API.post("/payroll/g
 export const updatePayroll = async (id, data) => (await API.put(`/payroll/${id}/update/`, data)).data;
 export const payPayroll = async (id) => (await API.post(`/payroll/${id}/pay/`)).data;
 
+// --- CUSTOMER SERVICES ---
+export const fetchCustomers = async (search = '') => (await API.get("/customers/", { params: search ? { search } : {} })).data;
+export const createCustomer = async (data) => (await API.post("/customers/add/", data)).data;
+export const updateCustomer = async (id, data) => (await API.put(`/customers/${id}/update/`, data)).data;
+export const deleteCustomer = async (id) => await API.delete(`/customers/${id}/delete/`);
+export const lookupCustomerByVehicle = async (vehicleNumber) =>
+  (await API.get("/customers/lookup/", { params: { vehicle_number: vehicleNumber } })).data;
+export const addVehicleToCustomer = async (customerId, data) =>
+  (await API.post(`/customers/${customerId}/vehicles/add/`, data)).data;
+export const deleteCustomerVehicle = async (vehicleId) =>
+  await API.delete(`/customers/vehicles/${vehicleId}/delete/`);
+export const updateCustomerVehicle = async (vehicleId, data) =>
+  (await API.patch(`/customers/vehicles/${vehicleId}/update/`, data)).data;
+
 export default API;

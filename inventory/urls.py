@@ -2,6 +2,16 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    # Customers
+    path('customers/', views.get_customers, name='get_customers'),
+    path('customers/add/', views.add_customer, name='add_customer'),
+    path('customers/lookup/', views.lookup_customer_by_vehicle, name='lookup_customer_by_vehicle'),
+    path('customers/<int:pk>/update/', views.update_customer, name='update_customer'),
+    path('customers/<int:pk>/delete/', views.delete_customer, name='delete_customer'),
+    path('customers/<int:pk>/vehicles/add/', views.add_vehicle_to_customer, name='add_vehicle_to_customer'),
+    path('customers/vehicles/<int:vehicle_pk>/delete/', views.delete_customer_vehicle, name='delete_customer_vehicle'),
+    path('customers/vehicles/<int:vehicle_pk>/update/', views.update_customer_vehicle, name='update_customer_vehicle'),
+
     # Suppliers
     path('suppliers/', views.get_suppliers, name='get_suppliers'),      # GET only
     path('suppliers/add/', views.add_supplier, name='add_supplier'),    # POST only

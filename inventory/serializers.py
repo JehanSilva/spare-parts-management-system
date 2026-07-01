@@ -175,7 +175,11 @@ class RestockRecordSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RestockRecord
-        fields = ['id', 'part', 'supplier', 'supplier_name', 'quantity', 'buy_price', 'restocked_at', 'notes']
+        fields = [
+            'id', 'part', 'supplier', 'supplier_name',
+            'quantity', 'buy_price', 'restocked_at', 'notes',
+            'status', 'returned_quantity', 'return_reason', 'returned_at',
+        ]
 
     def get_supplier_name(self, obj):
         return obj.supplier.name if obj.supplier else 'Unknown / No Supplier'

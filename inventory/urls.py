@@ -17,6 +17,8 @@ urlpatterns = [
     path('parts/<uuid:pk>/delete/', views.delete_part, name='delete_part'),
     path('parts/<uuid:pk>/restock/', views.restock_part, name='restock_part'),
     path('parts/<uuid:pk>/restock-history/', views.get_restock_history, name='get_restock_history'),
+    path('parts/<uuid:part_pk>/restock/<int:record_pk>/return/', views.return_restock_record, name='return_restock_record'),
+    path('parts/<uuid:part_pk>/restock/<int:record_pk>/edit/', views.edit_restock_record, name='edit_restock_record'),
 
     # Sales
     path('sales/create/', views.create_sale, name='create_sale'),

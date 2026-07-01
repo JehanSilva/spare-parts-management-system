@@ -205,26 +205,37 @@ def add_part(request):
     """
     data = request.data
     part_number = data.get('part_number')
-    
+
     # 1. Check if a part with this Part Number already exists
     # We use .filter().first() to avoid crashing if it doesn't exist
     existing_part = Part.objects.filter(part_number=part_number).first()
-    
+
     if existing_part:
         # --- SMART UPDATE MODE ---
         new_qty = int(data.get('stock_qty', 0))
-        
+
         # Update Quantity
         existing_part.stock_qty += new_qty
-        
+
+        buy_price_for_record = existing_part.buy_price
         # Update Prices (Optional: Remove these lines if you don't want to overwrite prices)
         if 'buy_price' in data:
             existing_part.buy_price = data['buy_price']
+            buy_price_for_record = Decimal(str(data['buy_price']))
         if 'sell_price' in data:
             existing_part.sell_price = data['sell_price']
-            
+
         existing_part.save()
-        
+
+        if new_qty > 0:
+            RestockRecord.objects.create(
+                part=existing_part,
+                supplier=existing_part.supplier,
+                quantity=new_qty,
+                buy_price=buy_price_for_record,
+                notes="Added via Add Part form (duplicate part number)",
+            )
+
         return Response({
             "message": f"Part exists. Stock increased by {new_qty}. Total: {existing_part.stock_qty}",
             "id": existing_part.id,
@@ -234,9 +245,17 @@ def add_part(request):
     # --- CREATE NEW MODE ---
     serializer = PartSerializer(data=data)
     if serializer.is_valid():
-        serializer.save()
+        part = serializer.save()
+        if part.stock_qty > 0:
+            RestockRecord.objects.create(
+                part=part,
+                supplier=part.supplier,
+                quantity=part.stock_qty,
+                buy_price=part.buy_price,
+                notes="Initial stock on item creation",
+            )
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['PUT'])
@@ -351,6 +370,125 @@ def get_restock_history(request, pk):
     records = RestockRecord.objects.filter(part=part).select_related('supplier')[:20]
     serializer = RestockRecordSerializer(records, many=True)
     return Response(serializer.data)
+
+
+@api_view(['POST'])
+@transaction.atomic
+def return_restock_record(request, part_pk, record_pk):
+    """
+    Return some or all stock from a specific restock record.
+    Deducts from part.stock_qty and recalculates the weighted average buy price.
+
+    Payload: { "quantity": <int>, "reason": "<str>" }
+    """
+    part = get_object_or_404(Part, pk=part_pk)
+    record = get_object_or_404(RestockRecord, pk=record_pk, part=part)
+
+    return_qty = int(request.data.get('quantity', 0))
+    reason = request.data.get('reason', '').strip()
+
+    if return_qty <= 0:
+        return Response({"error": "Return quantity must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+
+    available_to_return = record.quantity - record.returned_quantity
+    if return_qty > available_to_return:
+        return Response(
+            {"error": f"Cannot return {return_qty}. Only {available_to_return} unit(s) available to return."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if return_qty > part.stock_qty:
+        return Response(
+            {"error": f"Cannot return {return_qty} units. Current stock is only {part.stock_qty}."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not reason:
+        return Response({"error": "A return reason is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Recalculate weighted average after removing the returned units
+    old_stock_value = float(part.stock_qty) * float(part.buy_price)
+    return_value = return_qty * float(record.buy_price)
+    new_stock_qty = part.stock_qty - return_qty
+
+    if new_stock_qty > 0:
+        part.buy_price = round((old_stock_value - return_value) / new_stock_qty, 2)
+    part.stock_qty = new_stock_qty
+    part.save()
+
+    # Update the restock record
+    record.returned_quantity += return_qty
+    record.return_reason = reason
+    record.returned_at = timezone.now()
+    if record.returned_quantity >= record.quantity:
+        record.status = RestockRecord.STATUS_FULLY_RETURNED
+    else:
+        record.status = RestockRecord.STATUS_PARTIALLY_RETURNED
+    record.save()
+
+    return Response(RestockRecordSerializer(record).data)
+
+
+@api_view(['PUT'])
+@transaction.atomic
+def edit_restock_record(request, part_pk, record_pk):
+    """
+    Edit the quantity and/or buy_price on a restock record.
+    Adjusts part.stock_qty and recalculates the weighted average buy price.
+
+    Payload: { "quantity": <int>, "buy_price": "<decimal>" }
+    """
+    part = get_object_or_404(Part, pk=part_pk)
+    record = get_object_or_404(RestockRecord, pk=record_pk, part=part)
+
+    new_quantity = int(request.data.get('quantity', record.quantity))
+    new_buy_price = Decimal(str(request.data.get('buy_price', record.buy_price)))
+
+    if new_quantity < record.returned_quantity:
+        return Response(
+            {"error": f"Quantity cannot be less than already returned amount ({record.returned_quantity})."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if new_buy_price <= 0:
+        return Response({"error": "Buy price must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Active (non-returned) units before and after the edit
+    old_active_qty = record.quantity - record.returned_quantity
+    new_active_qty = new_quantity - record.returned_quantity
+    qty_diff = new_active_qty - old_active_qty
+
+    new_stock_qty = part.stock_qty + qty_diff
+    if new_stock_qty < 0:
+        return Response(
+            {"error": "This edit would result in negative stock. Reduce the quantity difference."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Recalculate weighted average:
+    # Remove old contribution, add new contribution
+    old_stock_value = float(part.stock_qty) * float(part.buy_price)
+    old_contribution = old_active_qty * float(record.buy_price)
+    new_contribution = new_active_qty * float(new_buy_price)
+    new_stock_value = old_stock_value - old_contribution + new_contribution
+
+    if new_stock_qty > 0:
+        part.buy_price = round(new_stock_value / new_stock_qty, 2)
+    part.stock_qty = new_stock_qty
+    part.save()
+
+    record.quantity = new_quantity
+    record.buy_price = new_buy_price
+    # Refresh status based on updated quantity
+    if record.returned_quantity == 0:
+        record.status = RestockRecord.STATUS_ACTIVE
+    elif record.returned_quantity >= new_quantity:
+        record.status = RestockRecord.STATUS_FULLY_RETURNED
+    else:
+        record.status = RestockRecord.STATUS_PARTIALLY_RETURNED
+    record.save()
+
+    return Response(RestockRecordSerializer(record).data)
 
 
 # --- SALES & BILLING VIEWS ---

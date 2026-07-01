@@ -71,6 +71,10 @@ export const restockPart = async (id, entries) =>
   (await API.post(`/parts/${id}/restock/`, { entries })).data;
 export const fetchRestockHistory = async (id) =>
   (await API.get(`/parts/${id}/restock-history/`)).data;
+export const returnRestockRecord = async (partId, recordId, data) =>
+  (await API.post(`/parts/${partId}/restock/${recordId}/return/`, data)).data;
+export const editRestockRecord = async (partId, recordId, data) =>
+  (await API.put(`/parts/${partId}/restock/${recordId}/edit/`, data)).data;
 
 
 export const fetchSuppliers = async () => (await API.get("/suppliers/")).data;

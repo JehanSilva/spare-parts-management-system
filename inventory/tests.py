@@ -587,5 +587,93 @@ class HolidayAndCalendarAPITest(TestCase):
         self.assertEqual(Holiday.objects.count(), 0)
 
 
+class SalePaymentAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+
+        self.part = Part.objects.create(
+            name="Brake Pad",
+            part_number="BP-100",
+            buy_price=500,
+            sell_price=1000,
+            stock_qty=10,
+        )
+
+    def _sale_payload(self, **overrides):
+        payload = {
+            "customer_name": "John Doe",
+            "vehicle_number": "ABC-1234",
+            "items": [
+                {"part_id": str(self.part.id), "quantity": 2, "unit_price": 1000, "discount": 0}
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_full_payment_sale(self):
+        response = self.client.post(reverse('create_sale'), self._sale_payload(payment_status="PAID"), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertEqual(sale.payment_status, "PAID")
+        self.assertEqual(sale.amount_paid, sale.total_amount)
+
+    def test_full_credit_sale(self):
+        response = self.client.post(
+            reverse('create_sale'),
+            self._sale_payload(payment_status="CREDIT", credit_note="Pay next week"),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertEqual(sale.payment_status, "CREDIT")
+        self.assertEqual(sale.amount_paid, 0)
+
+    def test_partial_payment_sale(self):
+        response = self.client.post(
+            reverse('create_sale'),
+            self._sale_payload(payment_status="PARTIAL", amount_paid="800.00", credit_note="Rest by Friday"),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertEqual(sale.payment_status, "PARTIAL")
+        self.assertEqual(float(sale.amount_paid), 800.0)
+        self.assertEqual(float(sale.total_amount), 2000.0)
+
+    def test_partial_payment_rejects_invalid_amount(self):
+        # Amount paid must be > 0 and < total (2000)
+        response = self.client.post(
+            reverse('create_sale'),
+            self._sale_payload(payment_status="PARTIAL", amount_paid="2000.00"),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.client.post(
+            reverse('create_sale'),
+            self._sale_payload(payment_status="PARTIAL", amount_paid="0"),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_mark_partial_sale_as_paid_settles_balance(self):
+        create_resp = self.client.post(
+            reverse('create_sale'),
+            self._sale_payload(payment_status="PARTIAL", amount_paid="800.00"),
+            format='json',
+        )
+        sale_id = create_resp.data['id']
+
+        mark_paid_resp = self.client.post(reverse('mark_sale_paid', kwargs={'pk': sale_id}))
+        self.assertEqual(mark_paid_resp.status_code, status.HTTP_200_OK)
+
+        sale = Sale.objects.get(pk=sale_id)
+        self.assertEqual(sale.payment_status, "PAID")
+        self.assertEqual(sale.amount_paid, sale.total_amount)
+        self.assertIsNotNone(sale.credit_settled_at)
+
+
 
 

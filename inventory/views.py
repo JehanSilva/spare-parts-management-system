@@ -19,13 +19,18 @@ from django.db.models import Q
 # --- CUSTOMER VIEWS ---
 @api_view(['GET'])
 def get_customers(request):
-    """List all customers, optionally search by name or phone."""
+    """List all customers, optionally search by name, phone, or vehicle number."""
     search = request.query_params.get('search', '').strip()
     qs = Customer.objects.prefetch_related('vehicles').order_by('name')
     if search:
-        qs = qs.filter(Q(name__icontains=search) | Q(phone__icontains=search))
+        qs = qs.filter(
+            Q(name__icontains=search) |
+            Q(phone__icontains=search) |
+            Q(vehicles__vehicle_number__icontains=search)
+        ).distinct()
     serializer = CustomerSerializer(qs, many=True)
     return Response(serializer.data)
+
 
 
 @api_view(['POST'])
@@ -610,9 +615,9 @@ def create_sale(request):
     items_data = data.get('items', [])
 
     payment_status = data.get('payment_status', 'PAID')
-    if payment_status not in ('PAID', 'CREDIT'):
+    if payment_status not in ('PAID', 'PARTIAL', 'CREDIT'):
         payment_status = 'PAID'
-    credit_note = data.get('credit_note', '') if payment_status == 'CREDIT' else ''
+    credit_note = data.get('credit_note', '') if payment_status in ('PARTIAL', 'CREDIT') else ''
 
     if not items_data:
         return Response({"error": "No items in sale"}, status=status.HTTP_400_BAD_REQUEST)
@@ -640,6 +645,22 @@ def create_sale(request):
         except Part.DoesNotExist:
              return Response({"error": f"Part ID {item['part_id']} not found"}, status=404)
 
+    # 2b. Determine how much was actually received now
+    if payment_status == 'PAID':
+        amount_paid = total_amount
+    elif payment_status == 'CREDIT':
+        amount_paid = 0
+    else:  # PARTIAL
+        try:
+            amount_paid = float(data.get('amount_paid', 0))
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid amount_paid."}, status=status.HTTP_400_BAD_REQUEST)
+        if amount_paid <= 0 or amount_paid >= total_amount:
+            return Response(
+                {"error": "Partial payment amount must be greater than 0 and less than the total amount."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
     # 3. Create the Sale Record
     sale = Sale.objects.create(
         customer_name=customer_name,
@@ -647,6 +668,7 @@ def create_sale(request):
         customer_id=customer_id,
         total_amount=total_amount,
         payment_status=payment_status,
+        amount_paid=amount_paid,
         credit_note=credit_note,
     )
 
@@ -726,14 +748,15 @@ def cancel_sale(request, pk):
 @api_view(['POST'])
 def mark_sale_paid(request, pk):
     """
-    Mark a credit (pay-later) sale as received/settled.
+    Mark a credit (pay-later) or partially-paid sale's outstanding balance as received/settled.
     """
     sale = get_object_or_404(Sale, pk=pk)
 
-    if sale.payment_status != 'CREDIT':
-        return Response({"error": "This sale is not a pending credit sale."}, status=status.HTTP_400_BAD_REQUEST)
+    if sale.payment_status not in ('CREDIT', 'PARTIAL'):
+        return Response({"error": "This sale has no pending balance."}, status=status.HTTP_400_BAD_REQUEST)
 
     sale.payment_status = 'PAID'
+    sale.amount_paid = sale.total_amount
     sale.credit_settled_at = timezone.now()
     sale.save()
 

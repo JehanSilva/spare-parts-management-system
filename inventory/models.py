@@ -89,6 +89,7 @@ class Sale(models.Model):
     ]
     PAYMENT_STATUS_CHOICES = [
         ('PAID', 'Paid'),
+        ('PARTIAL', 'Partially Paid'),
         ('CREDIT', 'Credit (Pay Later)'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -100,8 +101,9 @@ class Sale(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='COMPLETED')
     cancel_reason = models.TextField(blank=True, null=True, help_text="Reason why this sale was cancelled")
     payment_status = models.CharField(max_length=10, choices=PAYMENT_STATUS_CHOICES, default='PAID')
-    credit_note = models.TextField(blank=True, null=True, help_text="Note about the credit sale, e.g. when the customer will pay")
-    credit_settled_at = models.DateTimeField(null=True, blank=True, help_text="When this credit sale was marked as received")
+    amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0.00, help_text="Amount actually received at time of sale. Equals total_amount unless payment_status is PARTIAL or CREDIT.")
+    credit_note = models.TextField(blank=True, null=True, help_text="Note about the credit/partial sale, e.g. when the customer will pay the balance")
+    credit_settled_at = models.DateTimeField(null=True, blank=True, help_text="When this credit/partial sale's balance was marked as received")
 
     def __str__(self):
         return f"Sale {str(self.id)[:8]} - {self.customer_name} ({self.status})"

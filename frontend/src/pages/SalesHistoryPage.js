@@ -212,13 +212,15 @@ const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
   const formatLKR = (amount) =>
     new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
+  const dueAmount = parseFloat(sale.total_amount || 0) - parseFloat(sale.amount_paid || 0);
+
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-scale-in">
         <div className="bg-green-700 p-4 text-white flex justify-between items-center">
           <div className="flex items-center gap-2">
             <Wallet size={20} />
-            <h3 className="font-bold text-lg">Mark Credit as Received</h3>
+            <h3 className="font-bold text-lg">Mark Balance as Received</h3>
           </div>
           <button onClick={onClose} className="hover:bg-green-600 p-1 rounded-full"><XCircle size={20} /></button>
         </div>
@@ -226,7 +228,12 @@ const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
           <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-900">
             <p>
               Confirm that <span className="font-bold">{sale.customer_name}</span> has paid the outstanding{" "}
-              <span className="font-bold">{formatLKR(sale.total_amount)}</span> for this sale.
+              <span className="font-bold">{formatLKR(dueAmount)}</span> balance for this sale.
+              {sale.payment_status === "PARTIAL" && (
+                <span className="block text-xs text-green-700 mt-1">
+                  ({formatLKR(sale.amount_paid)} already received of {formatLKR(sale.total_amount)} total)
+                </span>
+              )}
             </p>
           </div>
           {sale.credit_note && (
@@ -387,8 +394,11 @@ const SalesHistoryPage = () => {
     }
   };
 
-  const outstandingCreditSales = sales.filter((s) => s.payment_status === "CREDIT");
-  const outstandingCreditTotal = outstandingCreditSales.reduce((sum, s) => sum + parseFloat(s.total_amount || 0), 0);
+  const outstandingCreditSales = sales.filter((s) => s.payment_status === "CREDIT" || s.payment_status === "PARTIAL");
+  const outstandingCreditTotal = outstandingCreditSales.reduce(
+    (sum, s) => sum + (parseFloat(s.total_amount || 0) - parseFloat(s.amount_paid || 0)),
+    0
+  );
 
   const filteredSales = sales.filter((sale) => {
     const searchLower = searchTerm.trim().toLowerCase();
@@ -409,7 +419,7 @@ const SalesHistoryPage = () => {
     // sale.created_at is typically "YYYY-MM-DDTHH:MM..."
     const matchDate = !filterDate || sale.created_at.startsWith(filterDate);
 
-    const matchPayment = paymentFilter !== "CREDIT" || sale.payment_status === "CREDIT";
+    const matchPayment = paymentFilter !== "CREDIT" || sale.payment_status === "CREDIT" || sale.payment_status === "PARTIAL";
 
     return matchSearch && matchDate && matchPayment;
   });
@@ -610,8 +620,13 @@ const SalesHistoryPage = () => {
                               <UserCheck size={10} /> Credit — Pending
                             </span>
                           )}
+                          {sale.status !== 'CANCELLED' && sale.payment_status === 'PARTIAL' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-bold uppercase w-fit mt-1">
+                              <Wallet size={10} /> Partial — Due {formatLKR(parseFloat(sale.total_amount) - parseFloat(sale.amount_paid || 0))}
+                            </span>
+                          )}
                        </div>
-                      <span className={`text-lg font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : 'text-green-700'}`}>
+                      <span className={`text-lg font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : sale.payment_status === 'PARTIAL' ? 'text-blue-700' : 'text-green-700'}`}>
                         {formatLKR(sale.total_amount)}
                       </span>
                     </div>
@@ -649,7 +664,7 @@ const SalesHistoryPage = () => {
                       </button>
                     </div>
 
-                    {sale.status !== 'CANCELLED' && sale.payment_status === 'CREDIT' && (
+                    {sale.status !== 'CANCELLED' && (sale.payment_status === 'CREDIT' || sale.payment_status === 'PARTIAL') && (
                       <button
                         onClick={(e) => handleMarkPaidClick(sale, e)}
                         className="w-full bg-green-50 text-green-700 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-green-100 transition-all active:scale-95 mb-3 font-bold border border-green-200"
@@ -672,10 +687,23 @@ const SalesHistoryPage = () => {
                       </div>
                     )}
 
+                    {sale.payment_status === 'PARTIAL' && (
+                      <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-3.5 mb-4 text-xs flex justify-between">
+                        <span>
+                          <span className="font-bold block uppercase tracking-wider text-[10px] text-blue-700 mb-1">Paid Now</span>
+                          {formatLKR(sale.amount_paid)}
+                        </span>
+                        <span className="text-right">
+                          <span className="font-bold block uppercase tracking-wider text-[10px] text-blue-700 mb-1">Balance Due</span>
+                          {formatLKR(parseFloat(sale.total_amount) - parseFloat(sale.amount_paid || 0))}
+                        </span>
+                      </div>
+                    )}
+
                     {sale.credit_note && (
                       <div className="bg-amber-50 text-amber-800 border border-amber-100 rounded-xl p-3.5 mb-4 text-xs">
                         <span className="font-bold block uppercase tracking-wider text-[10px] text-amber-700 mb-1">
-                          Credit Note {sale.payment_status !== 'CREDIT' && '(Settled)'}
+                          Credit Note {sale.payment_status === 'PAID' && '(Settled)'}
                         </span>
                         <p className="italic font-medium">"{sale.credit_note}"</p>
                       </div>
@@ -795,7 +823,7 @@ const SalesHistoryPage = () => {
                       </td>
                       <td className="p-4 text-right">
                         <div className="flex flex-col items-end">
-                          <span className={`font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : 'text-green-700'}`}>
+                          <span className={`font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : sale.payment_status === 'PARTIAL' ? 'text-blue-700' : 'text-green-700'}`}>
                             {formatLKR(sale.total_amount)}
                           </span>
                           {sale.status === 'CANCELLED' && (
@@ -809,6 +837,11 @@ const SalesHistoryPage = () => {
                           {sale.status !== 'CANCELLED' && sale.payment_status === 'CREDIT' && (
                             <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-bold uppercase">
                               <UserCheck size={9} /> Credit — Pending
+                            </span>
+                          )}
+                          {sale.status !== 'CANCELLED' && sale.payment_status === 'PARTIAL' && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[9px] font-bold uppercase">
+                              <Wallet size={9} /> Due {formatLKR(parseFloat(sale.total_amount) - parseFloat(sale.amount_paid || 0))}
                             </span>
                           )}
                         </div>
@@ -834,7 +867,7 @@ const SalesHistoryPage = () => {
                           >
                             <Edit2 size={16} />
                           </button>
-                          {sale.status !== 'CANCELLED' && sale.payment_status === 'CREDIT' && (
+                          {sale.status !== 'CANCELLED' && (sale.payment_status === 'CREDIT' || sale.payment_status === 'PARTIAL') && (
                             <button
                               onClick={(e) => handleMarkPaidClick(sale, e)}
                               className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg transition"
@@ -877,10 +910,22 @@ const SalesHistoryPage = () => {
                                  <p className="italic font-medium">"{sale.cancel_reason || "Not specified"}"</p>
                                </div>
                              )}
+                             {sale.payment_status === 'PARTIAL' && (
+                               <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-4 mb-4 text-sm max-w-xl flex justify-between">
+                                 <span>
+                                   <span className="font-bold block uppercase tracking-wider text-xs text-blue-700 mb-1">Paid Now</span>
+                                   {formatLKR(sale.amount_paid)}
+                                 </span>
+                                 <span className="text-right">
+                                   <span className="font-bold block uppercase tracking-wider text-xs text-blue-700 mb-1">Balance Due</span>
+                                   {formatLKR(parseFloat(sale.total_amount) - parseFloat(sale.amount_paid || 0))}
+                                 </span>
+                               </div>
+                             )}
                              {sale.credit_note && (
                                <div className="bg-amber-50 text-amber-800 border border-amber-100 rounded-xl p-4 mb-4 text-sm max-w-xl">
                                  <span className="font-bold block uppercase tracking-wider text-xs text-amber-700 mb-1">
-                                   Credit Note {sale.payment_status !== 'CREDIT' && '(Settled)'}
+                                   Credit Note {sale.payment_status === 'PAID' && '(Settled)'}
                                  </span>
                                  <p className="italic font-medium">"{sale.credit_note}"</p>
                                </div>

@@ -195,11 +195,16 @@ const VehicleModal = ({ customerId, vehicle, onClose, onSaved }) => {
   );
 };
 
-const CustomerCard = ({ customer, onEdit, onDelete, onRefresh }) => {
-  const [expanded, setExpanded] = useState(false);
+const CustomerCard = ({ customer, onEdit, onDelete, onRefresh, autoExpand }) => {
+  const [expanded, setExpanded] = useState(!!autoExpand);
   const [showAddVehicle, setShowAddVehicle] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);
   const [vehicleToDelete, setVehicleToDelete] = useState(null);
+
+  // Auto-expand when a vehicle-number search targets this customer
+  useEffect(() => {
+    if (autoExpand) setExpanded(true);
+  }, [autoExpand]);
 
   const handleDeleteVehicle = async () => {
     if (!vehicleToDelete) return;
@@ -393,7 +398,8 @@ const CustomerPage = () => {
 
       <div className="relative mb-5">
         <Search className="absolute left-3.5 top-3 text-gray-400" size={18} />
-        <input id="customer-search" type="text" placeholder="Search by name or phone..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm" />
+        <input id="customer-search" type="text" placeholder="Search by name, phone or vehicle number..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-red-500 shadow-sm" />
+
       </div>
 
       {loading ? (
@@ -406,7 +412,22 @@ const CustomerPage = () => {
         </div>
       ) : (
         <div className="space-y-4">
-          {customers.map(c => <CustomerCard key={c.id} customer={c} onEdit={setEditCustomer} onDelete={setDeleteTarget} onRefresh={load} />)}
+          {customers.map(c => {
+            // Auto-expand this card if the search term matches one of its vehicle numbers
+            const term = searchTerm.trim().toLowerCase();
+            const autoExpand = term.length > 0 &&
+              c.vehicles?.some(v => v.vehicle_number?.toLowerCase().includes(term));
+            return (
+              <CustomerCard
+                key={c.id}
+                customer={c}
+                onEdit={setEditCustomer}
+                onDelete={setDeleteTarget}
+                onRefresh={load}
+                autoExpand={autoExpand}
+              />
+            );
+          })}
         </div>
       )}
     </div>

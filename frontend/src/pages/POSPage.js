@@ -27,6 +27,7 @@ import {
   UserCheck,
   BadgeCheck,
   Loader2,
+  Wallet,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -318,9 +319,12 @@ const POSPage = () => {
   const [linkingCustomerId, setLinkingCustomerId] = useState(null);
   const customerSearchTimer = useRef(null);
 
-  // --- Credit Sale (Pay Later) State ---
-  const [isCredit, setIsCredit] = useState(false);
+  // --- Payment Mode State: PAID (full) | PARTIAL (part now, part on credit) | CREDIT (pay later) ---
+  const [paymentMode, setPaymentMode] = useState("PAID");
   const [creditNote, setCreditNote] = useState("");
+  const [partialAmountPaid, setPartialAmountPaid] = useState("");
+  const isCredit = paymentMode !== "PAID";
+  const [paymentExpanded, setPaymentExpanded] = useState(false);
 
   // Print Ref
   const receiptRef = useRef();
@@ -529,8 +533,9 @@ const POSPage = () => {
     setCustomerSearchResults([]);
     setVehicleLookupStatus("idle");
     setRegisterForm({ name: "", phone: "" });
-    setIsCredit(false);
+    setPaymentMode("PAID");
     setCreditNote("");
+    setPartialAmountPaid("");
   }, [activeCartId]);
 
   // 3. Add to Cart
@@ -726,14 +731,27 @@ const POSPage = () => {
       return;
     }
 
+    let partialPaidNow = 0;
+    if (paymentMode === "PARTIAL") {
+      partialPaidNow = parseFloat(partialAmountPaid);
+      if (!partialAmountPaid || isNaN(partialPaidNow) || partialPaidNow <= 0 || partialPaidNow >= totalAmount) {
+        setAlertInfo({
+          type: "error",
+          message: "Enter a valid amount received now — greater than 0 and less than the total.",
+        });
+        return;
+      }
+    }
+
     setLoading(true);
 
     const salePayload = {
       customer_name: customerName,
       vehicle_number: vehicleNumber,
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
-      payment_status: isCredit ? "CREDIT" : "PAID",
+      payment_status: paymentMode,
       ...(isCredit ? { credit_note: creditNote.trim() } : {}),
+      ...(paymentMode === "PARTIAL" ? { amount_paid: partialPaidNow } : {}),
       items: cart.map((item) => {
         const originalPrice = parseFloat(item.sell_price);
         const discountAmount = parseFloat(item.discountAmount) || 0;
@@ -785,7 +803,12 @@ const POSPage = () => {
 
       setAlertInfo({
         type: "success",
-        message: isCredit ? "Sale completed and recorded as Credit (Pay Later)." : "Sale completed successfully!",
+        message:
+          paymentMode === "CREDIT"
+            ? "Sale completed and recorded as Credit (Pay Later)."
+            : paymentMode === "PARTIAL"
+              ? "Sale completed with a partial payment. Balance recorded as due."
+              : "Sale completed successfully!",
       });
     } catch (error) {
       console.error("Sale Error:", error);
@@ -802,22 +825,28 @@ const POSPage = () => {
   }, [filteredParts, visibleCount]);
 
   // --- MAIN LAYOUT & SUCCESS SCREEN ---
+  const successDue = saleSuccess
+    ? parseFloat(saleSuccess.total_amount) - parseFloat(saleSuccess.amount_paid || 0)
+    : 0;
+
   return saleSuccess ? (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm">
       <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-200/50 p-8 md:p-10 max-w-lg w-full text-center relative overflow-hidden">
 
         {/* Success Icon */}
-        <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-slow ring-8 ${saleSuccess.payment_status === "CREDIT" ? "bg-amber-50 ring-amber-50/50" : "bg-green-50 ring-green-50/50"
+        <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce-slow ring-8 ${saleSuccess.payment_status === "CREDIT" ? "bg-amber-50 ring-amber-50/50" : saleSuccess.payment_status === "PARTIAL" ? "bg-blue-50 ring-blue-50/50" : "bg-green-50 ring-green-50/50"
           }`}>
           {saleSuccess.payment_status === "CREDIT" ? (
             <UserCheck className="text-amber-500 w-12 h-12" strokeWidth={3} />
+          ) : saleSuccess.payment_status === "PARTIAL" ? (
+            <Wallet className="text-blue-500 w-12 h-12" strokeWidth={3} />
           ) : (
             <CheckCircle className="text-green-500 w-12 h-12" strokeWidth={3} />
           )}
         </div>
 
         <h1 className="text-3xl md:text-4xl font-extrabold text-gray-800 mb-2 tracking-tight">
-          {saleSuccess.payment_status === "CREDIT" ? "Sale Recorded on Credit" : "Payment Successful!"}
+          {saleSuccess.payment_status === "CREDIT" ? "Sale Recorded on Credit" : saleSuccess.payment_status === "PARTIAL" ? "Partial Payment Recorded" : "Payment Successful!"}
         </h1>
         <p className="text-gray-400 mb-8 font-medium">
           Transaction ID <span className="text-gray-600 font-mono">#{saleSuccess.id.substring(0, 8)}</span>
@@ -827,10 +856,18 @@ const POSPage = () => {
         <div className="bg-gray-50/80 rounded-2xl p-6 mb-8 text-left space-y-4">
           <div className="flex justify-between items-center pb-4 border-b border-gray-100 border-dashed">
             <span className="text-gray-400 text-sm font-medium uppercase tracking-wide">
-              {saleSuccess.payment_status === "CREDIT" ? "Amount Due" : "Total Paid"}
+              {saleSuccess.payment_status === "PAID" ? "Total Paid" : "Amount Due"}
             </span>
-            <span className="text-2xl font-black text-gray-800">LKR {parseFloat(saleSuccess.total_amount).toLocaleString()}</span>
+            <span className="text-2xl font-black text-gray-800">
+              LKR {(saleSuccess.payment_status === "PAID" ? parseFloat(saleSuccess.total_amount) : successDue).toLocaleString()}
+            </span>
           </div>
+          {saleSuccess.payment_status === "PARTIAL" && (
+            <div className="flex justify-between items-center text-sm -mt-2">
+              <span className="text-gray-500">Received Now</span>
+              <span className="font-bold text-blue-700">LKR {parseFloat(saleSuccess.amount_paid).toLocaleString()} / {parseFloat(saleSuccess.total_amount).toLocaleString()}</span>
+            </div>
+          )}
           <div className="space-y-2 pt-2">
             <div className="flex justify-between items-center text-sm">
               <span className="text-gray-500">Customer</span>
@@ -852,7 +889,13 @@ const POSPage = () => {
                 <span className="font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full text-xs">Credit (Pay Later)</span>
               </div>
             )}
-            {saleSuccess.payment_status === "CREDIT" && saleSuccess.credit_note && (
+            {saleSuccess.payment_status === "PARTIAL" && (
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-gray-500">Payment</span>
+                <span className="font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full text-xs">Partial — Balance on Credit</span>
+              </div>
+            )}
+            {saleSuccess.payment_status !== "PAID" && saleSuccess.credit_note && (
               <div className="text-xs text-gray-500 italic bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-1.5 mt-1">
                 "{saleSuccess.credit_note}"
               </div>
@@ -1420,37 +1463,118 @@ const POSPage = () => {
             {/* Pinned: Total + Checkout (always visible regardless of lookup panel state) */}
             <div className="px-3 pt-2 pb-3 border-t border-gray-100">
 
-              {/* Credit Sale Toggle */}
-              <label className="flex items-center justify-between gap-2 mb-2 cursor-pointer select-none">
-                <span className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
-                  <UserCheck size={13} className={isCredit ? "text-amber-600" : "text-gray-400"} />
-                  Sell on Credit
-                </span>
+              {/* Payment Mode Selector — collapsible */}
+              <div className="mb-2">
+                {/* Collapsed header row */}
                 <button
                   type="button"
-                  onClick={() => setIsCredit((v) => !v)}
-                  className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${isCredit ? "bg-amber-500" : "bg-gray-300"}`}
+                  onClick={() => setPaymentExpanded((v) => !v)}
+                  className="w-full flex items-center justify-between group"
+                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
                 >
-                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${isCredit ? "translate-x-4" : ""}`} />
+                  <span className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
+                    <Wallet size={13} className={isCredit ? "text-amber-600" : "text-gray-400"} />
+                    Payment
+                    {/* Current selection badge */}
+                    <span
+                      className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        paymentMode === "PAID"
+                          ? "bg-red-100 text-red-700"
+                          : paymentMode === "PARTIAL"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {paymentMode === "PAID" ? "Full Payment" : paymentMode === "PARTIAL" ? "Partial" : "Full Credit"}
+                    </span>
+                  </span>
+                  {/* Chevron arrow */}
+                  <svg
+                    width="14" height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={`text-gray-400 group-hover:text-gray-600 transition-transform duration-200 ${
+                      paymentExpanded ? "rotate-180" : ""
+                    }`}
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
                 </button>
-              </label>
+
+                {/* Expandable panel */}
+                {paymentExpanded && (
+                  <div className="mt-2">
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => { setPaymentMode("PAID"); setPaymentExpanded(false); }}
+                        className={`py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "PAID" ? "bg-red-600 text-white border-red-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+                      >
+                        Full Payment
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPaymentMode("PARTIAL"); setPaymentExpanded(false); }}
+                        className={`py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "PARTIAL" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+                      >
+                        Partial
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setPaymentMode("CREDIT"); setPaymentExpanded(false); }}
+                        className={`py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "CREDIT" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+                      >
+                        Full Credit
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {paymentMode === "PARTIAL" && (
+                <div className="mb-2">
+                  <label className="text-[11px] font-semibold text-blue-700 mb-1 block">Amount Received Now</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={partialAmountPaid}
+                    onChange={(e) => setPartialAmountPaid(e.target.value)}
+                    placeholder="e.g. 5000"
+                    className="w-full px-2.5 py-2 text-sm bg-blue-50 border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder-blue-300"
+                  />
+                  <p className="text-[11px] text-blue-600 mt-1 font-medium">
+                    Balance on credit: LKR{" "}
+                    {Math.max(totalAmount - (parseFloat(partialAmountPaid) || 0), 0).toLocaleString()}
+                  </p>
+                </div>
+              )}
 
               {isCredit && (
                 <textarea
                   value={creditNote}
                   onChange={(e) => setCreditNote(e.target.value)}
-                  placeholder="Credit note (optional) — e.g. will pay by Friday"
+                  placeholder="Credit note (optional) — e.g. will pay balance by Friday"
                   rows={2}
                   className="w-full mb-2 px-2.5 py-2 text-xs bg-amber-50 border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400 resize-none placeholder-amber-400/70"
                 />
               )}
 
               <div className="flex justify-between items-end mb-2.5">
-                <span className="text-sm font-medium text-gray-500">{isCredit ? "Amount Due" : "Total Amount"}</span>
+                <span className="text-sm font-medium text-gray-500">
+                  {paymentMode === "PAID" ? "Total Amount" : paymentMode === "PARTIAL" ? "Balance Due" : "Amount Due"}
+                </span>
                 <div className="text-right">
                   <span className="text-2xl font-bold text-gray-900 tracking-tight">
                     <span className="text-base text-gray-400 font-normal mr-1">LKR</span>
-                    {totalAmount.toLocaleString()}
+                    {(paymentMode === "PARTIAL"
+                      ? Math.max(totalAmount - (parseFloat(partialAmountPaid) || 0), 0)
+                      : totalAmount
+                    ).toLocaleString()}
                   </span>
                 </div>
               </div>
@@ -1461,15 +1585,19 @@ const POSPage = () => {
                 className={`w-full py-3.5 rounded-xl text-white font-bold text-lg shadow-lg transition-all flex justify-center items-center gap-2
                   ${loading
                     ? "bg-gray-300 cursor-not-allowed shadow-none"
-                    : isCredit
+                    : paymentMode === "CREDIT"
                       ? "bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-[0.98] shadow-amber-200"
-                      : "bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98] shadow-red-200"
+                      : paymentMode === "PARTIAL"
+                        ? "bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 active:scale-[0.98] shadow-blue-200"
+                        : "bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:scale-[0.98] shadow-red-200"
                   }`}
               >
                 {loading ? (
                   <span className="flex items-center gap-2"><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Processing...</span>
-                ) : isCredit ? (
+                ) : paymentMode === "CREDIT" ? (
                   <>Complete Sale (Credit) <UserCheck size={20} /></>
+                ) : paymentMode === "PARTIAL" ? (
+                  <>Complete Sale (Partial) <Wallet size={20} /></>
                 ) : (
                   <>Complete Sale <CheckCircle size={20} /></>
                 )}

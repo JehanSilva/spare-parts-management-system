@@ -171,6 +171,24 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
           <span>TOTAL:</span>
           <span>{formatLKR(grandTotal)}</span>
         </div>
+        {sale && sale.payment_status === "PARTIAL" && (
+          <>
+            <div className="flex justify-between text-sm font-bold">
+              <span>Paid Now:</span>
+              <span>{formatLKR(sale.amount_paid)}</span>
+            </div>
+            <div className="flex justify-between text-sm font-bold">
+              <span>Balance Due:</span>
+              <span>{formatLKR(parseFloat(sale.total_amount) - parseFloat(sale.amount_paid || 0))}</span>
+            </div>
+          </>
+        )}
+        {sale && sale.payment_status === "CREDIT" && (
+          <div className="flex justify-between text-sm font-bold">
+            <span>Payment:</span>
+            <span>CREDIT (Pay Later)</span>
+          </div>
+        )}
         {totalSavings > 0 && (
           <div className="text-center text-[10px] font-bold border border-black rounded p-1 mt-3">
             *** YOU SAVED {formatLKR(totalSavings)} ***

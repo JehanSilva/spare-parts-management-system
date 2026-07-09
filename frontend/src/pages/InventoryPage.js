@@ -256,6 +256,7 @@ const InventoryPage = () => {
   const fileInputRef = useRef(null);
   const [editingPart, setEditingPart] = useState(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
+  const [restockInitialPart, setRestockInitialPart] = useState(null);
 
   // ── Filter States ────────────────────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState("");
@@ -487,12 +488,18 @@ const InventoryPage = () => {
         part={selectedPart}
         onClose={() => setSelectedPart(null)}
         onPartUpdated={invalidateParts}
+        onRestock={(part) => {
+          setSelectedPart(null);
+          setRestockInitialPart(part);
+          setShowRestockModal(true);
+        }}
       />
 
       {/* --- QUICK RESTOCK MODAL --- */}
       {showRestockModal && (
         <QuickRestockModal
-          onClose={() => setShowRestockModal(false)}
+          initialPart={restockInitialPart}
+          onClose={() => { setShowRestockModal(false); setRestockInitialPart(null); }}
           onSuccess={(msg) => {
             setAlertInfo({ type: "success", message: msg });
             invalidateParts();

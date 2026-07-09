@@ -121,15 +121,17 @@ const HistoryTab = ({ partId }) => {
 };
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
-const QuickRestockModal = ({ onClose, onSuccess }) => {
+const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
   const [activeTab, setActiveTab] = useState("restock");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(initialPart ? initialPart.name : "");
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [selectedPart, setSelectedPart] = useState(null);
+  const [selectedPart, setSelectedPart] = useState(initialPart);
   const [suppliers, setSuppliers] = useState([]);
 
-  const [entries, setEntries] = useState([emptyEntry()]);
+  const [entries, setEntries] = useState(
+    initialPart ? [{ ...emptyEntry(), buy_price: initialPart.buy_price || "" }] : [emptyEntry()]
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});

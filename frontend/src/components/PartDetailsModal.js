@@ -16,6 +16,7 @@ import {
   Loader2,
   ChevronDown,
   ChevronUp,
+  PackagePlus,
 } from "lucide-react";
 import { fetchRestockHistory, returnRestockRecord, editRestockRecord } from "../services/api";
 
@@ -367,7 +368,7 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
 };
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
-const PartDetailsModal = ({ part, onClose, onPartUpdated }) => {
+const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
   if (!part) return null;
 
   const renderVehicleName = (v) => {
@@ -406,9 +407,20 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated }) => {
           <h3 className="font-bold text-lg flex items-center gap-2">
             <Package size={20} /> Part Details
           </h3>
-          <button onClick={onClose} className="hover:bg-red-600 p-1 rounded-full transition-colors">
-            <XCircle size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            {onRestock && (
+              <button
+                onClick={() => { onClose(); onRestock(part); }}
+                className="flex items-center gap-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-3 py-1.5 rounded-lg border border-white/30 transition-colors"
+                title="Quick Restock this part"
+              >
+                <PackagePlus size={14} /> Restock
+              </button>
+            )}
+            <button onClick={onClose} className="hover:bg-red-600 p-1 rounded-full transition-colors">
+              <XCircle size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Scrollable content */}

@@ -22,7 +22,6 @@ import {
   XCircle,
   Tag,
   RefreshCw,
-  User,
   UserPlus,
   UserCheck,
   BadgeCheck,
@@ -126,6 +125,407 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
     </div>
   );
 });
+
+// --- VEHICLE / CUSTOMER LOOKUP MODAL ---
+const VehicleCustomerModal = ({
+  isOpen,
+  onClose,
+  vehicleNumber,
+  onVehicleNumberChange,
+  vehicleLookupStatus,
+  linkedCustomer,
+  linkedVehicle,
+  vehicleLabel,
+  linkMode,
+  setLinkMode,
+  registerForm,
+  setRegisterForm,
+  registerLoading,
+  onRegisterCustomer,
+  existingLinkVehicleForm,
+  setExistingLinkVehicleForm,
+  customerSearchTerm,
+  setCustomerSearchTerm,
+  customerSearchResults,
+  setCustomerSearchResults,
+  customerSearchLoading,
+  linkingCustomerId,
+  onLinkExistingCustomer,
+  vehicleNumberInputRef,
+}) => {
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) setDetailsExpanded(false);
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const hasVehicle = vehicleNumber.trim().length > 0;
+  const vehicleDetails = [
+    linkedVehicle?.year && { label: "Year", value: linkedVehicle.year },
+    linkedVehicle?.color && { label: "Color", value: linkedVehicle.color },
+    linkedVehicle?.current_mileage != null && { label: "Mileage", value: `${linkedVehicle.current_mileage.toLocaleString()} km` },
+    linkedCustomer?.email && { label: "Email", value: linkedCustomer.email },
+    linkedCustomer?.address && { label: "Address", value: linkedCustomer.address },
+  ].filter(Boolean);
+
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-gray-900 p-4 text-white flex justify-between items-center shrink-0">
+          <h3 className="font-bold text-lg flex items-center gap-2">
+            <Car size={20} /> Vehicle & Customer
+          </h3>
+          <button onClick={onClose} className="hover:bg-white/10 p-1 rounded-full">
+            <XCircle size={20} />
+          </button>
+        </div>
+
+        <div className="p-4 overflow-y-auto space-y-3">
+          {/* Vehicle Number with smart lookup */}
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Vehicle No.
+            </label>
+            <div className="relative">
+              <Car size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                ref={vehicleNumberInputRef}
+                value={vehicleNumber}
+                onChange={(e) => onVehicleNumberChange(e.target.value)}
+                className={`w-full pl-7 pr-7 py-2 bg-gray-50 border rounded-lg focus:bg-white outline-none text-sm transition-all ${vehicleLookupStatus === "found"
+                    ? "border-green-400 focus:ring-1 focus:ring-green-400"
+                    : vehicleLookupStatus === "not_found"
+                      ? "border-amber-400 focus:ring-1 focus:ring-amber-400"
+                      : "border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  }`}
+                placeholder="Plate number..."
+              />
+              <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                {vehicleLookupStatus === "searching" && <Loader2 size={13} className="text-gray-400 animate-spin" />}
+                {vehicleLookupStatus === "found" && <BadgeCheck size={14} className="text-green-500" />}
+                {vehicleLookupStatus === "not_found" && <UserPlus size={13} className="text-amber-500" />}
+              </div>
+            </div>
+          </div>
+
+          {/* Found: linked vehicle chip, expandable for more details */}
+          {vehicleLookupStatus === "found" && linkedCustomer && (
+            <div className="bg-green-50 border border-green-200 rounded-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setDetailsExpanded((v) => !v)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
+              >
+                <Car size={12} className="text-green-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-green-800 truncate">
+                    {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ") || linkedCustomer.name}
+                  </p>
+                  <p className="text-[10px] text-green-600 truncate">
+                    {[linkedCustomer.name, linkedCustomer.phone].filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+                <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full shrink-0">Linked</span>
+                <ChevronUp size={12} className={`text-green-500 shrink-0 transition-transform ${detailsExpanded ? "" : "-rotate-90"}`} />
+              </button>
+
+              {detailsExpanded && (
+                <div className="px-2.5 pb-2.5 pt-1.5 border-t border-green-200 space-y-1">
+                  {vehicleDetails.length > 0 ? (
+                    vehicleDetails.map(({ label, value }) => (
+                      <div key={label} className="flex justify-between gap-2 text-[11px]">
+                        <span className="text-green-600 shrink-0">{label}</span>
+                        <span className="font-semibold text-green-900 text-right truncate">{value}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-[11px] text-green-500 italic">No additional details on file.</p>
+                  )}
+                  {linkedVehicle?.notes && (
+                    <div className="text-[11px]">
+                      <span className="text-green-600 block">Notes</span>
+                      <span className="font-medium text-green-900">{linkedVehicle.notes}</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onVehicleNumberChange("")}
+                    className="w-full mt-1.5 py-1.5 text-[11px] font-bold text-green-700 bg-white border border-green-300 rounded-lg hover:bg-green-100"
+                  >
+                    Change Vehicle
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Not linked yet: show New vs Existing customer choice (works with or without a vehicle number) */}
+          {vehicleLookupStatus !== "found" && !linkMode && (
+            <div className={`rounded-lg px-2.5 py-1.5 space-y-1.5 border ${vehicleLookupStatus === "not_found" ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"}`}>
+              {vehicleLookupStatus === "not_found" && (
+                <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered</p>
+              )}
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => { setLinkMode("new"); setRegisterForm({ name: "", phone: "", make: "", model: "" }); }}
+                  className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-lg transition-colors"
+                >
+                  <UserPlus size={11} /> New Customer
+                </button>
+                <button
+                  onClick={() => { setLinkMode("existing"); setCustomerSearchTerm(""); setCustomerSearchResults([]); setExistingLinkVehicleForm({ make: "", model: "" }); }}
+                  className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded-lg transition-colors"
+                >
+                  <UserCheck size={11} /> Existing Customer
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Inline register form (New Customer) */}
+          {linkMode === "new" && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
+              <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
+                <UserPlus size={11} /> New Customer
+              </p>
+              <input
+                type="text"
+                placeholder="Customer Name *"
+                value={registerForm.name}
+                onChange={e => setRegisterForm(p => ({ ...p, name: e.target.value }))}
+                className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <input
+                type="text"
+                placeholder="Phone (optional)"
+                value={registerForm.phone}
+                onChange={e => setRegisterForm(p => ({ ...p, phone: e.target.value }))}
+                className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              {hasVehicle && (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Make (e.g. Toyota)"
+                    value={registerForm.make}
+                    onChange={e => setRegisterForm(p => ({ ...p, make: e.target.value }))}
+                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Model (e.g. Corolla)"
+                    value={registerForm.model}
+                    onChange={e => setRegisterForm(p => ({ ...p, model: e.target.value }))}
+                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setLinkMode(null)}
+                  className="flex-1 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={onRegisterCustomer}
+                  disabled={registerLoading}
+                  className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
+                >
+                  {registerLoading ? "Saving..." : hasVehicle ? "Save & Link" : "Save Customer"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Inline existing customer search & select */}
+          {linkMode === "existing" && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
+              <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
+                <UserCheck size={11} /> {hasVehicle ? "Link Existing Customer" : "Select Existing Customer"}
+              </p>
+              {hasVehicle && (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Make (e.g. Toyota)"
+                    value={existingLinkVehicleForm.make}
+                    onChange={e => setExistingLinkVehicleForm(p => ({ ...p, make: e.target.value }))}
+                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Model (e.g. Corolla)"
+                    value={existingLinkVehicleForm.model}
+                    onChange={e => setExistingLinkVehicleForm(p => ({ ...p, model: e.target.value }))}
+                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                </div>
+              )}
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400" />
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Search by name or phone..."
+                  value={customerSearchTerm}
+                  onChange={e => setCustomerSearchTerm(e.target.value)}
+                  className="w-full pl-7 pr-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+              </div>
+
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {customerSearchLoading ? (
+                  <p className="text-[11px] text-gray-400 text-center py-2 flex items-center justify-center gap-1">
+                    <Loader2 size={12} className="animate-spin" /> Searching...
+                  </p>
+                ) : customerSearchTerm.trim() && customerSearchResults.length === 0 ? (
+                  <p className="text-[11px] text-gray-400 text-center py-2">No customers found.</p>
+                ) : (
+                  customerSearchResults.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => onLinkExistingCustomer(c)}
+                      disabled={linkingCustomerId === c.id}
+                      className="w-full flex items-center justify-between gap-2 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50/60 rounded-lg px-2.5 py-1.5 transition-colors disabled:opacity-60 text-left"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-gray-800 truncate">{c.name}</p>
+                        {c.phone && <p className="text-[10px] text-gray-500">{c.phone}</p>}
+                      </div>
+                      <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full shrink-0">
+                        {linkingCustomerId === c.id ? "Linking..." : "Select"}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              <button
+                onClick={() => { setLinkMode(null); setExistingLinkVehicleForm({ make: "", model: "" }); }}
+                className="w-full py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- PAYMENT MODE MODAL ---
+const PaymentModal = ({
+  isOpen,
+  onClose,
+  paymentMode,
+  setPaymentMode,
+  partialAmountPaid,
+  setPartialAmountPaid,
+  creditNote,
+  setCreditNote,
+  totalAmount,
+  isCredit,
+  partialAmountInputRef,
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-gray-900 p-4 text-white flex justify-between items-center shrink-0">
+          <h3 className="font-bold text-lg flex items-center gap-2">
+            <Wallet size={20} /> Payment
+          </h3>
+          <button onClick={onClose} className="hover:bg-white/10 p-1 rounded-full">
+            <XCircle size={20} />
+          </button>
+        </div>
+
+        <div className="p-4 overflow-y-auto space-y-3">
+          <div className="grid grid-cols-3 gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setPaymentMode("PAID"); onClose(); }}
+              className={`py-2 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "PAID" ? "bg-red-600 text-white border-red-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              Full Payment
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentMode("PARTIAL")}
+              className={`py-2 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "PARTIAL" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              Partial
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentMode("CREDIT")}
+              className={`py-2 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "CREDIT" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              Full Credit
+            </button>
+          </div>
+
+          {paymentMode === "PARTIAL" && (
+            <div>
+              <label className="text-[11px] font-semibold text-blue-700 mb-1 block">Amount Received Now</label>
+              <input
+                ref={partialAmountInputRef}
+                type="number"
+                min="0"
+                step="0.01"
+                value={partialAmountPaid}
+                onChange={(e) => setPartialAmountPaid(e.target.value)}
+                placeholder="e.g. 5000"
+                className="w-full px-2.5 py-2 text-sm bg-blue-50 border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder-blue-300"
+              />
+              <p className="text-[11px] text-blue-600 mt-1 font-medium">
+                Balance on credit: LKR{" "}
+                {Math.max(totalAmount - (parseFloat(partialAmountPaid) || 0), 0).toLocaleString()}
+              </p>
+            </div>
+          )}
+
+          {isCredit && (
+            <textarea
+              value={creditNote}
+              onChange={(e) => setCreditNote(e.target.value)}
+              placeholder="Credit note (optional) — e.g. will pay balance by Friday"
+              rows={2}
+              className="w-full px-2.5 py-2 text-xs bg-amber-50 border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400 resize-none placeholder-amber-400/70"
+            />
+          )}
+
+          {paymentMode !== "PAID" && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full py-2 text-xs font-bold text-white bg-gray-800 rounded-lg hover:bg-gray-900"
+            >
+              Done
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const POSPage = () => {
   // ── Parts cache ──────────────────────────────────────────────────────────
@@ -307,10 +707,32 @@ const POSPage = () => {
   // --- Vehicle Lookup State ---
   const [vehicleLookupStatus, setVehicleLookupStatus] = useState("idle"); // idle | searching | found | not_found
   const [linkedCustomer, setLinkedCustomer] = useState(null); // { id, name, phone, ... }
+  const [linkedVehicle, setLinkedVehicle] = useState(null); // { vehicle_number, make, model, ... }
   const [linkMode, setLinkMode] = useState(null); // null | 'new' | 'existing'
-  const [registerForm, setRegisterForm] = useState({ name: "", phone: "" });
+  const [registerForm, setRegisterForm] = useState({ name: "", phone: "", make: "", model: "" });
+  const [existingLinkVehicleForm, setExistingLinkVehicleForm] = useState({ make: "", model: "" });
   const [registerLoading, setRegisterLoading] = useState(false);
   const vehicleLookupTimer = useRef(null);
+  // Bumped on every lookup kicked off (typing or tab switch) so a slower,
+  // now-superseded in-flight request can detect it's stale and no-op instead
+  // of overwriting newer state when it eventually resolves.
+  const vehicleLookupRequestRef = useRef(0);
+  const [vehicleModalOpen, setVehicleModalOpen] = useState(false);
+  const [focusVehicleOnOpen, setFocusVehicleOnOpen] = useState(false);
+  const vehicleNumberInputRef = useRef(null);
+
+  // Cache of vehicle_number -> { make, model } (or null if unregistered) so
+  // the "Active Repairs" tab bar can show make/model for every repair tab,
+  // not just the currently active one.
+  const [vehicleInfoByNumber, setVehicleInfoByNumber] = useState({});
+  const cacheVehicleInfo = useCallback((veh, vehicle) => {
+    const key = (veh || "").trim().toUpperCase();
+    if (!key) return;
+    setVehicleInfoByNumber((prev) => ({
+      ...prev,
+      [key]: { make: vehicle?.make || "", model: vehicle?.model || "" },
+    }));
+  }, []);
 
   // --- Existing Customer Search State (for linking a vehicle to an existing customer) ---
   const [customerSearchTerm, setCustomerSearchTerm] = useState("");
@@ -324,7 +746,9 @@ const POSPage = () => {
   const [creditNote, setCreditNote] = useState("");
   const [partialAmountPaid, setPartialAmountPaid] = useState("");
   const isCredit = paymentMode !== "PAID";
-  const [paymentExpanded, setPaymentExpanded] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [focusPartialOnOpen, setFocusPartialOnOpen] = useState(false);
+  const partialAmountInputRef = useRef(null);
 
   // Print Ref
   const receiptRef = useRef();
@@ -403,19 +827,18 @@ const POSPage = () => {
     setAlertInfo({ type: "success", message: "Repair cart discarded." });
   };
 
-  const handleCustomerNameChange = (name) => {
-    setCarts((prev) =>
-      prev.map((c) => (c.id === activeCartId ? { ...c, customerName: name } : c))
-    );
-  };
-
   const handleVehicleNumberChange = (veh) => {
     const upperVeh = veh.toUpperCase();
+    // Editing the plate invalidates whatever customer was previously linked
+    // to it, so clear the cart's customerName along with the lookup state
+    // below — otherwise a stale name lingers after switching to an
+    // unregistered/different plate.
     setCarts((prev) =>
-      prev.map((c) => (c.id === activeCartId ? { ...c, vehicleNumber: upperVeh } : c))
+      prev.map((c) => (c.id === activeCartId ? { ...c, vehicleNumber: upperVeh, customerName: "" } : c))
     );
     // Reset lookup state
     setLinkedCustomer(null);
+    setLinkedVehicle(null);
     setLinkMode(null);
     setCustomerSearchTerm("");
     setCustomerSearchResults([]);
@@ -423,13 +846,21 @@ const POSPage = () => {
 
     // Debounce vehicle number lookup
     if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
+    // Invalidate any lookup already in flight for a previous plate number —
+    // cancelling the timer above only stops ones that hadn't fired yet; this
+    // guards against a slower request resolving after a newer edit and
+    // clobbering the current (correct) state with stale results.
+    const requestId = ++vehicleLookupRequestRef.current;
     if (upperVeh.length >= 3) {
       setVehicleLookupStatus("searching");
       vehicleLookupTimer.current = setTimeout(async () => {
         try {
           const result = await lookupCustomerByVehicle(upperVeh);
+          if (vehicleLookupRequestRef.current !== requestId) return; // superseded by a newer edit
           if (result.found) {
             setLinkedCustomer(result.customer);
+            setLinkedVehicle(result.vehicle);
+            cacheVehicleInfo(upperVeh, result.vehicle);
             setVehicleLookupStatus("found");
             // Auto-fill customer name
             setCarts((prev) =>
@@ -441,7 +872,7 @@ const POSPage = () => {
             setVehicleLookupStatus("not_found");
           }
         } catch {
-          setVehicleLookupStatus("idle");
+          if (vehicleLookupRequestRef.current === requestId) setVehicleLookupStatus("idle");
         }
       }, 600);
     }
@@ -459,7 +890,13 @@ const POSPage = () => {
       const newCustomer = await createCustomer({ name: registerForm.name, phone: registerForm.phone });
       // 2. Add vehicle to customer
       if (vehicleNumber.trim()) {
-        await addVehicleToCustomer(newCustomer.id, { vehicle_number: vehicleNumber.trim() });
+        const vehiclePayload = { vehicle_number: vehicleNumber.trim() };
+        if (registerForm.make.trim()) vehiclePayload.make = registerForm.make.trim();
+        if (registerForm.model.trim()) vehiclePayload.model = registerForm.model.trim();
+        await addVehicleToCustomer(newCustomer.id, vehiclePayload);
+        const newVehicle = { vehicle_number: vehicleNumber.trim(), make: registerForm.make.trim(), model: registerForm.model.trim() };
+        setLinkedVehicle(newVehicle);
+        cacheVehicleInfo(vehicleNumber, newVehicle);
       }
       // 3. Link to cart
       setLinkedCustomer(newCustomer);
@@ -470,6 +907,7 @@ const POSPage = () => {
         )
       );
       setLinkMode(null);
+      setVehicleModalOpen(false);
       setAlertInfo({ type: "success", message: `${newCustomer.name} registered and linked!` });
     } catch (err) {
       setAlertInfo({ type: "error", message: err.response?.data?.name?.[0] || "Failed to register customer." });
@@ -503,21 +941,33 @@ const POSPage = () => {
   }, [customerSearchTerm, linkMode]);
 
   // Link the current vehicle to an existing, already-registered customer
+  // (or, if no vehicle number was entered, simply select that customer for this sale)
   const handleLinkExistingCustomer = async (customer) => {
     setLinkingCustomerId(customer.id);
     try {
-      const updatedCustomer = await addVehicleToCustomer(customer.id, { vehicle_number: vehicleNumber.trim() });
-      setLinkedCustomer(updatedCustomer);
+      let finalCustomer = customer;
+      if (vehicleNumber.trim()) {
+        const vehiclePayload = { vehicle_number: vehicleNumber.trim() };
+        if (existingLinkVehicleForm.make.trim()) vehiclePayload.make = existingLinkVehicleForm.make.trim();
+        if (existingLinkVehicleForm.model.trim()) vehiclePayload.model = existingLinkVehicleForm.model.trim();
+        finalCustomer = await addVehicleToCustomer(customer.id, vehiclePayload);
+        const newVehicle = { vehicle_number: vehicleNumber.trim(), make: existingLinkVehicleForm.make.trim(), model: existingLinkVehicleForm.model.trim() };
+        setLinkedVehicle(newVehicle);
+        cacheVehicleInfo(vehicleNumber, newVehicle);
+      }
+      setLinkedCustomer(finalCustomer);
       setVehicleLookupStatus("found");
       setCarts((prev) =>
         prev.map((c) =>
-          c.id === activeCartId ? { ...c, customerName: updatedCustomer.name } : c
+          c.id === activeCartId ? { ...c, customerName: finalCustomer.name } : c
         )
       );
       setLinkMode(null);
       setCustomerSearchTerm("");
       setCustomerSearchResults([]);
-      setAlertInfo({ type: "success", message: `Vehicle linked to ${updatedCustomer.name}!` });
+      setExistingLinkVehicleForm({ make: "", model: "" });
+      setVehicleModalOpen(false);
+      setAlertInfo({ type: "success", message: vehicleNumber.trim() ? `Vehicle linked to ${finalCustomer.name}!` : `${finalCustomer.name} selected!` });
     } catch (err) {
       setAlertInfo({ type: "error", message: err.response?.data?.vehicle_number?.[0] || "Failed to link vehicle to customer." });
     } finally {
@@ -525,18 +975,99 @@ const POSPage = () => {
     }
   };
 
-  // Reset lookup when active cart changes
+  // Re-resolve the vehicle/customer link for whichever cart becomes active
+  // (each cart keeps its own vehicleNumber, but the lookup result was only
+  // ever held in this shared state, so switching tabs used to wipe it).
   useEffect(() => {
-    setLinkedCustomer(null);
+    setVehicleModalOpen(false);
     setLinkMode(null);
     setCustomerSearchTerm("");
     setCustomerSearchResults([]);
-    setVehicleLookupStatus("idle");
-    setRegisterForm({ name: "", phone: "" });
+    setRegisterForm({ name: "", phone: "", make: "", model: "" });
+    setExistingLinkVehicleForm({ make: "", model: "" });
     setPaymentMode("PAID");
     setCreditNote("");
     setPartialAmountPaid("");
+    setPaymentModalOpen(false);
+
+    setLinkedCustomer(null);
+    setLinkedVehicle(null);
+    if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
+    // Invalidate any lookup still in flight from before the switch (e.g. one
+    // kicked off by typing on the previous cart) so its stale result can't
+    // bleed into whichever cart is now displayed.
+    const requestId = ++vehicleLookupRequestRef.current;
+
+    const veh = vehicleNumber.trim().toUpperCase();
+    if (veh.length >= 3) {
+      setVehicleLookupStatus("searching");
+      lookupCustomerByVehicle(veh)
+        .then((result) => {
+          if (vehicleLookupRequestRef.current !== requestId) return;
+          if (result.found) {
+            setLinkedCustomer(result.customer);
+            setLinkedVehicle(result.vehicle);
+            cacheVehicleInfo(veh, result.vehicle);
+            setVehicleLookupStatus("found");
+          } else {
+            setVehicleLookupStatus("not_found");
+          }
+        })
+        .catch(() => {
+          if (vehicleLookupRequestRef.current === requestId) setVehicleLookupStatus("idle");
+        });
+    } else {
+      setVehicleLookupStatus("idle");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCartId]);
+
+  // Resolve make/model for every repair tab's vehicle number (not just the
+  // active one) so the "Active Repairs" bar can show it for all tabs.
+  const cartVehicleNumbers = carts.map((c) => (c.vehicleNumber || "").trim().toUpperCase()).join("|");
+  useEffect(() => {
+    let ignore = false;
+    const numbers = Array.from(new Set(cartVehicleNumbers.split("|").filter((v) => v.length >= 3)));
+    const missing = numbers.filter((v) => !(v in vehicleInfoByNumber));
+    missing.forEach((veh) => {
+      lookupCustomerByVehicle(veh)
+        .then((result) => {
+          if (ignore) return;
+          setVehicleInfoByNumber((prev) =>
+            veh in prev ? prev : { ...prev, [veh]: result.found ? { make: result.vehicle?.make || "", model: result.vehicle?.model || "" } : null }
+          );
+        })
+        .catch(() => {
+          if (!ignore) {
+            setVehicleInfoByNumber((prev) => (veh in prev ? prev : { ...prev, [veh]: null }));
+          }
+        });
+    });
+    return () => {
+      ignore = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartVehicleNumbers]);
+
+  // Focus the Vehicle No. field once the modal opens in response to the
+  // Complete Sale required-field guard (see handleCheckout).
+  useEffect(() => {
+    if (vehicleModalOpen && focusVehicleOnOpen) {
+      const t = setTimeout(() => vehicleNumberInputRef.current?.focus(), 50);
+      setFocusVehicleOnOpen(false);
+      return () => clearTimeout(t);
+    }
+  }, [vehicleModalOpen, focusVehicleOnOpen]);
+
+  // Focus the partial-amount field once the Payment modal opens in response
+  // to the Complete Sale required-field guard (see handleCheckout).
+  useEffect(() => {
+    if (paymentModalOpen && focusPartialOnOpen) {
+      const t = setTimeout(() => partialAmountInputRef.current?.focus(), 50);
+      setFocusPartialOnOpen(false);
+      return () => clearTimeout(t);
+    }
+  }, [paymentModalOpen, focusPartialOnOpen]);
 
   // 3. Add to Cart
   const addToCart = useCallback((part) => {
@@ -717,10 +1248,17 @@ const POSPage = () => {
     return cart.reduce((sum, item) => sum + item.quantity, 0);
   }, [cart]);
 
+  const vehicleLabel = useMemo(
+    () => [linkedVehicle?.make, linkedVehicle?.model].filter(Boolean).join(" "),
+    [linkedVehicle]
+  );
+
   // 7. Checkout Logic (The Critical Part)
   const handleCheckout = async () => {
     if (!customerName) {
-      setAlertInfo({ type: "error", message: "Please enter Customer Name" });
+      setAlertInfo({ type: "error", message: "Please add a customer (Vehicle & Customer)" });
+      setVehicleModalOpen(true);
+      setFocusVehicleOnOpen(true);
       return;
     }
     if (cart.length === 0) {
@@ -739,6 +1277,8 @@ const POSPage = () => {
           type: "error",
           message: "Enter a valid amount received now — greater than 0 and less than the total.",
         });
+        setPaymentModalOpen(true);
+        setFocusPartialOnOpen(true);
         return;
       }
     }
@@ -950,6 +1490,47 @@ const POSPage = () => {
         onCancel={() => setCartToDelete(null)}
       />
 
+      <VehicleCustomerModal
+        isOpen={vehicleModalOpen}
+        onClose={() => setVehicleModalOpen(false)}
+        vehicleNumber={vehicleNumber}
+        onVehicleNumberChange={handleVehicleNumberChange}
+        vehicleLookupStatus={vehicleLookupStatus}
+        linkedCustomer={linkedCustomer}
+        linkedVehicle={linkedVehicle}
+        vehicleLabel={vehicleLabel}
+        linkMode={linkMode}
+        setLinkMode={setLinkMode}
+        registerForm={registerForm}
+        setRegisterForm={setRegisterForm}
+        registerLoading={registerLoading}
+        onRegisterCustomer={handleRegisterCustomer}
+        existingLinkVehicleForm={existingLinkVehicleForm}
+        setExistingLinkVehicleForm={setExistingLinkVehicleForm}
+        customerSearchTerm={customerSearchTerm}
+        setCustomerSearchTerm={setCustomerSearchTerm}
+        customerSearchResults={customerSearchResults}
+        setCustomerSearchResults={setCustomerSearchResults}
+        customerSearchLoading={customerSearchLoading}
+        linkingCustomerId={linkingCustomerId}
+        onLinkExistingCustomer={handleLinkExistingCustomer}
+        vehicleNumberInputRef={vehicleNumberInputRef}
+      />
+
+      <PaymentModal
+        isOpen={paymentModalOpen}
+        onClose={() => setPaymentModalOpen(false)}
+        paymentMode={paymentMode}
+        setPaymentMode={setPaymentMode}
+        partialAmountPaid={partialAmountPaid}
+        setPartialAmountPaid={setPartialAmountPaid}
+        creditNote={creditNote}
+        setCreditNote={setCreditNote}
+        totalAmount={totalAmount}
+        isCredit={isCredit}
+        partialAmountInputRef={partialAmountInputRef}
+      />
+
       {/* TOP BAR: ACTIVE CARTS MANAGEMENT */}
       <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 z-30 shadow-sm shrink-0">
         <div className="flex items-center gap-2">
@@ -979,7 +1560,12 @@ const POSPage = () => {
             const displayName = c.vehicleNumber
               ? c.vehicleNumber
               : (c.customerName ? c.customerName : `Repair ${index + 1}`);
-            const subText = c.vehicleNumber && c.customerName ? c.customerName : "";
+            const cartVehicleInfo = c.vehicleNumber
+              ? vehicleInfoByNumber[c.vehicleNumber.trim().toUpperCase()]
+              : null;
+            const subText = c.vehicleNumber && cartVehicleInfo
+              ? [cartVehicleInfo.make, cartVehicleInfo.model].filter(Boolean).join(" ")
+              : "";
 
             return (
               <div
@@ -1284,285 +1870,96 @@ const POSPage = () => {
           {/* BOTTOM ACTION AREA */}
           <div className="shrink-0 bg-white border-t border-gray-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-30 flex flex-col">
 
-            {/* Scrollable: Vehicle + Customer + lookup panels (capped so Total/Checkout stay pinned) */}
-            <div className="p-3 pb-2 overflow-y-auto max-h-[38vh]">
-
-              {/* Vehicle No. & Customer Name side-by-side to save vertical space */}
-              <div className="flex gap-2.5">
-                {/* Vehicle Number with smart lookup */}
+            {/* Compact Vehicle/Customer summary — opens VehicleCustomerModal for lookup/registration */}
+            <div className="p-3 pb-2">
+              <button
+                type="button"
+                onClick={() => setVehicleModalOpen(true)}
+                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 border text-left transition-colors ${vehicleLookupStatus === "found" && linkedCustomer
+                    ? "bg-green-50 border-green-200 hover:bg-green-100"
+                    : vehicleLookupStatus === "not_found"
+                      ? "bg-red-50 border-red-200 hover:bg-red-100"
+                      : vehicleNumber.trim()
+                        ? "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                        : "bg-red-50 border-red-200 hover:bg-red-100"
+                  }`}
+              >
+                <Car
+                  size={14}
+                  className={
+                    vehicleLookupStatus === "found" && linkedCustomer
+                      ? "text-green-600 shrink-0"
+                      : vehicleLookupStatus === "not_found"
+                        ? "text-red-500 shrink-0"
+                        : vehicleNumber.trim()
+                          ? "text-gray-400 shrink-0"
+                          : "text-red-500 shrink-0"
+                  }
+                />
                 <div className="flex-1 min-w-0">
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                    Vehicle No.
-                  </label>
-                  <div className="relative">
-                    <Car size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input
-                      value={vehicleNumber}
-                      onChange={(e) => handleVehicleNumberChange(e.target.value)}
-                      className={`w-full pl-7 pr-7 py-2 bg-gray-50 border rounded-lg focus:bg-white outline-none text-sm transition-all ${vehicleLookupStatus === "found"
-                          ? "border-green-400 focus:ring-1 focus:ring-green-400"
-                          : vehicleLookupStatus === "not_found"
-                            ? "border-amber-400 focus:ring-1 focus:ring-amber-400"
-                            : "border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500"
-                        }`}
-                      placeholder="Plate number..."
-                    />
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                      {vehicleLookupStatus === "searching" && <Loader2 size={13} className="text-gray-400 animate-spin" />}
-                      {vehicleLookupStatus === "found" && <BadgeCheck size={14} className="text-green-500" />}
-                      {vehicleLookupStatus === "not_found" && <UserPlus size={13} className="text-amber-500" />}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Customer Name — hidden once linked, since the chip below already shows the name */}
-                {!(vehicleLookupStatus === "found" && linkedCustomer) && (
-                  <div className="flex-1 min-w-0">
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-                      Customer Name <span className="text-red-400">*</span>
-                    </label>
-                    <div className="relative">
-                      <User size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input
-                        value={customerName}
-                        onChange={(e) => handleCustomerNameChange(e.target.value)}
-                        className="w-full pl-7 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:bg-white focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none text-sm transition-all"
-                        placeholder="Required"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Found: show linked customer chip (replaces the Customer Name field above) */}
-              {vehicleLookupStatus === "found" && linkedCustomer && (
-                <div className="mt-2 flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
-                  <User size={12} className="text-green-600 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-green-800 truncate">{linkedCustomer.name}</p>
-                    {linkedCustomer.phone && <p className="text-[10px] text-green-600">{linkedCustomer.phone}</p>}
-                  </div>
-                  <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">Linked</span>
-                </div>
-              )}
-
-              {/* Not found: show New vs Existing customer choice */}
-              {vehicleLookupStatus === "not_found" && !linkMode && (
-                <div className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 space-y-1.5">
-                  <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered</p>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={() => { setLinkMode("new"); setRegisterForm({ name: "", phone: "" }); }}
-                      className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-lg transition-colors"
-                    >
-                      <UserPlus size={11} /> New Customer
-                    </button>
-                    <button
-                      onClick={() => { setLinkMode("existing"); setCustomerSearchTerm(""); setCustomerSearchResults([]); }}
-                      className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded-lg transition-colors"
-                    >
-                      <UserCheck size={11} /> Existing Customer
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Inline register form (New Customer) */}
-              {linkMode === "new" && (
-                <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
-                  <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
-                    <UserPlus size={11} /> New Customer
-                  </p>
-                  <input
-                    type="text"
-                    placeholder="Customer Name *"
-                    value={registerForm.name}
-                    onChange={e => setRegisterForm(p => ({ ...p, name: e.target.value }))}
-                    className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Phone (optional)"
-                    value={registerForm.phone}
-                    onChange={e => setRegisterForm(p => ({ ...p, phone: e.target.value }))}
-                    className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setLinkMode(null)}
-                      className="flex-1 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleRegisterCustomer}
-                      disabled={registerLoading}
-                      className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
-                    >
-                      {registerLoading ? "Saving..." : "Save & Link"}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Inline existing customer search & select */}
-              {linkMode === "existing" && (
-                <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
-                  <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
-                    <UserCheck size={11} /> Link Existing Customer
-                  </p>
-                  <div className="relative">
-                    <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400" />
-                    <input
-                      type="text"
-                      autoFocus
-                      placeholder="Search by name or phone..."
-                      value={customerSearchTerm}
-                      onChange={e => setCustomerSearchTerm(e.target.value)}
-                      className="w-full pl-7 pr-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                    />
-                  </div>
-
-                  <div className="max-h-32 overflow-y-auto space-y-1">
-                    {customerSearchLoading ? (
-                      <p className="text-[11px] text-gray-400 text-center py-2 flex items-center justify-center gap-1">
-                        <Loader2 size={12} className="animate-spin" /> Searching...
+                  {vehicleLookupStatus === "found" && linkedCustomer ? (
+                    <>
+                      <p className="text-xs font-bold text-green-800 truncate">
+                        {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ") || linkedCustomer.name}
                       </p>
-                    ) : customerSearchTerm.trim() && customerSearchResults.length === 0 ? (
-                      <p className="text-[11px] text-gray-400 text-center py-2">No customers found.</p>
-                    ) : (
-                      customerSearchResults.map((c) => (
-                        <button
-                          key={c.id}
-                          onClick={() => handleLinkExistingCustomer(c)}
-                          disabled={linkingCustomerId === c.id}
-                          className="w-full flex items-center justify-between gap-2 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50/60 rounded-lg px-2.5 py-1.5 transition-colors disabled:opacity-60 text-left"
-                        >
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-gray-800 truncate">{c.name}</p>
-                            {c.phone && <p className="text-[10px] text-gray-500">{c.phone}</p>}
-                          </div>
-                          <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full shrink-0">
-                            {linkingCustomerId === c.id ? "Linking..." : "Select"}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-
-                  <button
-                    onClick={() => setLinkMode(null)}
-                    className="w-full py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-                  >
-                    Cancel
-                  </button>
+                      <p className="text-[10px] text-green-600 truncate">
+                        {[linkedCustomer.name, linkedCustomer.phone].filter(Boolean).join(" · ")}
+                      </p>
+                    </>
+                  ) : vehicleLookupStatus === "not_found" ? (
+                    <>
+                      <p className="text-xs font-bold text-red-700 truncate">{vehicleNumber}</p>
+                      <p className="text-[10px] text-red-500 truncate">Not registered — tap to add customer</p>
+                    </>
+                  ) : vehicleNumber.trim() ? (
+                    <>
+                      <p className="text-xs font-bold text-gray-700 truncate">{vehicleNumber}</p>
+                      <p className="text-[10px] text-gray-400 truncate">
+                        {vehicleLookupStatus === "searching" ? "Searching..." : "No customer linked"}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs font-bold text-red-600">
+                      + Add Vehicle / Customer <span className="font-normal text-red-400">(Required)</span>
+                    </p>
+                  )}
                 </div>
-              )}
+                {vehicleLookupStatus === "found" && linkedCustomer && (
+                  <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full shrink-0">Linked</span>
+                )}
+                <ChevronUp size={13} className="text-gray-400 -rotate-90 shrink-0" />
+              </button>
             </div>
 
             {/* Pinned: Total + Checkout (always visible regardless of lookup panel state) */}
             <div className="px-3 pt-2 pb-3 border-t border-gray-100">
 
-              {/* Payment Mode Selector — collapsible */}
-              <div className="mb-2">
-                {/* Collapsed header row */}
-                <button
-                  type="button"
-                  onClick={() => setPaymentExpanded((v) => !v)}
-                  className="w-full flex items-center justify-between group"
-                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
-                >
-                  <span className="flex items-center gap-1.5 text-xs font-bold text-gray-600">
-                    <Wallet size={13} className={isCredit ? "text-amber-600" : "text-gray-400"} />
-                    Payment
-                    {/* Current selection badge */}
-                    <span
-                      className={`ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        paymentMode === "PAID"
-                          ? "bg-red-100 text-red-700"
-                          : paymentMode === "PARTIAL"
-                          ? "bg-blue-100 text-blue-700"
-                          : "bg-amber-100 text-amber-700"
-                      }`}
-                    >
-                      {paymentMode === "PAID" ? "Full Payment" : paymentMode === "PARTIAL" ? "Partial" : "Full Credit"}
-                    </span>
-                  </span>
-                  {/* Chevron arrow */}
-                  <svg
-                    width="14" height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className={`text-gray-400 group-hover:text-gray-600 transition-transform duration-200 ${
-                      paymentExpanded ? "rotate-180" : ""
-                    }`}
-                  >
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </button>
-
-                {/* Expandable panel */}
-                {paymentExpanded && (
-                  <div className="mt-2">
-                    <div className="grid grid-cols-3 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => { setPaymentMode("PAID"); setPaymentExpanded(false); }}
-                        className={`py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "PAID" ? "bg-red-600 text-white border-red-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
-                      >
-                        Full Payment
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setPaymentMode("PARTIAL"); setPaymentExpanded(false); }}
-                        className={`py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "PARTIAL" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
-                      >
-                        Partial
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setPaymentMode("CREDIT"); setPaymentExpanded(false); }}
-                        className={`py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${paymentMode === "CREDIT" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
-                      >
-                        Full Credit
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {paymentMode === "PARTIAL" && (
-                <div className="mb-2">
-                  <label className="text-[11px] font-semibold text-blue-700 mb-1 block">Amount Received Now</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={partialAmountPaid}
-                    onChange={(e) => setPartialAmountPaid(e.target.value)}
-                    placeholder="e.g. 5000"
-                    className="w-full px-2.5 py-2 text-sm bg-blue-50 border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder-blue-300"
-                  />
-                  <p className="text-[11px] text-blue-600 mt-1 font-medium">
-                    Balance on credit: LKR{" "}
-                    {Math.max(totalAmount - (parseFloat(partialAmountPaid) || 0), 0).toLocaleString()}
+              {/* Compact Payment summary — opens PaymentModal for mode/amount/note */}
+              <button
+                type="button"
+                onClick={() => setPaymentModalOpen(true)}
+                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 mb-2 border text-left transition-colors ${paymentMode === "PAID"
+                    ? "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                    : paymentMode === "PARTIAL"
+                      ? "bg-blue-50 border-blue-200 hover:bg-blue-100"
+                      : "bg-amber-50 border-amber-200 hover:bg-amber-100"
+                  }`}
+              >
+                <Wallet size={14} className={isCredit ? "text-amber-600 shrink-0" : "text-gray-400 shrink-0"} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-bold truncate ${paymentMode === "PAID" ? "text-gray-700" : paymentMode === "PARTIAL" ? "text-blue-800" : "text-amber-800"}`}>
+                    {paymentMode === "PAID" ? "Full Payment" : paymentMode === "PARTIAL" ? "Partial Payment" : "Full Credit"}
+                  </p>
+                  <p className={`text-[10px] truncate ${paymentMode === "PAID" ? "text-gray-400" : paymentMode === "PARTIAL" ? "text-blue-600" : "text-amber-600"}`}>
+                    {paymentMode === "PARTIAL"
+                      ? `LKR ${Math.max(totalAmount - (parseFloat(partialAmountPaid) || 0), 0).toLocaleString()} due`
+                      : paymentMode === "CREDIT"
+                        ? (creditNote.trim() || "No note added")
+                        : "Pay in full at checkout"}
                   </p>
                 </div>
-              )}
-
-              {isCredit && (
-                <textarea
-                  value={creditNote}
-                  onChange={(e) => setCreditNote(e.target.value)}
-                  placeholder="Credit note (optional) — e.g. will pay balance by Friday"
-                  rows={2}
-                  className="w-full mb-2 px-2.5 py-2 text-xs bg-amber-50 border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400 resize-none placeholder-amber-400/70"
-                />
-              )}
+                <ChevronUp size={13} className="text-gray-400 -rotate-90 shrink-0" />
+              </button>
 
               <div className="flex justify-between items-end mb-2.5">
                 <span className="text-sm font-medium text-gray-500">

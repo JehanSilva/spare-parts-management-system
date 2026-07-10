@@ -1,6 +1,10 @@
 import axios from "axios";
 
-const API_URL = process.env.REACT_APP_API_URL;
+// Falls back to the hostname the page was loaded from (e.g. a LAN IP when
+// accessing the dev server from a phone) instead of a hardcoded localhost,
+// so REACT_APP_API_URL only needs to be set explicitly for prod deploys.
+const API_URL =
+  process.env.REACT_APP_API_URL || `http://${window.location.hostname}:8000/api`;
 // Create a customized axios instance
 const API = axios.create({ baseURL: API_URL });
 
@@ -100,8 +104,8 @@ export const updateSale = async (id, data) =>
   (await API.patch(`/sales/${id}/update/`, data)).data;
 export const cancelSale = async (id, data) =>
   (await API.post(`/sales/${id}/cancel/`, data)).data;
-export const markSaleAsPaid = async (id) =>
-  (await API.post(`/sales/${id}/mark-paid/`)).data;
+export const markSaleAsPaid = async (id, amount) =>
+  (await API.post(`/sales/${id}/mark-paid/`, amount != null ? { amount } : {})).data;
 export const fetchDashboardStats = async (period = 'all') =>
   (await API.get("/dashboard/stats/", { params: { period } })).data;
 export const fetchDailyReport = async (date) =>

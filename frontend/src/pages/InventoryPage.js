@@ -535,7 +535,7 @@ const InventoryPage = () => {
             Manage spare parts, stock levels, and prices.
           </p>
         </div>
-        <div className="flex w-full md:w-auto gap-2">
+        <div className="flex flex-col md:flex-row w-full md:w-auto gap-2">
           <input
             type="file"
             accept=".xlsx, .xls"

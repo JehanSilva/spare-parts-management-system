@@ -207,12 +207,29 @@ const CancelSaleModal = ({ isOpen, sale, onClose, onConfirm }) => {
 
 // --- Mark Credit as Received Modal Component ---
 const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
+  const [mode, setMode] = useState("full"); // "full" | "partial"
+  const [partialAmount, setPartialAmount] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setMode("full");
+      setPartialAmount("");
+    }
+  }, [isOpen]);
+
   if (!isOpen || !sale) return null;
 
   const formatLKR = (amount) =>
     new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
   const dueAmount = parseFloat(sale.total_amount || 0) - parseFloat(sale.amount_paid || 0);
+  const parsedPartial = parseFloat(partialAmount);
+  const isPartialValid = partialAmount !== "" && !isNaN(parsedPartial) && parsedPartial > 0 && parsedPartial <= dueAmount;
+  const canConfirm = mode === "full" || isPartialValid;
+
+  const handleConfirmClick = () => {
+    onConfirm(mode === "partial" ? parsedPartial : undefined);
+  };
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
@@ -220,15 +237,15 @@ const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
         <div className="bg-green-700 p-4 text-white flex justify-between items-center">
           <div className="flex items-center gap-2">
             <Wallet size={20} />
-            <h3 className="font-bold text-lg">Mark Balance as Received</h3>
+            <h3 className="font-bold text-lg">Settle Balance</h3>
           </div>
           <button onClick={onClose} className="hover:bg-green-600 p-1 rounded-full"><XCircle size={20} /></button>
         </div>
         <div className="p-6 space-y-4 text-left">
           <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-900">
             <p>
-              Confirm that <span className="font-bold">{sale.customer_name}</span> has paid the outstanding{" "}
-              <span className="font-bold">{formatLKR(dueAmount)}</span> balance for this sale.
+              <span className="font-bold">{sale.customer_name}</span> owes{" "}
+              <span className="font-bold">{formatLKR(dueAmount)}</span> on this sale.
               {sale.payment_status === "PARTIAL" && (
                 <span className="block text-xs text-green-700 mt-1">
                   ({formatLKR(sale.amount_paid)} already received of {formatLKR(sale.total_amount)} total)
@@ -241,14 +258,55 @@ const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
               "{sale.credit_note}"
             </div>
           )}
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setMode("full")}
+              className={`py-2 rounded-lg text-sm font-bold border transition-colors ${mode === "full" ? "bg-green-600 text-white border-green-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              Full Amount
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("partial")}
+              className={`py-2 rounded-lg text-sm font-bold border transition-colors ${mode === "partial" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              Partial Amount
+            </button>
+          </div>
+
+          {mode === "partial" && (
+            <div>
+              <label className="text-xs font-semibold text-blue-700 mb-1 block">Amount Received Now</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                autoFocus
+                value={partialAmount}
+                onChange={(e) => setPartialAmount(e.target.value)}
+                placeholder={`Up to ${formatLKR(dueAmount)}`}
+                className="w-full px-3 py-2 text-sm bg-blue-50 border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400 placeholder-blue-300"
+              />
+              {partialAmount !== "" && !isPartialValid ? (
+                <p className="text-xs text-red-600 mt-1">Enter an amount greater than 0 and up to {formatLKR(dueAmount)}.</p>
+              ) : isPartialValid ? (
+                <p className="text-xs text-blue-600 mt-1 font-medium">
+                  Remaining balance after this payment: {formatLKR(dueAmount - parsedPartial)}
+                </p>
+              ) : null}
+            </div>
+          )}
+
           <div className="flex gap-3 pt-2">
             <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition">Cancel</button>
             <button
-              onClick={onConfirm}
-              disabled={loading}
+              onClick={handleConfirmClick}
+              disabled={loading || !canConfirm}
               className="flex-1 py-2.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition shadow-lg shadow-green-200 disabled:opacity-60 flex items-center justify-center gap-2"
             >
-              {loading ? "Saving..." : (<><CheckCircle size={16} /> Mark as Received</>)}
+              {loading ? "Saving..." : (<><CheckCircle size={16} /> {mode === "partial" ? "Record Payment" : "Mark as Received"}</>)}
             </button>
           </div>
         </div>
@@ -380,15 +438,21 @@ const SalesHistoryPage = () => {
     setSaleToMarkPaid(sale);
   };
 
-  const handleConfirmMarkPaid = async () => {
+  const handleConfirmMarkPaid = async (amount) => {
     setMarkPaidLoading(true);
     try {
-      const result = await markSaleAsPaid(saleToMarkPaid.id);
+      const result = await markSaleAsPaid(saleToMarkPaid.id, amount);
       setSales(sales.map(s => s.id === result.id ? result : s));
       setSaleToMarkPaid(null);
-      setAlertInfo({ type: "success", message: "Marked as received — credit settled!" });
+      const stillDue = parseFloat(result.total_amount) - parseFloat(result.amount_paid || 0);
+      setAlertInfo({
+        type: "success",
+        message: stillDue > 0
+          ? `Partial payment recorded — ${formatLKR(stillDue)} still due.`
+          : "Marked as received — credit settled!",
+      });
     } catch (error) {
-      setAlertInfo({ type: "error", message: "Failed to mark sale as received." });
+      setAlertInfo({ type: "error", message: error.response?.data?.error || "Failed to record payment." });
     } finally {
       setMarkPaidLoading(false);
     }
@@ -492,28 +556,19 @@ const SalesHistoryPage = () => {
         )}
       </div>
 
-      {/* Outstanding Credit Summary */}
+      {/* Outstanding Credit Summary — informational only. The filter toggle
+          lives solely in the always-visible Filters Area below so there's
+          exactly one control for it, and it stays reachable even after
+          every outstanding sale has been settled and this banner disappears. */}
       {outstandingCreditSales.length > 0 && (
-        <div className="max-w-3xl w-full mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-amber-100 rounded-lg text-amber-700">
-              <Wallet size={20} />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">Outstanding Credit</p>
-              <p className="text-lg font-extrabold text-amber-900">{formatLKR(outstandingCreditTotal)} <span className="text-xs font-medium text-amber-600">across {outstandingCreditSales.length} sale{outstandingCreditSales.length > 1 ? "s" : ""}</span></p>
-            </div>
+        <div className="max-w-3xl w-full mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
+          <div className="p-2 bg-amber-100 rounded-lg text-amber-700">
+            <Wallet size={20} />
           </div>
-          <button
-            onClick={() => setPaymentFilter(paymentFilter === "CREDIT" ? "ALL" : "CREDIT")}
-            className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
-              paymentFilter === "CREDIT"
-                ? "bg-amber-600 text-white"
-                : "bg-white text-amber-700 border border-amber-300 hover:bg-amber-100"
-            }`}
-          >
-            {paymentFilter === "CREDIT" ? "Showing Credit Only" : "View Credit Sales"}
-          </button>
+          <div>
+            <p className="text-xs font-bold text-amber-700 uppercase tracking-wider">Outstanding Credit</p>
+            <p className="text-lg font-extrabold text-amber-900">{formatLKR(outstandingCreditTotal)} <span className="text-xs font-medium text-amber-600">across {outstandingCreditSales.length} sale{outstandingCreditSales.length > 1 ? "s" : ""}</span></p>
+          </div>
         </div>
       )}
 
@@ -531,14 +586,16 @@ const SalesHistoryPage = () => {
           />
         </div>
 
-        {/* Date Filter */}
+        {/* Date Filter — no custom left icon: iOS Safari's native date-input
+            renderer doesn't reliably make room for padding-based overlays,
+            and ends up clipping its own placeholder text instead. The
+            native calendar affordance (desktop and mobile) is enough on
+            its own; bg-white + appearance-none keeps iOS from applying its
+            own greyed-out control background. */}
         <div className="relative md:w-56 shrink-0">
-          <div className="absolute left-3 top-3 text-gray-400 pointer-events-none">
-            <Calendar size={20} />
-          </div>
           <input
             type="date"
-            className="w-full pl-10 pr-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm text-gray-700"
+            className="w-full pr-10 p-3 border border-gray-300 rounded-lg shadow-sm bg-white appearance-none focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm text-gray-700"
             value={filterDate}
             onChange={(e) => setFilterDate(e.target.value)}
           />
@@ -552,6 +609,22 @@ const SalesHistoryPage = () => {
             </button>
           )}
         </div>
+
+        {/* Payment Status Filter — always available (not tied to whether
+            there's currently outstanding credit) so it can always be
+            toggled back to "All Sales". */}
+        <button
+          type="button"
+          onClick={() => setPaymentFilter(paymentFilter === "CREDIT" ? "ALL" : "CREDIT")}
+          className={`shrink-0 px-4 py-3 rounded-lg text-sm font-bold border transition-colors flex items-center justify-center gap-2 ${
+            paymentFilter === "CREDIT"
+              ? "bg-amber-600 text-white border-amber-600"
+              : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+          }`}
+        >
+          <Wallet size={16} />
+          {paymentFilter === "CREDIT" ? "Credit Only" : "All Sales"}
+        </button>
       </div>
 
       {/* --- CONTENT --- */}

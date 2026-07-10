@@ -8,7 +8,7 @@ from rest_framework import status
 from django.db.models import Sum, F
 from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle
 from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from .models import Vehicle
 from .serializers import VehicleSerializer
 from django.shortcuts import get_object_or_404
@@ -748,16 +748,41 @@ def cancel_sale(request, pk):
 @api_view(['POST'])
 def mark_sale_paid(request, pk):
     """
-    Mark a credit (pay-later) or partially-paid sale's outstanding balance as received/settled.
+    Settle a credit (pay-later) or partially-paid sale's outstanding balance.
+    POST body: { "amount": <optional> } — an amount less than the remaining
+    balance records a further partial payment (status stays/becomes PARTIAL);
+    omitting it (or sending the full remaining balance) settles it in full.
     """
     sale = get_object_or_404(Sale, pk=pk)
 
     if sale.payment_status not in ('CREDIT', 'PARTIAL'):
         return Response({"error": "This sale has no pending balance."}, status=status.HTTP_400_BAD_REQUEST)
 
-    sale.payment_status = 'PAID'
-    sale.amount_paid = sale.total_amount
-    sale.credit_settled_at = timezone.now()
+    total = Decimal(str(sale.total_amount))
+    already_paid = Decimal(str(sale.amount_paid or 0))
+    due = total - already_paid
+
+    amount = request.data.get('amount')
+    if amount in (None, ''):
+        settle_amount = due
+    else:
+        try:
+            settle_amount = Decimal(str(amount))
+        except (InvalidOperation, TypeError):
+            return Response({"error": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
+        if settle_amount <= 0:
+            return Response({"error": "Amount must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+        if settle_amount > due:
+            return Response({"error": f"Amount exceeds the outstanding balance of {due}."}, status=status.HTTP_400_BAD_REQUEST)
+
+    new_paid = already_paid + settle_amount
+    if new_paid >= total:
+        sale.amount_paid = total
+        sale.payment_status = 'PAID'
+        sale.credit_settled_at = timezone.now()
+    else:
+        sale.amount_paid = new_paid
+        sale.payment_status = 'PARTIAL'
     sale.save()
 
     return Response(SaleSerializer(sale).data)

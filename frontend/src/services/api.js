@@ -104,8 +104,8 @@ export const updateSale = async (id, data) =>
   (await API.patch(`/sales/${id}/update/`, data)).data;
 export const cancelSale = async (id, data) =>
   (await API.post(`/sales/${id}/cancel/`, data)).data;
-export const markSaleAsPaid = async (id) =>
-  (await API.post(`/sales/${id}/mark-paid/`)).data;
+export const markSaleAsPaid = async (id, amount) =>
+  (await API.post(`/sales/${id}/mark-paid/`, amount != null ? { amount } : {})).data;
 export const fetchDashboardStats = async (period = 'all') =>
   (await API.get("/dashboard/stats/", { params: { period } })).data;
 export const fetchDailyReport = async (date) =>

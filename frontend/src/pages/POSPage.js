@@ -307,8 +307,10 @@ const POSPage = () => {
   // --- Vehicle Lookup State ---
   const [vehicleLookupStatus, setVehicleLookupStatus] = useState("idle"); // idle | searching | found | not_found
   const [linkedCustomer, setLinkedCustomer] = useState(null); // { id, name, phone, ... }
+  const [linkedVehicle, setLinkedVehicle] = useState(null); // { vehicle_number, make, model, ... }
   const [linkMode, setLinkMode] = useState(null); // null | 'new' | 'existing'
-  const [registerForm, setRegisterForm] = useState({ name: "", phone: "" });
+  const [registerForm, setRegisterForm] = useState({ name: "", phone: "", make: "", model: "" });
+  const [existingLinkVehicleForm, setExistingLinkVehicleForm] = useState({ make: "", model: "" });
   const [registerLoading, setRegisterLoading] = useState(false);
   const vehicleLookupTimer = useRef(null);
 
@@ -416,6 +418,7 @@ const POSPage = () => {
     );
     // Reset lookup state
     setLinkedCustomer(null);
+    setLinkedVehicle(null);
     setLinkMode(null);
     setCustomerSearchTerm("");
     setCustomerSearchResults([]);
@@ -430,6 +433,7 @@ const POSPage = () => {
           const result = await lookupCustomerByVehicle(upperVeh);
           if (result.found) {
             setLinkedCustomer(result.customer);
+            setLinkedVehicle(result.vehicle);
             setVehicleLookupStatus("found");
             // Auto-fill customer name
             setCarts((prev) =>
@@ -459,7 +463,11 @@ const POSPage = () => {
       const newCustomer = await createCustomer({ name: registerForm.name, phone: registerForm.phone });
       // 2. Add vehicle to customer
       if (vehicleNumber.trim()) {
-        await addVehicleToCustomer(newCustomer.id, { vehicle_number: vehicleNumber.trim() });
+        const vehiclePayload = { vehicle_number: vehicleNumber.trim() };
+        if (registerForm.make.trim()) vehiclePayload.make = registerForm.make.trim();
+        if (registerForm.model.trim()) vehiclePayload.model = registerForm.model.trim();
+        await addVehicleToCustomer(newCustomer.id, vehiclePayload);
+        setLinkedVehicle({ vehicle_number: vehicleNumber.trim(), make: registerForm.make.trim(), model: registerForm.model.trim() });
       }
       // 3. Link to cart
       setLinkedCustomer(newCustomer);
@@ -506,8 +514,12 @@ const POSPage = () => {
   const handleLinkExistingCustomer = async (customer) => {
     setLinkingCustomerId(customer.id);
     try {
-      const updatedCustomer = await addVehicleToCustomer(customer.id, { vehicle_number: vehicleNumber.trim() });
+      const vehiclePayload = { vehicle_number: vehicleNumber.trim() };
+      if (existingLinkVehicleForm.make.trim()) vehiclePayload.make = existingLinkVehicleForm.make.trim();
+      if (existingLinkVehicleForm.model.trim()) vehiclePayload.model = existingLinkVehicleForm.model.trim();
+      const updatedCustomer = await addVehicleToCustomer(customer.id, vehiclePayload);
       setLinkedCustomer(updatedCustomer);
+      setLinkedVehicle({ vehicle_number: vehicleNumber.trim(), make: existingLinkVehicleForm.make.trim(), model: existingLinkVehicleForm.model.trim() });
       setVehicleLookupStatus("found");
       setCarts((prev) =>
         prev.map((c) =>
@@ -517,6 +529,7 @@ const POSPage = () => {
       setLinkMode(null);
       setCustomerSearchTerm("");
       setCustomerSearchResults([]);
+      setExistingLinkVehicleForm({ make: "", model: "" });
       setAlertInfo({ type: "success", message: `Vehicle linked to ${updatedCustomer.name}!` });
     } catch (err) {
       setAlertInfo({ type: "error", message: err.response?.data?.vehicle_number?.[0] || "Failed to link vehicle to customer." });
@@ -525,17 +538,49 @@ const POSPage = () => {
     }
   };
 
-  // Reset lookup when active cart changes
+  // Re-resolve the vehicle/customer link for whichever cart becomes active
+  // (each cart keeps its own vehicleNumber, but the lookup result was only
+  // ever held in this shared state, so switching tabs used to wipe it).
   useEffect(() => {
-    setLinkedCustomer(null);
+    let ignore = false;
     setLinkMode(null);
     setCustomerSearchTerm("");
     setCustomerSearchResults([]);
-    setVehicleLookupStatus("idle");
-    setRegisterForm({ name: "", phone: "" });
+    setRegisterForm({ name: "", phone: "", make: "", model: "" });
+    setExistingLinkVehicleForm({ make: "", model: "" });
     setPaymentMode("PAID");
     setCreditNote("");
     setPartialAmountPaid("");
+
+    setLinkedCustomer(null);
+    setLinkedVehicle(null);
+    if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
+
+    const veh = vehicleNumber.trim().toUpperCase();
+    if (veh.length >= 3) {
+      setVehicleLookupStatus("searching");
+      lookupCustomerByVehicle(veh)
+        .then((result) => {
+          if (ignore) return;
+          if (result.found) {
+            setLinkedCustomer(result.customer);
+            setLinkedVehicle(result.vehicle);
+            setVehicleLookupStatus("found");
+          } else {
+            setVehicleLookupStatus("not_found");
+          }
+        })
+        .catch(() => {
+          if (!ignore) setVehicleLookupStatus("idle");
+        });
+    } else {
+      setVehicleLookupStatus("idle");
+    }
+
+    return () => {
+      ignore = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCartId]);
 
   // 3. Add to Cart
@@ -1334,17 +1379,24 @@ const POSPage = () => {
                 )}
               </div>
 
-              {/* Found: show linked customer chip (replaces the Customer Name field above) */}
-              {vehicleLookupStatus === "found" && linkedCustomer && (
-                <div className="mt-2 flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
-                  <User size={12} className="text-green-600 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-bold text-green-800 truncate">{linkedCustomer.name}</p>
-                    {linkedCustomer.phone && <p className="text-[10px] text-green-600">{linkedCustomer.phone}</p>}
+              {/* Found: show linked vehicle chip (replaces the Customer Name field above) */}
+              {vehicleLookupStatus === "found" && linkedCustomer && (() => {
+                const vehicleLabel = [linkedVehicle?.make, linkedVehicle?.model].filter(Boolean).join(" ");
+                return (
+                  <div className="mt-2 flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-2.5 py-1.5">
+                    <Car size={12} className="text-green-600 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-green-800 truncate">{vehicleLabel || linkedCustomer.name}</p>
+                      <p className="text-[10px] text-green-600 truncate">
+                        {vehicleLabel
+                          ? [linkedCustomer.name, linkedCustomer.phone].filter(Boolean).join(" · ")
+                          : (linkedCustomer.phone || "")}
+                      </p>
+                    </div>
+                    <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">Linked</span>
                   </div>
-                  <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full">Linked</span>
-                </div>
-              )}
+                );
+              })()}
 
               {/* Not found: show New vs Existing customer choice */}
               {vehicleLookupStatus === "not_found" && !linkMode && (
@@ -1352,13 +1404,13 @@ const POSPage = () => {
                   <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered</p>
                   <div className="flex gap-1.5">
                     <button
-                      onClick={() => { setLinkMode("new"); setRegisterForm({ name: "", phone: "" }); }}
+                      onClick={() => { setLinkMode("new"); setRegisterForm({ name: "", phone: "", make: "", model: "" }); }}
                       className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-lg transition-colors"
                     >
                       <UserPlus size={11} /> New Customer
                     </button>
                     <button
-                      onClick={() => { setLinkMode("existing"); setCustomerSearchTerm(""); setCustomerSearchResults([]); }}
+                      onClick={() => { setLinkMode("existing"); setCustomerSearchTerm(""); setCustomerSearchResults([]); setExistingLinkVehicleForm({ make: "", model: "" }); }}
                       className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded-lg transition-colors"
                     >
                       <UserCheck size={11} /> Existing Customer
@@ -1388,6 +1440,22 @@ const POSPage = () => {
                     className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
                   />
                   <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Make (e.g. Toyota)"
+                      value={registerForm.make}
+                      onChange={e => setRegisterForm(p => ({ ...p, make: e.target.value }))}
+                      className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Model (e.g. Corolla)"
+                      value={registerForm.model}
+                      onChange={e => setRegisterForm(p => ({ ...p, model: e.target.value }))}
+                      className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                  </div>
+                  <div className="flex gap-2">
                     <button
                       onClick={() => setLinkMode(null)}
                       className="flex-1 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
@@ -1411,6 +1479,22 @@ const POSPage = () => {
                   <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
                     <UserCheck size={11} /> Link Existing Customer
                   </p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Make (e.g. Toyota)"
+                      value={existingLinkVehicleForm.make}
+                      onChange={e => setExistingLinkVehicleForm(p => ({ ...p, make: e.target.value }))}
+                      className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Model (e.g. Corolla)"
+                      value={existingLinkVehicleForm.model}
+                      onChange={e => setExistingLinkVehicleForm(p => ({ ...p, model: e.target.value }))}
+                      className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                  </div>
                   <div className="relative">
                     <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400" />
                     <input
@@ -1451,7 +1535,7 @@ const POSPage = () => {
                   </div>
 
                   <button
-                    onClick={() => setLinkMode(null)}
+                    onClick={() => { setLinkMode(null); setExistingLinkVehicleForm({ make: "", model: "" }); }}
                     className="w-full py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
                   >
                     Cancel

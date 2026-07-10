@@ -1,6 +1,10 @@
 import axios from "axios";
 
-const API_URL = process.env.REACT_APP_API_URL;
+// Falls back to the hostname the page was loaded from (e.g. a LAN IP when
+// accessing the dev server from a phone) instead of a hardcoded localhost,
+// so REACT_APP_API_URL only needs to be set explicitly for prod deploys.
+const API_URL =
+  process.env.REACT_APP_API_URL || `http://${window.location.hostname}:8000/api`;
 // Create a customized axios instance
 const API = axios.create({ baseURL: API_URL });
 

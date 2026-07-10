@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/* iOS Safari auto-zooms the page on focus into any input/select/textarea
+   with a computed font-size under 16px. Force 16px on mobile so focusing
+   fields (e.g. POS vehicle/customer lookup) doesn't trigger the zoom. */
+@media (max-width: 767px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 @keyframes slideInRight {
   from {
     transform: translateX(100%);

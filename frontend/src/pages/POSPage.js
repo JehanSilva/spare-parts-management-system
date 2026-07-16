@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
-import { createSale, fetchActiveCarts, syncActiveCarts, lookupCustomerByVehicle, createCustomer, addVehicleToCustomer, fetchCustomers } from "../services/api";
+import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle } from "../services/api";
 import { useParts } from "../context/PartsContext";
-import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
+import CustomerLinkPicker from "../components/CustomerLinkPicker";
 import {
   Search,
   ShoppingCart,
@@ -27,6 +27,7 @@ import {
   BadgeCheck,
   Loader2,
   Wallet,
+  Wrench,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -133,41 +134,34 @@ const VehicleCustomerModal = ({
   vehicleNumber,
   onVehicleNumberChange,
   vehicleLookupStatus,
-  linkedCustomer,
   linkedVehicle,
+  linkedCustomer,
   vehicleLabel,
-  linkMode,
-  setLinkMode,
-  registerForm,
-  setRegisterForm,
-  registerLoading,
-  onRegisterCustomer,
-  existingLinkVehicleForm,
-  setExistingLinkVehicleForm,
-  customerSearchTerm,
-  setCustomerSearchTerm,
-  customerSearchResults,
-  setCustomerSearchResults,
-  customerSearchLoading,
-  linkingCustomerId,
-  onLinkExistingCustomer,
+  vehicleForm,
+  setVehicleForm,
+  vehicleSaving,
+  onSaveVehicle,
+  linkPickerOpen,
+  setLinkPickerOpen,
+  onCustomerSelected,
+  onUnlinkCustomer,
+  unlinkingCustomer,
   vehicleNumberInputRef,
 }) => {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
 
   useEffect(() => {
-    if (isOpen) setDetailsExpanded(false);
+    if (isOpen) {
+      setDetailsExpanded(false);
+    }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const hasVehicle = vehicleNumber.trim().length > 0;
   const vehicleDetails = [
     linkedVehicle?.year && { label: "Year", value: linkedVehicle.year },
     linkedVehicle?.color && { label: "Color", value: linkedVehicle.color },
     linkedVehicle?.current_mileage != null && { label: "Mileage", value: `${linkedVehicle.current_mileage.toLocaleString()} km` },
-    linkedCustomer?.email && { label: "Email", value: linkedCustomer.email },
-    linkedCustomer?.address && { label: "Address", value: linkedCustomer.address },
   ].filter(Boolean);
 
   return (
@@ -189,7 +183,7 @@ const VehicleCustomerModal = ({
         </div>
 
         <div className="p-4 overflow-y-auto space-y-3">
-          {/* Vehicle Number with smart lookup */}
+          {/* 1. Vehicle Number with smart lookup — always the first, primary action */}
           <div>
             <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
               Vehicle No.
@@ -216,8 +210,37 @@ const VehicleCustomerModal = ({
             </div>
           </div>
 
-          {/* Found: linked vehicle chip, expandable for more details */}
-          {vehicleLookupStatus === "found" && linkedCustomer && (
+          {/* 2. Vehicle state — save as standalone master data, no customer required */}
+          {vehicleLookupStatus === "not_found" && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+              <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered yet</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Make (e.g. Toyota)"
+                  value={vehicleForm.make}
+                  onChange={(e) => setVehicleForm((p) => ({ ...p, make: e.target.value }))}
+                  className="w-1/2 px-2.5 py-2 text-sm bg-white border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Model (e.g. Corolla)"
+                  value={vehicleForm.model}
+                  onChange={(e) => setVehicleForm((p) => ({ ...p, model: e.target.value }))}
+                  className="w-1/2 px-2.5 py-2 text-sm bg-white border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400"
+                />
+              </div>
+              <button
+                onClick={onSaveVehicle}
+                disabled={vehicleSaving}
+                className="w-full py-1.5 text-xs font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60"
+              >
+                {vehicleSaving ? "Saving..." : "Save Vehicle"}
+              </button>
+            </div>
+          )}
+
+          {vehicleLookupStatus === "found" && linkedVehicle && (
             <div className="bg-green-50 border border-green-200 rounded-lg overflow-hidden">
               <button
                 type="button"
@@ -227,28 +250,19 @@ const VehicleCustomerModal = ({
                 <Car size={12} className="text-green-600 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-green-800 truncate">
-                    {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ") || linkedCustomer.name}
+                    {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ")}
                   </p>
-                  <p className="text-[10px] text-green-600 truncate">
-                    {[linkedCustomer.name, linkedCustomer.phone].filter(Boolean).join(" · ")}
-                  </p>
+                  {vehicleDetails.length > 0 && (
+                    <p className="text-[10px] text-green-600 truncate">
+                      {vehicleDetails.map((d) => `${d.label}: ${d.value}`).join(" · ")}
+                    </p>
+                  )}
                 </div>
-                <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full shrink-0">Linked</span>
                 <ChevronUp size={12} className={`text-green-500 shrink-0 transition-transform ${detailsExpanded ? "" : "-rotate-90"}`} />
               </button>
 
               {detailsExpanded && (
                 <div className="px-2.5 pb-2.5 pt-1.5 border-t border-green-200 space-y-1">
-                  {vehicleDetails.length > 0 ? (
-                    vehicleDetails.map(({ label, value }) => (
-                      <div key={label} className="flex justify-between gap-2 text-[11px]">
-                        <span className="text-green-600 shrink-0">{label}</span>
-                        <span className="font-semibold text-green-900 text-right truncate">{value}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-[11px] text-green-500 italic">No additional details on file.</p>
-                  )}
                   {linkedVehicle?.notes && (
                     <div className="text-[11px]">
                       <span className="text-green-600 block">Notes</span>
@@ -267,155 +281,46 @@ const VehicleCustomerModal = ({
             </div>
           )}
 
-          {/* Not linked yet: show New vs Existing customer choice (works with or without a vehicle number) */}
-          {vehicleLookupStatus !== "found" && !linkMode && (
-            <div className={`rounded-lg px-2.5 py-1.5 space-y-1.5 border ${vehicleLookupStatus === "not_found" ? "bg-amber-50 border-amber-200" : "bg-gray-50 border-gray-200"}`}>
-              {vehicleLookupStatus === "not_found" && (
-                <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered</p>
+          {/* 3. Link Customer — always optional, and independent of whether a
+              vehicle is entered at all (works for a "customer only" sale too) */}
+          {linkedCustomer && !linkPickerOpen ? (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-2">
+              <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-0.5">Linked Customer</p>
+              <p className="text-xs font-bold text-blue-900 truncate">{linkedCustomer.name}</p>
+              {(linkedCustomer.phone || linkedCustomer.email) && (
+                <p className="text-[10px] text-blue-600 truncate">
+                  {[linkedCustomer.phone, linkedCustomer.email].filter(Boolean).join(" · ")}
+                </p>
               )}
-              <div className="flex gap-1.5">
+              {linkedCustomer.address && (
+                <p className="text-[10px] text-blue-600 truncate">{linkedCustomer.address}</p>
+              )}
+              <div className="flex gap-2 mt-2">
                 <button
-                  onClick={() => { setLinkMode("new"); setRegisterForm({ name: "", phone: "", make: "", model: "" }); }}
-                  className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-lg transition-colors"
+                  onClick={() => setLinkPickerOpen(true)}
+                  className="flex-1 py-1.5 text-[11px] font-bold text-blue-700 bg-white border border-blue-300 rounded-lg hover:bg-blue-100"
                 >
-                  <UserPlus size={11} /> New Customer
+                  Change
                 </button>
                 <button
-                  onClick={() => { setLinkMode("existing"); setCustomerSearchTerm(""); setCustomerSearchResults([]); setExistingLinkVehicleForm({ make: "", model: "" }); }}
-                  className="flex-1 flex items-center justify-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded-lg transition-colors"
+                  onClick={onUnlinkCustomer}
+                  disabled={unlinkingCustomer}
+                  className="flex-1 py-1.5 text-[11px] font-bold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
                 >
-                  <UserCheck size={11} /> Existing Customer
+                  {unlinkingCustomer ? "Unlinking..." : "Unlink"}
                 </button>
               </div>
             </div>
-          )}
-
-          {/* Inline register form (New Customer) */}
-          {linkMode === "new" && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
-              <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
-                <UserPlus size={11} /> New Customer
-              </p>
-              <input
-                type="text"
-                placeholder="Customer Name *"
-                value={registerForm.name}
-                onChange={e => setRegisterForm(p => ({ ...p, name: e.target.value }))}
-                className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-              />
-              <input
-                type="text"
-                placeholder="Phone (optional)"
-                value={registerForm.phone}
-                onChange={e => setRegisterForm(p => ({ ...p, phone: e.target.value }))}
-                className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-              />
-              {hasVehicle && (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Make (e.g. Toyota)"
-                    value={registerForm.make}
-                    onChange={e => setRegisterForm(p => ({ ...p, make: e.target.value }))}
-                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Model (e.g. Corolla)"
-                    value={registerForm.model}
-                    onChange={e => setRegisterForm(p => ({ ...p, model: e.target.value }))}
-                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
-              )}
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setLinkMode(null)}
-                  className="flex-1 py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={onRegisterCustomer}
-                  disabled={registerLoading}
-                  className="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-60"
-                >
-                  {registerLoading ? "Saving..." : hasVehicle ? "Save & Link" : "Save Customer"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Inline existing customer search & select */}
-          {linkMode === "existing" && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
-              <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
-                <UserCheck size={11} /> {hasVehicle ? "Link Existing Customer" : "Select Existing Customer"}
-              </p>
-              {hasVehicle && (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Make (e.g. Toyota)"
-                    value={existingLinkVehicleForm.make}
-                    onChange={e => setExistingLinkVehicleForm(p => ({ ...p, make: e.target.value }))}
-                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Model (e.g. Corolla)"
-                    value={existingLinkVehicleForm.model}
-                    onChange={e => setExistingLinkVehicleForm(p => ({ ...p, model: e.target.value }))}
-                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
-              )}
-              <div className="relative">
-                <Search size={13} className="absolute left-2.5 top-2.5 text-gray-400" />
-                <input
-                  type="text"
-                  autoFocus
-                  placeholder="Search by name or phone..."
-                  value={customerSearchTerm}
-                  onChange={e => setCustomerSearchTerm(e.target.value)}
-                  className="w-full pl-7 pr-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-                />
-              </div>
-
-              <div className="max-h-32 overflow-y-auto space-y-1">
-                {customerSearchLoading ? (
-                  <p className="text-[11px] text-gray-400 text-center py-2 flex items-center justify-center gap-1">
-                    <Loader2 size={12} className="animate-spin" /> Searching...
-                  </p>
-                ) : customerSearchTerm.trim() && customerSearchResults.length === 0 ? (
-                  <p className="text-[11px] text-gray-400 text-center py-2">No customers found.</p>
-                ) : (
-                  customerSearchResults.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => onLinkExistingCustomer(c)}
-                      disabled={linkingCustomerId === c.id}
-                      className="w-full flex items-center justify-between gap-2 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50/60 rounded-lg px-2.5 py-1.5 transition-colors disabled:opacity-60 text-left"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-xs font-bold text-gray-800 truncate">{c.name}</p>
-                        {c.phone && <p className="text-[10px] text-gray-500">{c.phone}</p>}
-                      </div>
-                      <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full shrink-0">
-                        {linkingCustomerId === c.id ? "Linking..." : "Select"}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-
-              <button
-                onClick={() => { setLinkMode(null); setExistingLinkVehicleForm({ make: "", model: "" }); }}
-                className="w-full py-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-            </div>
+          ) : linkPickerOpen ? (
+            <CustomerLinkPicker onSelect={onCustomerSelected} onCancel={() => setLinkPickerOpen(false)} />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setLinkPickerOpen(true)}
+              className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-gray-500 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 border border-dashed border-gray-300 hover:border-blue-300 rounded-xl py-2.5 transition-colors"
+            >
+              <UserPlus size={13} /> Link a customer (optional)
+            </button>
           )}
         </div>
       </div>
@@ -521,6 +426,86 @@ const PaymentModal = ({
               Done
             </button>
           )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- REPAIR / LABOR ITEM MODAL ---
+const LaborItemModal = ({ isOpen, onClose, onAdd }) => {
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setDescription("");
+      setPrice("");
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const canAdd = description.trim().length > 0 && parseFloat(price) > 0;
+
+  const handleAdd = () => {
+    if (!canAdd) return;
+    onAdd(description.trim(), price);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-gray-900 p-4 text-white flex justify-between items-center shrink-0">
+          <h3 className="font-bold text-lg flex items-center gap-2">
+            <Wrench size={20} /> Add Repair / Labor
+          </h3>
+          <button onClick={onClose} className="hover:bg-white/10 p-1 rounded-full">
+            <XCircle size={20} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Description *
+            </label>
+            <input
+              type="text"
+              autoFocus
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. Brake pad replacement labor"
+              className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Price (LKR) *
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="e.g. 3500"
+              className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+          <button
+            onClick={handleAdd}
+            disabled={!canAdd}
+            className="w-full py-2.5 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
+          >
+            Add to Cart
+          </button>
         </div>
       </div>
     </div>
@@ -677,6 +662,8 @@ const POSPage = () => {
   const [visibleCount, setVisibleCount] = useState(20);
 
   const [cartToDelete, setCartToDelete] = useState(null);
+  const [laborModalOpen, setLaborModalOpen] = useState(false);
+  const [showNoCustomerConfirm, setShowNoCustomerConfirm] = useState(false);
 
   // Derived active cart states
   const activeCart = useMemo(() => {
@@ -705,13 +692,19 @@ const POSPage = () => {
   const [showConfirm, setShowConfirm] = useState(false);
 
   // --- Vehicle Lookup State ---
+  // linkedVehicle is the full CustomerVehicle registry object (including a
+  // nested customer_details, which may be null) — vehicle and customer are
+  // independent master data, so a vehicle can exist/be used without ever
+  // being linked to a customer. selectedCustomer covers the "customer only,
+  // no vehicle" sale path, where there's nothing to attach a link to.
   const [vehicleLookupStatus, setVehicleLookupStatus] = useState("idle"); // idle | searching | found | not_found
-  const [linkedCustomer, setLinkedCustomer] = useState(null); // { id, name, phone, ... }
-  const [linkedVehicle, setLinkedVehicle] = useState(null); // { vehicle_number, make, model, ... }
-  const [linkMode, setLinkMode] = useState(null); // null | 'new' | 'existing'
-  const [registerForm, setRegisterForm] = useState({ name: "", phone: "", make: "", model: "" });
-  const [existingLinkVehicleForm, setExistingLinkVehicleForm] = useState({ make: "", model: "" });
-  const [registerLoading, setRegisterLoading] = useState(false);
+  const [linkedVehicle, setLinkedVehicle] = useState(null);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const linkedCustomer = linkedVehicle?.customer_details || selectedCustomer;
+  const [vehicleForm, setVehicleForm] = useState({ make: "", model: "" });
+  const [vehicleSaving, setVehicleSaving] = useState(false);
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
+  const [unlinkingCustomer, setUnlinkingCustomer] = useState(false);
   const vehicleLookupTimer = useRef(null);
   // Bumped on every lookup kicked off (typing or tab switch) so a slower,
   // now-superseded in-flight request can detect it's stale and no-op instead
@@ -734,13 +727,6 @@ const POSPage = () => {
     }));
   }, []);
 
-  // --- Existing Customer Search State (for linking a vehicle to an existing customer) ---
-  const [customerSearchTerm, setCustomerSearchTerm] = useState("");
-  const [customerSearchResults, setCustomerSearchResults] = useState([]);
-  const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
-  const [linkingCustomerId, setLinkingCustomerId] = useState(null);
-  const customerSearchTimer = useRef(null);
-
   // --- Payment Mode State: PAID (full) | PARTIAL (part now, part on credit) | CREDIT (pay later) ---
   const [paymentMode, setPaymentMode] = useState("PAID");
   const [creditNote, setCreditNote] = useState("");
@@ -750,12 +736,11 @@ const POSPage = () => {
   const [focusPartialOnOpen, setFocusPartialOnOpen] = useState(false);
   const partialAmountInputRef = useRef(null);
 
-  // Print Ref
-  const receiptRef = useRef();
-  const handlePrint = useReactToPrint({
-    contentRef: receiptRef,
-    documentTitle: `Invoice-${saleSuccess?.id || "New"}`,
-  });
+  // Plain window.print() + CSS (see the print:hidden / print:block classes
+  // in the success screen below), rather than react-to-print's iframe-based
+  // approach — iOS Safari doesn't reliably scope window.print() to an
+  // offscreen iframe's content and falls back to printing the whole page.
+  const handlePrint = () => window.print();
 
   // ── Client-side search — instant, zero network calls ──────────────────
   const filteredParts = useMemo(() => {
@@ -829,19 +814,18 @@ const POSPage = () => {
 
   const handleVehicleNumberChange = (veh) => {
     const upperVeh = veh.toUpperCase();
-    // Editing the plate invalidates whatever customer was previously linked
-    // to it, so clear the cart's customerName along with the lookup state
-    // below — otherwise a stale name lingers after switching to an
+    // Editing the plate invalidates whatever vehicle/customer was previously
+    // linked to it, so clear the cart's customerName along with the lookup
+    // state below — otherwise a stale name lingers after switching to an
     // unregistered/different plate.
     setCarts((prev) =>
       prev.map((c) => (c.id === activeCartId ? { ...c, vehicleNumber: upperVeh, customerName: "" } : c))
     );
     // Reset lookup state
-    setLinkedCustomer(null);
     setLinkedVehicle(null);
-    setLinkMode(null);
-    setCustomerSearchTerm("");
-    setCustomerSearchResults([]);
+    setSelectedCustomer(null);
+    setLinkPickerOpen(false);
+    setVehicleForm({ make: "", model: "" });
     setVehicleLookupStatus("idle");
 
     // Debounce vehicle number lookup
@@ -855,19 +839,20 @@ const POSPage = () => {
       setVehicleLookupStatus("searching");
       vehicleLookupTimer.current = setTimeout(async () => {
         try {
-          const result = await lookupCustomerByVehicle(upperVeh);
+          const result = await lookupVehicle(upperVeh);
           if (vehicleLookupRequestRef.current !== requestId) return; // superseded by a newer edit
           if (result.found) {
-            setLinkedCustomer(result.customer);
             setLinkedVehicle(result.vehicle);
             cacheVehicleInfo(upperVeh, result.vehicle);
             setVehicleLookupStatus("found");
-            // Auto-fill customer name
-            setCarts((prev) =>
-              prev.map((c) =>
-                c.id === activeCartId ? { ...c, customerName: result.customer.name } : c
-              )
-            );
+            // Auto-fill customer name if this vehicle already has a linked customer
+            if (result.vehicle.customer_details) {
+              setCarts((prev) =>
+                prev.map((c) =>
+                  c.id === activeCartId ? { ...c, customerName: result.vehicle.customer_details.name } : c
+                )
+              );
+            }
           } else {
             setVehicleLookupStatus("not_found");
           }
@@ -878,100 +863,61 @@ const POSPage = () => {
     }
   };
 
-  // Register new customer + vehicle from POS
-  const handleRegisterCustomer = async () => {
-    if (!registerForm.name.trim()) {
-      setAlertInfo({ type: "error", message: "Please enter customer name." });
-      return;
-    }
-    setRegisterLoading(true);
+  // Register the current (unregistered) plate as a new standalone vehicle —
+  // independent master data, no customer required. Linking one is a
+  // separate, optional step (see handleCustomerSelected below).
+  const handleSaveVehicle = async () => {
+    setVehicleSaving(true);
     try {
-      // 1. Create customer
-      const newCustomer = await createCustomer({ name: registerForm.name, phone: registerForm.phone });
-      // 2. Add vehicle to customer
-      if (vehicleNumber.trim()) {
-        const vehiclePayload = { vehicle_number: vehicleNumber.trim() };
-        if (registerForm.make.trim()) vehiclePayload.make = registerForm.make.trim();
-        if (registerForm.model.trim()) vehiclePayload.model = registerForm.model.trim();
-        await addVehicleToCustomer(newCustomer.id, vehiclePayload);
-        const newVehicle = { vehicle_number: vehicleNumber.trim(), make: registerForm.make.trim(), model: registerForm.model.trim() };
-        setLinkedVehicle(newVehicle);
-        cacheVehicleInfo(vehicleNumber, newVehicle);
-      }
-      // 3. Link to cart
-      setLinkedCustomer(newCustomer);
+      const payload = { vehicle_number: vehicleNumber.trim() };
+      if (vehicleForm.make.trim()) payload.make = vehicleForm.make.trim();
+      if (vehicleForm.model.trim()) payload.model = vehicleForm.model.trim();
+      const newVehicle = await createCustomerVehicle(payload);
+      setLinkedVehicle(newVehicle);
+      cacheVehicleInfo(vehicleNumber, newVehicle);
       setVehicleLookupStatus("found");
-      setCarts((prev) =>
-        prev.map((c) =>
-          c.id === activeCartId ? { ...c, customerName: newCustomer.name } : c
-        )
-      );
-      setLinkMode(null);
-      setVehicleModalOpen(false);
-      setAlertInfo({ type: "success", message: `${newCustomer.name} registered and linked!` });
+      setAlertInfo({ type: "success", message: `${newVehicle.vehicle_number} added to the vehicle registry!` });
     } catch (err) {
-      setAlertInfo({ type: "error", message: err.response?.data?.name?.[0] || "Failed to register customer." });
+      setAlertInfo({ type: "error", message: err.response?.data?.vehicle_number?.[0] || "Failed to save vehicle." });
     } finally {
-      setRegisterLoading(false);
+      setVehicleSaving(false);
     }
   };
 
-  // Debounced search for existing customers when linking a vehicle
-  useEffect(() => {
-    if (linkMode !== "existing") return;
-    if (customerSearchTimer.current) clearTimeout(customerSearchTimer.current);
-    if (!customerSearchTerm.trim()) {
-      setCustomerSearchResults([]);
-      return;
-    }
-    setCustomerSearchLoading(true);
-    customerSearchTimer.current = setTimeout(async () => {
-      try {
-        const results = await fetchCustomers(customerSearchTerm.trim());
-        setCustomerSearchResults(results);
-      } catch {
-        setCustomerSearchResults([]);
-      } finally {
-        setCustomerSearchLoading(false);
-      }
-    }, 400);
-    return () => {
-      if (customerSearchTimer.current) clearTimeout(customerSearchTimer.current);
-    };
-  }, [customerSearchTerm, linkMode]);
-
-  // Link the current vehicle to an existing, already-registered customer
-  // (or, if no vehicle number was entered, simply select that customer for this sale)
-  const handleLinkExistingCustomer = async (customer) => {
-    setLinkingCustomerId(customer.id);
+  // Link (or, if there's no vehicle yet, simply select) a customer — chosen
+  // via the shared CustomerLinkPicker, which handles searching existing
+  // customers or creating a new one.
+  const handleCustomerSelected = async (customer) => {
     try {
-      let finalCustomer = customer;
-      if (vehicleNumber.trim()) {
-        const vehiclePayload = { vehicle_number: vehicleNumber.trim() };
-        if (existingLinkVehicleForm.make.trim()) vehiclePayload.make = existingLinkVehicleForm.make.trim();
-        if (existingLinkVehicleForm.model.trim()) vehiclePayload.model = existingLinkVehicleForm.model.trim();
-        finalCustomer = await addVehicleToCustomer(customer.id, vehiclePayload);
-        const newVehicle = { vehicle_number: vehicleNumber.trim(), make: existingLinkVehicleForm.make.trim(), model: existingLinkVehicleForm.model.trim() };
-        setLinkedVehicle(newVehicle);
-        cacheVehicleInfo(vehicleNumber, newVehicle);
+      if (linkedVehicle) {
+        setLinkedVehicle(await updateCustomerVehicle(linkedVehicle.id, { customer: customer.id }));
+      } else {
+        setSelectedCustomer(customer);
       }
-      setLinkedCustomer(finalCustomer);
-      setVehicleLookupStatus("found");
       setCarts((prev) =>
-        prev.map((c) =>
-          c.id === activeCartId ? { ...c, customerName: finalCustomer.name } : c
-        )
+        prev.map((c) => (c.id === activeCartId ? { ...c, customerName: customer.name } : c))
       );
-      setLinkMode(null);
-      setCustomerSearchTerm("");
-      setCustomerSearchResults([]);
-      setExistingLinkVehicleForm({ make: "", model: "" });
-      setVehicleModalOpen(false);
-      setAlertInfo({ type: "success", message: vehicleNumber.trim() ? `Vehicle linked to ${finalCustomer.name}!` : `${finalCustomer.name} selected!` });
-    } catch (err) {
-      setAlertInfo({ type: "error", message: err.response?.data?.vehicle_number?.[0] || "Failed to link vehicle to customer." });
+      setLinkPickerOpen(false);
+    } catch {
+      setAlertInfo({ type: "error", message: "Failed to link customer." });
+    }
+  };
+
+  const handleUnlinkCustomer = async () => {
+    setUnlinkingCustomer(true);
+    try {
+      if (linkedVehicle) {
+        setLinkedVehicle(await updateCustomerVehicle(linkedVehicle.id, { customer: null }));
+      } else {
+        setSelectedCustomer(null);
+      }
+      setCarts((prev) =>
+        prev.map((c) => (c.id === activeCartId ? { ...c, customerName: "" } : c))
+      );
+    } catch {
+      setAlertInfo({ type: "error", message: "Failed to unlink customer." });
     } finally {
-      setLinkingCustomerId(null);
+      setUnlinkingCustomer(false);
     }
   };
 
@@ -980,18 +926,15 @@ const POSPage = () => {
   // ever held in this shared state, so switching tabs used to wipe it).
   useEffect(() => {
     setVehicleModalOpen(false);
-    setLinkMode(null);
-    setCustomerSearchTerm("");
-    setCustomerSearchResults([]);
-    setRegisterForm({ name: "", phone: "", make: "", model: "" });
-    setExistingLinkVehicleForm({ make: "", model: "" });
+    setLinkPickerOpen(false);
+    setVehicleForm({ make: "", model: "" });
     setPaymentMode("PAID");
     setCreditNote("");
     setPartialAmountPaid("");
     setPaymentModalOpen(false);
 
-    setLinkedCustomer(null);
     setLinkedVehicle(null);
+    setSelectedCustomer(null);
     if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
     // Invalidate any lookup still in flight from before the switch (e.g. one
     // kicked off by typing on the previous cart) so its stale result can't
@@ -1001,11 +944,10 @@ const POSPage = () => {
     const veh = vehicleNumber.trim().toUpperCase();
     if (veh.length >= 3) {
       setVehicleLookupStatus("searching");
-      lookupCustomerByVehicle(veh)
+      lookupVehicle(veh)
         .then((result) => {
           if (vehicleLookupRequestRef.current !== requestId) return;
           if (result.found) {
-            setLinkedCustomer(result.customer);
             setLinkedVehicle(result.vehicle);
             cacheVehicleInfo(veh, result.vehicle);
             setVehicleLookupStatus("found");
@@ -1030,7 +972,7 @@ const POSPage = () => {
     const numbers = Array.from(new Set(cartVehicleNumbers.split("|").filter((v) => v.length >= 3)));
     const missing = numbers.filter((v) => !(v in vehicleInfoByNumber));
     missing.forEach((veh) => {
-      lookupCustomerByVehicle(veh)
+      lookupVehicle(veh)
         .then((result) => {
           if (ignore) return;
           setVehicleInfoByNumber((prev) =>
@@ -1104,6 +1046,26 @@ const POSPage = () => {
       });
     });
   }, [activeCartId]);
+
+  // 3.5 Add a Repair/Labor line item — priced by hand, not tied to the Part
+  // catalog or stock. Shaped with the same field names (name/sell_price/
+  // quantity/discountAmount/discountPercentInput) a Part-spread cart item
+  // already has, so quantity/discount handling and totals work unchanged.
+  const handleAddLaborItem = (description, price) => {
+    const newItem = {
+      id: `labor_${Date.now()}`,
+      item_type: "LABOR",
+      name: description,
+      sell_price: parseFloat(price),
+      quantity: 1,
+      discountAmount: 0,
+      discountPercentInput: "",
+    };
+    setCarts((prev) =>
+      prev.map((c) => (c.id === activeCartId ? { ...c, items: [newItem, ...c.items] } : c))
+    );
+    setLaborModalOpen(false);
+  };
 
   // 4. Remove from Cart
   const removeFromCart = (id) => {
@@ -1254,13 +1216,11 @@ const POSPage = () => {
   );
 
   // 7. Checkout Logic (The Critical Part)
-  const handleCheckout = async () => {
-    if (!customerName) {
-      setAlertInfo({ type: "error", message: "Please add a customer (Vehicle & Customer)" });
-      setVehicleModalOpen(true);
-      setFocusVehicleOnOpen(true);
-      return;
-    }
+  // Entry point for the "Complete Sale" button. A cart with no vehicle or
+  // customer linked (e.g. a walk-in bringing in just parts) is allowed to
+  // check out — we just confirm that's intentional first, rather than
+  // blocking it outright.
+  const handleCheckout = () => {
     if (cart.length === 0) {
       setAlertInfo({
         type: "error",
@@ -1268,7 +1228,19 @@ const POSPage = () => {
       });
       return;
     }
+    if (!customerName) {
+      setShowNoCustomerConfirm(true);
+      return;
+    }
+    proceedCheckout();
+  };
 
+  const handleConfirmNoCustomerCheckout = () => {
+    setShowNoCustomerConfirm(false);
+    proceedCheckout();
+  };
+
+  const proceedCheckout = async () => {
     let partialPaidNow = 0;
     if (paymentMode === "PARTIAL") {
       partialPaidNow = parseFloat(partialAmountPaid);
@@ -1286,7 +1258,7 @@ const POSPage = () => {
     setLoading(true);
 
     const salePayload = {
-      customer_name: customerName,
+      customer_name: customerName || "Walk-in Customer",
       vehicle_number: vehicleNumber,
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
       payment_status: paymentMode,
@@ -1296,7 +1268,18 @@ const POSPage = () => {
         const originalPrice = parseFloat(item.sell_price);
         const discountAmount = parseFloat(item.discountAmount) || 0;
 
+        if (item.item_type === "LABOR") {
+          return {
+            item_type: "LABOR",
+            description: item.name,
+            quantity: parseInt(item.quantity),
+            unit_price: originalPrice,
+            discount: discountAmount,
+          };
+        }
+
         return {
+          item_type: "PART",
           part_id: item.id,
           quantity: parseInt(item.quantity),
           unit_price: originalPrice,
@@ -1370,7 +1353,8 @@ const POSPage = () => {
     : 0;
 
   return saleSuccess ? (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm">
+    <>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm print:hidden">
       <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-200/50 p-8 md:p-10 max-w-lg w-full text-center relative overflow-hidden">
 
         {/* Success Icon */}
@@ -1458,11 +1442,13 @@ const POSPage = () => {
           </button>
         </div>
       </div>
-
-      <div className="hidden">
-        <Receipt ref={receiptRef} sale={saleSuccess} />
-      </div>
     </div>
+
+    {/* Receipt — invisible on screen, only rendered for window.print() */}
+    <div className="hidden print:block">
+      <Receipt sale={saleSuccess} />
+    </div>
+    </>
   ) : (
     <div className="flex flex-col h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
       <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />
@@ -1490,30 +1476,34 @@ const POSPage = () => {
         onCancel={() => setCartToDelete(null)}
       />
 
+      <ConfirmModal
+        isOpen={showNoCustomerConfirm}
+        title="No Vehicle or Customer Linked"
+        message="This sale has no vehicle or customer attached. Continue anyway?"
+        onConfirm={handleConfirmNoCustomerCheckout}
+        onCancel={() => setShowNoCustomerConfirm(false)}
+        confirmLabel="Continue Anyway"
+        tone="info"
+      />
+
       <VehicleCustomerModal
         isOpen={vehicleModalOpen}
         onClose={() => setVehicleModalOpen(false)}
         vehicleNumber={vehicleNumber}
         onVehicleNumberChange={handleVehicleNumberChange}
         vehicleLookupStatus={vehicleLookupStatus}
-        linkedCustomer={linkedCustomer}
         linkedVehicle={linkedVehicle}
+        linkedCustomer={linkedCustomer}
         vehicleLabel={vehicleLabel}
-        linkMode={linkMode}
-        setLinkMode={setLinkMode}
-        registerForm={registerForm}
-        setRegisterForm={setRegisterForm}
-        registerLoading={registerLoading}
-        onRegisterCustomer={handleRegisterCustomer}
-        existingLinkVehicleForm={existingLinkVehicleForm}
-        setExistingLinkVehicleForm={setExistingLinkVehicleForm}
-        customerSearchTerm={customerSearchTerm}
-        setCustomerSearchTerm={setCustomerSearchTerm}
-        customerSearchResults={customerSearchResults}
-        setCustomerSearchResults={setCustomerSearchResults}
-        customerSearchLoading={customerSearchLoading}
-        linkingCustomerId={linkingCustomerId}
-        onLinkExistingCustomer={handleLinkExistingCustomer}
+        vehicleForm={vehicleForm}
+        setVehicleForm={setVehicleForm}
+        vehicleSaving={vehicleSaving}
+        onSaveVehicle={handleSaveVehicle}
+        linkPickerOpen={linkPickerOpen}
+        setLinkPickerOpen={setLinkPickerOpen}
+        onCustomerSelected={handleCustomerSelected}
+        onUnlinkCustomer={handleUnlinkCustomer}
+        unlinkingCustomer={unlinkingCustomer}
         vehicleNumberInputRef={vehicleNumberInputRef}
       />
 
@@ -1529,6 +1519,12 @@ const POSPage = () => {
         totalAmount={totalAmount}
         isCredit={isCredit}
         partialAmountInputRef={partialAmountInputRef}
+      />
+
+      <LaborItemModal
+        isOpen={laborModalOpen}
+        onClose={() => setLaborModalOpen(false)}
+        onAdd={handleAddLaborItem}
       />
 
       {/* TOP BAR: ACTIVE CARTS MANAGEMENT */}
@@ -1722,6 +1718,15 @@ const POSPage = () => {
             )}
           </div>
 
+          <div className="shrink-0 px-3 pt-3">
+            <button
+              onClick={() => setLaborModalOpen(true)}
+              className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-dashed border-blue-200 hover:border-blue-300 rounded-xl py-2 transition-colors"
+            >
+              <Wrench size={13} /> Add Repair / Labor
+            </button>
+          </div>
+
           <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50/50">
             {cart.length === 0 ? (
               <div className="text-center text-gray-400 mt-20 flex flex-col items-center">
@@ -1769,9 +1774,15 @@ const POSPage = () => {
                         <h4 className="font-bold text-sm text-gray-800 line-clamp-2">
                           {item.name}
                         </h4>
-                        <p className="text-[10px] text-gray-500 font-mono">
-                          {item.part_number} • {item.brand}
-                        </p>
+                        {item.item_type === "LABOR" ? (
+                          <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wide flex items-center gap-1">
+                            <Wrench size={10} /> Repair / Labor
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-gray-500 font-mono">
+                            {item.part_number} • {item.brand}
+                          </p>
+                        )}
                       </div>
                       <button
                         onClick={() => removeFromCart(item.id)}
@@ -1853,13 +1864,15 @@ const POSPage = () => {
                         </div>
                       </div>
 
-                      {/* Profitability Badge */}
-                      <div className="flex items-center justify-between text-[10px] pt-1">
-                        <span className="text-gray-400 font-medium">Remaining Profit:</span>
-                        <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
-                          {profitText}
-                        </span>
-                      </div>
+                      {/* Profitability Badge — not meaningful for labor (no buy_price/cost) */}
+                      {item.item_type !== "LABOR" && (
+                        <div className="flex items-center justify-between text-[10px] pt-1">
+                          <span className="text-gray-400 font-medium">Remaining Profit:</span>
+                          <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
+                            {profitText}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -1875,8 +1888,8 @@ const POSPage = () => {
               <button
                 type="button"
                 onClick={() => setVehicleModalOpen(true)}
-                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 border text-left transition-colors ${vehicleLookupStatus === "found" && linkedCustomer
-                    ? "bg-green-50 border-green-200 hover:bg-green-100"
+                className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 border text-left transition-colors ${vehicleLookupStatus === "found"
+                    ? linkedCustomer ? "bg-green-50 border-green-200 hover:bg-green-100" : "bg-gray-50 border-gray-200 hover:bg-gray-100"
                     : vehicleLookupStatus === "not_found"
                       ? "bg-red-50 border-red-200 hover:bg-red-100"
                       : vehicleNumber.trim()
@@ -1887,8 +1900,8 @@ const POSPage = () => {
                 <Car
                   size={14}
                   className={
-                    vehicleLookupStatus === "found" && linkedCustomer
-                      ? "text-green-600 shrink-0"
+                    vehicleLookupStatus === "found"
+                      ? linkedCustomer ? "text-green-600 shrink-0" : "text-gray-400 shrink-0"
                       : vehicleLookupStatus === "not_found"
                         ? "text-red-500 shrink-0"
                         : vehicleNumber.trim()
@@ -1897,19 +1910,19 @@ const POSPage = () => {
                   }
                 />
                 <div className="flex-1 min-w-0">
-                  {vehicleLookupStatus === "found" && linkedCustomer ? (
+                  {vehicleLookupStatus === "found" ? (
                     <>
-                      <p className="text-xs font-bold text-green-800 truncate">
-                        {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ") || linkedCustomer.name}
+                      <p className={`text-xs font-bold truncate ${linkedCustomer ? "text-green-800" : "text-gray-700"}`}>
+                        {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ")}
                       </p>
-                      <p className="text-[10px] text-green-600 truncate">
-                        {[linkedCustomer.name, linkedCustomer.phone].filter(Boolean).join(" · ")}
+                      <p className={`text-[10px] truncate ${linkedCustomer ? "text-green-600" : "text-gray-400"}`}>
+                        {linkedCustomer ? [linkedCustomer.name, linkedCustomer.phone].filter(Boolean).join(" · ") : "No customer linked"}
                       </p>
                     </>
                   ) : vehicleLookupStatus === "not_found" ? (
                     <>
                       <p className="text-xs font-bold text-red-700 truncate">{vehicleNumber}</p>
-                      <p className="text-[10px] text-red-500 truncate">Not registered — tap to add customer</p>
+                      <p className="text-[10px] text-red-500 truncate">Not registered — tap to add</p>
                     </>
                   ) : vehicleNumber.trim() ? (
                     <>

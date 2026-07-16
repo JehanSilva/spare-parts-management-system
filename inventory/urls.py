@@ -5,7 +5,6 @@ urlpatterns = [
     # Customers
     path('customers/', views.get_customers, name='get_customers'),
     path('customers/add/', views.add_customer, name='add_customer'),
-    path('customers/lookup/', views.lookup_customer_by_vehicle, name='lookup_customer_by_vehicle'),
     path('customers/<int:pk>/update/', views.update_customer, name='update_customer'),
     path('customers/<int:pk>/delete/', views.delete_customer, name='delete_customer'),
     path('customers/<int:pk>/vehicles/add/', views.add_vehicle_to_customer, name='add_vehicle_to_customer'),
@@ -40,11 +39,16 @@ urlpatterns = [
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),
 
-    # Vehicles
+    # Vehicles (parts-compatibility catalog — make/model/year, no plate)
     path('vehicles/', views.get_vehicles, name='get_vehicles'),
     path('vehicles/add/', views.add_vehicle, name='add_vehicle'),
     path('vehicles/<int:pk>/update/', views.update_vehicle, name='update_vehicle'),
     path('vehicles/<int:pk>/delete/', views.delete_vehicle, name='delete_vehicle'),
+
+    # Vehicle Registry (real registered plates — independent master data)
+    path('vehicles/registry/', views.get_customer_vehicles, name='get_customer_vehicles'),
+    path('vehicles/registry/add/', views.add_customer_vehicle, name='add_customer_vehicle'),
+    path('vehicles/registry/lookup/', views.lookup_vehicle, name='lookup_vehicle'),
 
     # Dashboard Stats
     path('dashboard/stats/', views.get_dashboard_stats, name='dashboard_stats'),

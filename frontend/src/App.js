@@ -9,6 +9,7 @@ import Navbar from "./components/Navbar";
 import HomePage from "./pages/HomePage";
 import InventoryPage from "./pages/InventoryPage";
 import VehiclePage from "./pages/VehiclePage";
+import VehicleRegistryPage from "./pages/VehicleRegistryPage";
 import SupplierPage from "./pages/SupplierPage";
 import CustomerPage from "./pages/CustomerPage";
 import POSPage from "./pages/POSPage";
@@ -88,6 +89,14 @@ function App() {
           />
           <Route
             path="/vehicles"
+            element={
+              <PrivateRoute>
+                <VehicleRegistryPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/vehicle-models"
             element={
               <PrivateRoute>
                 <VehiclePage />

@@ -63,22 +63,55 @@ def delete_customer(request, pk):
 
 
 @api_view(['GET'])
-def lookup_customer_by_vehicle(request):
+def get_customer_vehicles(request):
     """
-    GET /customers/lookup/?vehicle_number=ABC123
-    Returns the customer linked to that vehicle number, or 404 if not found.
+    GET /vehicles/registry/?search=... — list/search ALL registered vehicles
+    (independent master data; customer link is optional).
+    """
+    search = request.query_params.get('search', '').strip()
+    qs = CustomerVehicle.objects.select_related('customer').order_by('-created_at')
+    if search:
+        qs = qs.filter(
+            Q(vehicle_number__icontains=search) |
+            Q(make__icontains=search) |
+            Q(model__icontains=search) |
+            Q(customer__name__icontains=search) |
+            Q(customer__phone__icontains=search)
+        )
+    return Response(CustomerVehicleSerializer(qs, many=True).data)
+
+
+@api_view(['POST'])
+def add_customer_vehicle(request):
+    """
+    POST /vehicles/registry/add/
+    Creates a standalone registered vehicle. The `customer` field is
+    optional — a vehicle can be created and used without ever being linked.
+    """
+    data = {**request.data}
+    if 'vehicle_number' in data:
+        data['vehicle_number'] = data['vehicle_number'].strip().upper()
+    serializer = CustomerVehicleSerializer(data=data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+def lookup_vehicle(request):
+    """
+    GET /vehicles/registry/lookup/?vehicle_number=ABC123
+    Returns the vehicle (with nested customer_details, which may be null)
+    for that plate number, or {found: false} if it doesn't exist yet.
     """
     vehicle_number = request.query_params.get('vehicle_number', '').strip().upper()
     if not vehicle_number:
         return Response({'error': 'vehicle_number query param is required'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        customer_vehicle = CustomerVehicle.objects.select_related('customer').prefetch_related('customer__vehicles').get(
-            vehicle_number__iexact=vehicle_number
-        )
-        customer = customer_vehicle.customer
-        serializer = CustomerSerializer(customer)
-        return Response({'found': True, 'customer': serializer.data, 'vehicle': CustomerVehicleSerializer(customer_vehicle).data})
+        vehicle = CustomerVehicle.objects.select_related('customer').get(vehicle_number__iexact=vehicle_number)
+        return Response({'found': True, 'vehicle': CustomerVehicleSerializer(vehicle).data})
     except CustomerVehicle.DoesNotExist:
         return Response({'found': False}, status=status.HTTP_200_OK)
 
@@ -626,6 +659,16 @@ def create_sale(request):
     # This prevents creating a Sale ID and then deleting it immediately (gap in IDs)
     total_amount = 0
     for item in items_data:
+        item_type = item.get('item_type', 'PART')
+        if item_type == 'LABOR':
+            if not item.get('description', '').strip():
+                return Response({"error": "A repair/labor item is missing a description."}, status=status.HTTP_400_BAD_REQUEST)
+            unit_price = float(item['unit_price'])
+            discount = float(item.get('discount', 0))
+            quantity = int(item.get('quantity', 1))
+            total_amount += (unit_price - discount) * quantity
+            continue
+
         try:
             part = Part.objects.get(id=item['part_id'])
             if part.stock_qty < item['quantity']:
@@ -633,13 +676,13 @@ def create_sale(request):
                     {"error": f"Not enough stock for {part.name}. Available: {part.stock_qty}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             # Fixed: Calculate total amount respecting the discount
             # Logic: (Unit Price - Discount) * Quantity
             unit_price = float(item['unit_price'])
             discount = float(item.get('discount', 0))
             quantity = int(item['quantity'])
-            
+
             total_amount += (unit_price - discount) * quantity
 
         except Part.DoesNotExist:
@@ -674,8 +717,20 @@ def create_sale(request):
 
     # 4. Process Items (Now safe to deduct)
     for item in items_data:
+        item_type = item.get('item_type', 'PART')
+        if item_type == 'LABOR':
+            SaleItem.objects.create(
+                sale=sale,
+                item_type='LABOR',
+                description=item.get('description', '').strip(),
+                quantity=item.get('quantity', 1),
+                unit_price=item['unit_price'],
+                discount=item.get('discount', 0),
+            )
+            continue
+
         part = Part.objects.get(id=item['part_id'])
-        
+
         # Deduct Stock
         part.stock_qty -= item['quantity']
         part.save()
@@ -684,11 +739,12 @@ def create_sale(request):
         SaleItem.objects.create(
             sale=sale,
             part=part,
+            item_type='PART',
             quantity=item['quantity'],
             unit_price=item['unit_price'],
             discount=item.get('discount', 0), # Fixed: Pass discount to model
             # Map 'warranty' (from Frontend) to 'warranty_period_months' (in DB)
-            warranty_period_months=item.get('warranty', 0) 
+            warranty_period_months=item.get('warranty', 0)
         )
 
     # 5. Return success using the Serializer
@@ -731,12 +787,13 @@ def cancel_sale(request, pk):
     if sale.status == 'CANCELLED':
         return Response({"error": "Sale is already cancelled"}, status=status.HTTP_400_BAD_REQUEST)
     
-    # 1. Loop through items and add back to stock
+    # 1. Loop through items and add back to stock (labor items have no part to restock)
     for item in sale.items.all():
-        part = item.part
-        part.stock_qty += item.quantity
-        part.save()
-        
+        if item.part:
+            item.part.stock_qty += item.quantity
+            item.part.save()
+
+
     # 2. Update status and cancellation reason
     cancel_reason = request.data.get('cancel_reason', '')
     sale.cancel_reason = cancel_reason

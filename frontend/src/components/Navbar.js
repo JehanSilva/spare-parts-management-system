@@ -5,6 +5,7 @@ import {
   Package,
   Truck,
   Car,
+  Layers,
   Home,
   Menu,
   X,
@@ -32,6 +33,7 @@ const Navbar = () => {
     { path: "/inventory", label: "Inventory", icon: Package },
     { path: "/suppliers", label: "Suppliers", icon: Truck },
     { path: "/vehicles", label: "Vehicles", icon: Car },
+    { path: "/vehicle-models", label: "Vehicle Models", icon: Layers },
     { path: "/sales-history", label: "Sales History", icon: FileText },
   ];
 

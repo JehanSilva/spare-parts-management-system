@@ -14,8 +14,18 @@ class VehicleSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-# --- 2b. CUSTOMER VEHICLE (Real registered plates per customer) ---
+# --- 2b. CUSTOMER VEHICLE (independent master data, optionally linked to a Customer) ---
+class CustomerBasicSerializer(serializers.ModelSerializer):
+    """Lightweight Customer view for nesting — avoids circular nesting with
+    CustomerSerializer.vehicles (which nests CustomerVehicleSerializer)."""
+    class Meta:
+        model = Customer
+        fields = ['id', 'name', 'phone', 'email', 'address']
+
+
 class CustomerVehicleSerializer(serializers.ModelSerializer):
+    customer_details = CustomerBasicSerializer(source='customer', read_only=True)
+
     class Meta:
         model = CustomerVehicle
         fields = '__all__'
@@ -75,25 +85,38 @@ class PartMinimalSerializer(serializers.ModelSerializer):
 
 # --- 4. SALE ITEM ---
 class SaleItemSerializer(serializers.ModelSerializer):
-    # Read-only fields to show part details on the receipt without fetching the part again
-    part_name = serializers.ReadOnlyField(source='part.name')
-    part_brand = serializers.ReadOnlyField(source='part.brand')
-    part_number = serializers.ReadOnlyField(source='part.part_number')
+    # SerializerMethodField (not ReadOnlyField(source='part.xxx')) so these
+    # fall back gracefully for LABOR items, which have no part at all —
+    # part_name becomes the labor description instead of raising AttributeError.
+    part_name = serializers.SerializerMethodField()
+    part_brand = serializers.SerializerMethodField()
+    part_number = serializers.SerializerMethodField()
 
     class Meta:
         model = SaleItem
         fields = [
-            'id', 
-            'part', 
-            'part_name', 
-            'part_brand', 
-            'part_number', 
-            'quantity', 
-            'unit_price', 
+            'id',
+            'part',
+            'item_type',
+            'description',
+            'part_name',
+            'part_brand',
+            'part_number',
+            'quantity',
+            'unit_price',
             'discount',      # <--- CRITICAL: Allows discount to be saved
             'total_price',   # <--- Calculated field from model
             'warranty_period_months'
         ]
+
+    def get_part_name(self, obj):
+        return obj.part.name if obj.part else obj.description
+
+    def get_part_brand(self, obj):
+        return obj.part.brand if obj.part else ""
+
+    def get_part_number(self, obj):
+        return obj.part.part_number if obj.part else ""
 
 # --- 5. SALE (THE HEADER) ---
 class SaleSerializer(serializers.ModelSerializer):

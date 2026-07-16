@@ -63,10 +63,13 @@ class Customer(models.Model):
 
 class CustomerVehicle(models.Model):
     """
-    A specific registered vehicle (by plate number) owned by a Customer.
-    This is NOT the Vehicle make/model catalog used for parts compatibility.
+    A specific registered vehicle (by plate number) — independent master data.
+    Optionally linked to a Customer; deleting the customer unlinks rather
+    than deletes the vehicle (on_delete=SET_NULL), so vehicle history is
+    preserved. This is NOT the Vehicle make/model catalog used for parts
+    compatibility.
     """
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='vehicles')
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='vehicles')
     vehicle_number = models.CharField(max_length=20, unique=True, help_text="Vehicle registration plate number")
     make = models.CharField(max_length=50, blank=True, help_text="e.g., Toyota")
     model = models.CharField(max_length=50, blank=True, help_text="e.g., Corolla")
@@ -78,7 +81,7 @@ class CustomerVehicle(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.vehicle_number} ({self.customer.name})"
+        return f"{self.vehicle_number} ({self.customer.name if self.customer else 'Unlinked'})"
 
 
 

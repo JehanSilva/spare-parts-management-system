@@ -14,8 +14,18 @@ class VehicleSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-# --- 2b. CUSTOMER VEHICLE (Real registered plates per customer) ---
+# --- 2b. CUSTOMER VEHICLE (independent master data, optionally linked to a Customer) ---
+class CustomerBasicSerializer(serializers.ModelSerializer):
+    """Lightweight Customer view for nesting — avoids circular nesting with
+    CustomerSerializer.vehicles (which nests CustomerVehicleSerializer)."""
+    class Meta:
+        model = Customer
+        fields = ['id', 'name', 'phone', 'email', 'address']
+
+
 class CustomerVehicleSerializer(serializers.ModelSerializer):
+    customer_details = CustomerBasicSerializer(source='customer', read_only=True)
+
     class Meta:
         model = CustomerVehicle
         fields = '__all__'

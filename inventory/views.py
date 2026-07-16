@@ -63,22 +63,55 @@ def delete_customer(request, pk):
 
 
 @api_view(['GET'])
-def lookup_customer_by_vehicle(request):
+def get_customer_vehicles(request):
     """
-    GET /customers/lookup/?vehicle_number=ABC123
-    Returns the customer linked to that vehicle number, or 404 if not found.
+    GET /vehicles/registry/?search=... — list/search ALL registered vehicles
+    (independent master data; customer link is optional).
+    """
+    search = request.query_params.get('search', '').strip()
+    qs = CustomerVehicle.objects.select_related('customer').order_by('-created_at')
+    if search:
+        qs = qs.filter(
+            Q(vehicle_number__icontains=search) |
+            Q(make__icontains=search) |
+            Q(model__icontains=search) |
+            Q(customer__name__icontains=search) |
+            Q(customer__phone__icontains=search)
+        )
+    return Response(CustomerVehicleSerializer(qs, many=True).data)
+
+
+@api_view(['POST'])
+def add_customer_vehicle(request):
+    """
+    POST /vehicles/registry/add/
+    Creates a standalone registered vehicle. The `customer` field is
+    optional — a vehicle can be created and used without ever being linked.
+    """
+    data = {**request.data}
+    if 'vehicle_number' in data:
+        data['vehicle_number'] = data['vehicle_number'].strip().upper()
+    serializer = CustomerVehicleSerializer(data=data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+def lookup_vehicle(request):
+    """
+    GET /vehicles/registry/lookup/?vehicle_number=ABC123
+    Returns the vehicle (with nested customer_details, which may be null)
+    for that plate number, or {found: false} if it doesn't exist yet.
     """
     vehicle_number = request.query_params.get('vehicle_number', '').strip().upper()
     if not vehicle_number:
         return Response({'error': 'vehicle_number query param is required'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
-        customer_vehicle = CustomerVehicle.objects.select_related('customer').prefetch_related('customer__vehicles').get(
-            vehicle_number__iexact=vehicle_number
-        )
-        customer = customer_vehicle.customer
-        serializer = CustomerSerializer(customer)
-        return Response({'found': True, 'customer': serializer.data, 'vehicle': CustomerVehicleSerializer(customer_vehicle).data})
+        vehicle = CustomerVehicle.objects.select_related('customer').get(vehicle_number__iexact=vehicle_number)
+        return Response({'found': True, 'vehicle': CustomerVehicleSerializer(vehicle).data})
     except CustomerVehicle.DoesNotExist:
         return Response({'found': False}, status=status.HTTP_200_OK)
 

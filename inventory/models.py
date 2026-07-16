@@ -112,19 +112,25 @@ class Sale(models.Model):
         return f"Sale {str(self.id)[:8]} - {self.customer_name} ({self.status})"
 
 class SaleItem(models.Model):
+    ITEM_TYPE_CHOICES = [
+        ('PART', 'Part'),
+        ('LABOR', 'Labor'),
+    ]
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='items')
-    part = models.ForeignKey(Part, on_delete=models.PROTECT)
+    part = models.ForeignKey(Part, on_delete=models.PROTECT, null=True, blank=True)
+    item_type = models.CharField(max_length=10, choices=ITEM_TYPE_CHOICES, default='PART')
+    description = models.CharField(max_length=255, blank=True, help_text="Used for LABOR items, e.g. 'Brake pad replacement'")
     quantity = models.PositiveIntegerField(default=1)
-    
+
     # SNAPSHOT: The standard price at the moment of sale
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
-    
+
     # NEW: The discount given just for this specific line item
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    
+
     # NEW: Calculated field: (unit_price - discount) * quantity
     total_price = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    
+
     warranty_period_months = models.PositiveIntegerField(default=0)
 
     def save(self, *args, **kwargs):
@@ -133,12 +139,12 @@ class SaleItem(models.Model):
         price = self.unit_price or 0
         disc = self.discount or 0
         qty = self.quantity or 1
-        
+
         self.total_price = (price - disc) * qty
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.part.name} (x{self.quantity})"
+        return f"{self.part.name if self.part else self.description} (x{self.quantity})"
 
 class ActiveCart(models.Model):
     id = models.CharField(max_length=50, primary_key=True) # Matches the frontend cart.id

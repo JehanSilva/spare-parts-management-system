@@ -659,6 +659,16 @@ def create_sale(request):
     # This prevents creating a Sale ID and then deleting it immediately (gap in IDs)
     total_amount = 0
     for item in items_data:
+        item_type = item.get('item_type', 'PART')
+        if item_type == 'LABOR':
+            if not item.get('description', '').strip():
+                return Response({"error": "A repair/labor item is missing a description."}, status=status.HTTP_400_BAD_REQUEST)
+            unit_price = float(item['unit_price'])
+            discount = float(item.get('discount', 0))
+            quantity = int(item.get('quantity', 1))
+            total_amount += (unit_price - discount) * quantity
+            continue
+
         try:
             part = Part.objects.get(id=item['part_id'])
             if part.stock_qty < item['quantity']:
@@ -666,13 +676,13 @@ def create_sale(request):
                     {"error": f"Not enough stock for {part.name}. Available: {part.stock_qty}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             # Fixed: Calculate total amount respecting the discount
             # Logic: (Unit Price - Discount) * Quantity
             unit_price = float(item['unit_price'])
             discount = float(item.get('discount', 0))
             quantity = int(item['quantity'])
-            
+
             total_amount += (unit_price - discount) * quantity
 
         except Part.DoesNotExist:
@@ -707,8 +717,20 @@ def create_sale(request):
 
     # 4. Process Items (Now safe to deduct)
     for item in items_data:
+        item_type = item.get('item_type', 'PART')
+        if item_type == 'LABOR':
+            SaleItem.objects.create(
+                sale=sale,
+                item_type='LABOR',
+                description=item.get('description', '').strip(),
+                quantity=item.get('quantity', 1),
+                unit_price=item['unit_price'],
+                discount=item.get('discount', 0),
+            )
+            continue
+
         part = Part.objects.get(id=item['part_id'])
-        
+
         # Deduct Stock
         part.stock_qty -= item['quantity']
         part.save()
@@ -717,11 +739,12 @@ def create_sale(request):
         SaleItem.objects.create(
             sale=sale,
             part=part,
+            item_type='PART',
             quantity=item['quantity'],
             unit_price=item['unit_price'],
             discount=item.get('discount', 0), # Fixed: Pass discount to model
             # Map 'warranty' (from Frontend) to 'warranty_period_months' (in DB)
-            warranty_period_months=item.get('warranty', 0) 
+            warranty_period_months=item.get('warranty', 0)
         )
 
     # 5. Return success using the Serializer
@@ -764,12 +787,13 @@ def cancel_sale(request, pk):
     if sale.status == 'CANCELLED':
         return Response({"error": "Sale is already cancelled"}, status=status.HTTP_400_BAD_REQUEST)
     
-    # 1. Loop through items and add back to stock
+    # 1. Loop through items and add back to stock (labor items have no part to restock)
     for item in sale.items.all():
-        part = item.part
-        part.stock_qty += item.quantity
-        part.save()
-        
+        if item.part:
+            item.part.stock_qty += item.quantity
+            item.part.save()
+
+
     # 2. Update status and cancellation reason
     cancel_reason = request.data.get('cancel_reason', '')
     sale.cancel_reason = cancel_reason

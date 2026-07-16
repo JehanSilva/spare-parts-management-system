@@ -27,6 +27,7 @@ import {
   BadgeCheck,
   Loader2,
   Wallet,
+  Wrench,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -431,6 +432,86 @@ const PaymentModal = ({
   );
 };
 
+// --- REPAIR / LABOR ITEM MODAL ---
+const LaborItemModal = ({ isOpen, onClose, onAdd }) => {
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setDescription("");
+      setPrice("");
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const canAdd = description.trim().length > 0 && parseFloat(price) > 0;
+
+  const handleAdd = () => {
+    if (!canAdd) return;
+    onAdd(description.trim(), price);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-gray-900 p-4 text-white flex justify-between items-center shrink-0">
+          <h3 className="font-bold text-lg flex items-center gap-2">
+            <Wrench size={20} /> Add Repair / Labor
+          </h3>
+          <button onClick={onClose} className="hover:bg-white/10 p-1 rounded-full">
+            <XCircle size={20} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Description *
+            </label>
+            <input
+              type="text"
+              autoFocus
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="e.g. Brake pad replacement labor"
+              className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Price (LKR) *
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="e.g. 3500"
+              className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+          <button
+            onClick={handleAdd}
+            disabled={!canAdd}
+            className="w-full py-2.5 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
+          >
+            Add to Cart
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const POSPage = () => {
   // ── Parts cache ──────────────────────────────────────────────────────────
   const { allParts, partsLoading, invalidateParts } = useParts();
@@ -581,6 +662,8 @@ const POSPage = () => {
   const [visibleCount, setVisibleCount] = useState(20);
 
   const [cartToDelete, setCartToDelete] = useState(null);
+  const [laborModalOpen, setLaborModalOpen] = useState(false);
+  const [showNoCustomerConfirm, setShowNoCustomerConfirm] = useState(false);
 
   // Derived active cart states
   const activeCart = useMemo(() => {
@@ -964,6 +1047,26 @@ const POSPage = () => {
     });
   }, [activeCartId]);
 
+  // 3.5 Add a Repair/Labor line item — priced by hand, not tied to the Part
+  // catalog or stock. Shaped with the same field names (name/sell_price/
+  // quantity/discountAmount/discountPercentInput) a Part-spread cart item
+  // already has, so quantity/discount handling and totals work unchanged.
+  const handleAddLaborItem = (description, price) => {
+    const newItem = {
+      id: `labor_${Date.now()}`,
+      item_type: "LABOR",
+      name: description,
+      sell_price: parseFloat(price),
+      quantity: 1,
+      discountAmount: 0,
+      discountPercentInput: "",
+    };
+    setCarts((prev) =>
+      prev.map((c) => (c.id === activeCartId ? { ...c, items: [newItem, ...c.items] } : c))
+    );
+    setLaborModalOpen(false);
+  };
+
   // 4. Remove from Cart
   const removeFromCart = (id) => {
     setCarts((prev) =>
@@ -1113,13 +1216,11 @@ const POSPage = () => {
   );
 
   // 7. Checkout Logic (The Critical Part)
-  const handleCheckout = async () => {
-    if (!customerName) {
-      setAlertInfo({ type: "error", message: "Please add a customer (Vehicle & Customer)" });
-      setVehicleModalOpen(true);
-      setFocusVehicleOnOpen(true);
-      return;
-    }
+  // Entry point for the "Complete Sale" button. A cart with no vehicle or
+  // customer linked (e.g. a walk-in bringing in just parts) is allowed to
+  // check out — we just confirm that's intentional first, rather than
+  // blocking it outright.
+  const handleCheckout = () => {
     if (cart.length === 0) {
       setAlertInfo({
         type: "error",
@@ -1127,7 +1228,19 @@ const POSPage = () => {
       });
       return;
     }
+    if (!customerName) {
+      setShowNoCustomerConfirm(true);
+      return;
+    }
+    proceedCheckout();
+  };
 
+  const handleConfirmNoCustomerCheckout = () => {
+    setShowNoCustomerConfirm(false);
+    proceedCheckout();
+  };
+
+  const proceedCheckout = async () => {
     let partialPaidNow = 0;
     if (paymentMode === "PARTIAL") {
       partialPaidNow = parseFloat(partialAmountPaid);
@@ -1145,7 +1258,7 @@ const POSPage = () => {
     setLoading(true);
 
     const salePayload = {
-      customer_name: customerName,
+      customer_name: customerName || "Walk-in Customer",
       vehicle_number: vehicleNumber,
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
       payment_status: paymentMode,
@@ -1155,7 +1268,18 @@ const POSPage = () => {
         const originalPrice = parseFloat(item.sell_price);
         const discountAmount = parseFloat(item.discountAmount) || 0;
 
+        if (item.item_type === "LABOR") {
+          return {
+            item_type: "LABOR",
+            description: item.name,
+            quantity: parseInt(item.quantity),
+            unit_price: originalPrice,
+            discount: discountAmount,
+          };
+        }
+
         return {
+          item_type: "PART",
           part_id: item.id,
           quantity: parseInt(item.quantity),
           unit_price: originalPrice,
@@ -1352,6 +1476,16 @@ const POSPage = () => {
         onCancel={() => setCartToDelete(null)}
       />
 
+      <ConfirmModal
+        isOpen={showNoCustomerConfirm}
+        title="No Vehicle or Customer Linked"
+        message="This sale has no vehicle or customer attached. Continue anyway?"
+        onConfirm={handleConfirmNoCustomerCheckout}
+        onCancel={() => setShowNoCustomerConfirm(false)}
+        confirmLabel="Continue Anyway"
+        tone="info"
+      />
+
       <VehicleCustomerModal
         isOpen={vehicleModalOpen}
         onClose={() => setVehicleModalOpen(false)}
@@ -1385,6 +1519,12 @@ const POSPage = () => {
         totalAmount={totalAmount}
         isCredit={isCredit}
         partialAmountInputRef={partialAmountInputRef}
+      />
+
+      <LaborItemModal
+        isOpen={laborModalOpen}
+        onClose={() => setLaborModalOpen(false)}
+        onAdd={handleAddLaborItem}
       />
 
       {/* TOP BAR: ACTIVE CARTS MANAGEMENT */}
@@ -1578,6 +1718,15 @@ const POSPage = () => {
             )}
           </div>
 
+          <div className="shrink-0 px-3 pt-3">
+            <button
+              onClick={() => setLaborModalOpen(true)}
+              className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-dashed border-blue-200 hover:border-blue-300 rounded-xl py-2 transition-colors"
+            >
+              <Wrench size={13} /> Add Repair / Labor
+            </button>
+          </div>
+
           <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50/50">
             {cart.length === 0 ? (
               <div className="text-center text-gray-400 mt-20 flex flex-col items-center">
@@ -1625,9 +1774,15 @@ const POSPage = () => {
                         <h4 className="font-bold text-sm text-gray-800 line-clamp-2">
                           {item.name}
                         </h4>
-                        <p className="text-[10px] text-gray-500 font-mono">
-                          {item.part_number} • {item.brand}
-                        </p>
+                        {item.item_type === "LABOR" ? (
+                          <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wide flex items-center gap-1">
+                            <Wrench size={10} /> Repair / Labor
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-gray-500 font-mono">
+                            {item.part_number} • {item.brand}
+                          </p>
+                        )}
                       </div>
                       <button
                         onClick={() => removeFromCart(item.id)}
@@ -1709,13 +1864,15 @@ const POSPage = () => {
                         </div>
                       </div>
 
-                      {/* Profitability Badge */}
-                      <div className="flex items-center justify-between text-[10px] pt-1">
-                        <span className="text-gray-400 font-medium">Remaining Profit:</span>
-                        <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
-                          {profitText}
-                        </span>
-                      </div>
+                      {/* Profitability Badge — not meaningful for labor (no buy_price/cost) */}
+                      {item.item_type !== "LABOR" && (
+                        <div className="flex items-center justify-between text-[10px] pt-1">
+                          <span className="text-gray-400 font-medium">Remaining Profit:</span>
+                          <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
+                            {profitText}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

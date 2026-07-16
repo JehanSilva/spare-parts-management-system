@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
 import { createSale, fetchActiveCarts, syncActiveCarts, lookupCustomerByVehicle, createCustomer, addVehicleToCustomer, fetchCustomers } from "../services/api";
 import { useParts } from "../context/PartsContext";
-import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
@@ -750,12 +749,11 @@ const POSPage = () => {
   const [focusPartialOnOpen, setFocusPartialOnOpen] = useState(false);
   const partialAmountInputRef = useRef(null);
 
-  // Print Ref
-  const receiptRef = useRef();
-  const handlePrint = useReactToPrint({
-    contentRef: receiptRef,
-    documentTitle: `Invoice-${saleSuccess?.id || "New"}`,
-  });
+  // Plain window.print() + CSS (see the print:hidden / print:block classes
+  // in the success screen below), rather than react-to-print's iframe-based
+  // approach — iOS Safari doesn't reliably scope window.print() to an
+  // offscreen iframe's content and falls back to printing the whole page.
+  const handlePrint = () => window.print();
 
   // ── Client-side search — instant, zero network calls ──────────────────
   const filteredParts = useMemo(() => {
@@ -1370,7 +1368,8 @@ const POSPage = () => {
     : 0;
 
   return saleSuccess ? (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm">
+    <>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm print:hidden">
       <div className="bg-white rounded-[2rem] shadow-2xl shadow-gray-200/50 p-8 md:p-10 max-w-lg w-full text-center relative overflow-hidden">
 
         {/* Success Icon */}
@@ -1458,11 +1457,13 @@ const POSPage = () => {
           </button>
         </div>
       </div>
-
-      <div className="hidden">
-        <Receipt ref={receiptRef} sale={saleSuccess} />
-      </div>
     </div>
+
+    {/* Receipt — invisible on screen, only rendered for window.print() */}
+    <div className="hidden print:block">
+      <Receipt sale={saleSuccess} />
+    </div>
+    </>
   ) : (
     <div className="flex flex-col h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
       <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />

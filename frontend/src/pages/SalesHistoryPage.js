@@ -1,6 +1,5 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import { fetchSales, fetchParts, updateSale, cancelSale, markSaleAsPaid } from "../services/api";
-import { useReactToPrint } from "react-to-print";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
 import {
@@ -334,20 +333,23 @@ const SalesHistoryPage = () => {
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
 
   // --- Printing State ---
+  // Plain window.print() + CSS (see the .receipt-print-only / print:hidden
+  // classes below), rather than react-to-print's iframe-based approach —
+  // iOS Safari doesn't reliably scope window.print() to an offscreen iframe's
+  // content and falls back to printing the whole page instead of the receipt.
   const [selectedSaleForPrint, setSelectedSaleForPrint] = useState(null);
-  const receiptRef = useRef();
-
-  const handlePrint = useReactToPrint({
-    contentRef: receiptRef,
-    documentTitle: `Invoice-${selectedSaleForPrint?.id || "Copy"}`,
-    onAfterPrint: () => setSelectedSaleForPrint(null),
-  });
 
   useEffect(() => {
-    if (selectedSaleForPrint) {
-      handlePrint();
-    }
-  }, [selectedSaleForPrint, handlePrint]);
+    if (!selectedSaleForPrint) return;
+    // Let the Receipt content paint before invoking the print dialog.
+    const t = setTimeout(() => window.print(), 50);
+    const handleAfterPrint = () => setSelectedSaleForPrint(null);
+    window.addEventListener("afterprint", handleAfterPrint);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("afterprint", handleAfterPrint);
+    };
+  }, [selectedSaleForPrint]);
 
   // --- Enrich Sale Items with Part Numbers ---
   const getEnrichedSale = (sale) => {
@@ -509,7 +511,8 @@ const SalesHistoryPage = () => {
 
 
   return (
-    <div className="p-4 md:p-8 min-h-screen bg-gray-50">
+    <>
+    <div className="p-4 md:p-8 min-h-screen bg-gray-50 print:hidden">
       {alertInfo.message && (
         <AlertComponent 
           type={alertInfo.type} 
@@ -547,13 +550,6 @@ const SalesHistoryPage = () => {
         <p className="text-gray-600 mt-1 text-sm md:text-base">
           View past invoices and regenerate receipts.
         </p>
-      </div>
-
-      {/* Hidden Receipt Component */}
-      <div className="hidden">
-        {selectedSaleForPrint && (
-          <Receipt ref={receiptRef} sale={selectedSaleForPrint} />
-        )}
       </div>
 
       {/* Outstanding Credit Summary — informational only. The filter toggle
@@ -1107,6 +1103,12 @@ const SalesHistoryPage = () => {
         </>
       )}
     </div>
+
+    {/* Receipt — invisible on screen, only rendered for window.print() */}
+    <div className="hidden print:block">
+      {selectedSaleForPrint && <Receipt sale={selectedSaleForPrint} />}
+    </div>
+    </>
   );
 };
 

@@ -116,6 +116,19 @@ def lookup_vehicle(request):
         return Response({'found': False}, status=status.HTTP_200_OK)
 
 
+@api_view(['GET'])
+def get_vehicle_history(request, pk):
+    """
+    GET /vehicles/registry/<pk>/history/
+    All sales/jobs recorded against this vehicle's plate number, newest first.
+    Sale.vehicle_number is free-text (not an FK), so this matches the same
+    way lookup_vehicle does — case-insensitive exact match on the plate.
+    """
+    vehicle = get_object_or_404(CustomerVehicle, pk=pk)
+    sales = Sale.objects.filter(vehicle_number__iexact=vehicle.vehicle_number).order_by('-created_at')
+    return Response(SaleSerializer(sales, many=True).data)
+
+
 @api_view(['POST'])
 def add_vehicle_to_customer(request, pk):
     """
@@ -646,6 +659,8 @@ def create_sale(request):
     vehicle_number = data.get('vehicle_number', '')
     customer_id = data.get('customer') or None
     items_data = data.get('items', [])
+    mileage = data.get('mileage') or None
+    notes = data.get('notes', '')
 
     payment_status = data.get('payment_status', 'PAID')
     if payment_status not in ('PAID', 'PARTIAL', 'CREDIT'):
@@ -713,7 +728,17 @@ def create_sale(request):
         payment_status=payment_status,
         amount_paid=amount_paid,
         credit_note=credit_note,
+        mileage=mileage,
+        notes=notes,
     )
+
+    # 3b. Keep the vehicle registry's "current mileage" in sync with the
+    # latest known reading — only advance it forward, never regress it from
+    # an out-of-order or mistyped lower value.
+    if mileage and vehicle_number:
+        CustomerVehicle.objects.filter(vehicle_number__iexact=vehicle_number).filter(
+            Q(current_mileage__isnull=True) | Q(current_mileage__lt=mileage)
+        ).update(current_mileage=mileage)
 
     # 4. Process Items (Now safe to deduct)
     for item in items_data:
@@ -1369,7 +1394,9 @@ def sync_active_carts(request):
             defaults={
                 'customer_name': cart.get('customer_name', ''),
                 'vehicle_number': cart.get('vehicle_number', ''),
-                'items': cart.get('items', [])
+                'items': cart.get('items', []),
+                'mileage': cart.get('mileage'),
+                'notes': cart.get('notes', ''),
             }
         )
 

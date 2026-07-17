@@ -49,6 +49,7 @@ urlpatterns = [
     path('vehicles/registry/', views.get_customer_vehicles, name='get_customer_vehicles'),
     path('vehicles/registry/add/', views.add_customer_vehicle, name='add_customer_vehicle'),
     path('vehicles/registry/lookup/', views.lookup_vehicle, name='lookup_vehicle'),
+    path('vehicles/registry/<int:pk>/history/', views.get_vehicle_history, name='get_vehicle_history'),
 
     # Dashboard Stats
     path('dashboard/stats/', views.get_dashboard_stats, name='dashboard_stats'),

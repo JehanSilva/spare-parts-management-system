@@ -156,5 +156,7 @@ export const createCustomerVehicle = async (data) =>
   (await API.post("/vehicles/registry/add/", data)).data;
 export const lookupVehicle = async (vehicleNumber) =>
   (await API.get("/vehicles/registry/lookup/", { params: { vehicle_number: vehicleNumber } })).data;
+export const fetchVehicleHistory = async (vehicleId) =>
+  (await API.get(`/vehicles/registry/${vehicleId}/history/`)).data;
 
 export default API;

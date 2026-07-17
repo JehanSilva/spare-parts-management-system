@@ -778,6 +778,17 @@ const SalesHistoryPage = () => {
                       </div>
                     )}
 
+                    {(sale.mileage != null || sale.notes) && (
+                      <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-3.5 mb-4 text-xs space-y-1">
+                        {sale.mileage != null && (
+                          <p><span className="font-bold uppercase tracking-wider text-[10px] text-blue-700">Mileage:</span> {sale.mileage.toLocaleString()} km</p>
+                        )}
+                        {sale.notes && (
+                          <p className="italic font-medium">"{sale.notes}"</p>
+                        )}
+                      </div>
+                    )}
+
                     <h4 className="text-xs font-bold text-gray-500 uppercase mb-3">
                       Purchased Items
                     </h4>
@@ -997,6 +1008,16 @@ const SalesHistoryPage = () => {
                                    Credit Note {sale.payment_status === 'PAID' && '(Settled)'}
                                  </span>
                                  <p className="italic font-medium">"{sale.credit_note}"</p>
+                               </div>
+                             )}
+                             {(sale.mileage != null || sale.notes) && (
+                               <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-4 mb-4 text-sm max-w-xl space-y-1">
+                                 {sale.mileage != null && (
+                                   <p><span className="font-bold uppercase tracking-wider text-xs text-blue-700">Mileage:</span> {sale.mileage.toLocaleString()} km</p>
+                                 )}
+                                 {sale.notes && (
+                                   <p className="italic font-medium">"{sale.notes}"</p>
+                                 )}
                                </div>
                              )}
                             <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">

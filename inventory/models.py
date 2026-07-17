@@ -107,6 +107,8 @@ class Sale(models.Model):
     amount_paid = models.DecimalField(max_digits=12, decimal_places=2, default=0.00, help_text="Amount actually received at time of sale. Equals total_amount unless payment_status is PARTIAL or CREDIT.")
     credit_note = models.TextField(blank=True, null=True, help_text="Note about the credit/partial sale, e.g. when the customer will pay the balance")
     credit_settled_at = models.DateTimeField(null=True, blank=True, help_text="When this credit/partial sale's balance was marked as received")
+    mileage = models.PositiveIntegerField(null=True, blank=True, help_text="Vehicle's odometer reading at the time of this job, if known")
+    notes = models.TextField(blank=True, help_text="Notes about the repair/job performed")
 
     def __str__(self):
         return f"Sale {str(self.id)[:8]} - {self.customer_name} ({self.status})"
@@ -151,6 +153,8 @@ class ActiveCart(models.Model):
     customer_name = models.CharField(max_length=100, blank=True, default='')
     vehicle_number = models.CharField(max_length=20, blank=True, default='')
     items = models.JSONField(default=list, blank=True)
+    mileage = models.PositiveIntegerField(null=True, blank=True)
+    notes = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

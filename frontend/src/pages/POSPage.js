@@ -1332,8 +1332,10 @@ const POSPage = () => {
 
     setLoading(true);
 
+    const fallbackCustomerName = vehicleLabel || vehicleNumber || "Walk-in Customer";
+
     const salePayload = {
-      customer_name: customerName || "Walk-in Customer",
+      customer_name: customerName || fallbackCustomerName,
       vehicle_number: vehicleNumber,
       mileage: mileage ? parseInt(mileage) : null,
       notes: notes.trim(),
@@ -1564,8 +1566,12 @@ const POSPage = () => {
 
       <ConfirmModal
         isOpen={showNoCustomerConfirm}
-        title="No Vehicle or Customer Linked"
-        message="This sale has no vehicle or customer attached. Continue anyway?"
+        title={vehicleNumber ? "No Customer Linked" : "No Vehicle or Customer Linked"}
+        message={
+          vehicleNumber
+            ? "This sale has no customer attached. Continue anyway?"
+            : "This sale has no vehicle or customer attached. Continue anyway?"
+        }
         onConfirm={handleConfirmNoCustomerCheckout}
         onCancel={() => setShowNoCustomerConfirm(false)}
         confirmLabel="Continue Anyway"

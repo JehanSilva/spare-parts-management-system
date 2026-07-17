@@ -28,6 +28,8 @@ import {
   Loader2,
   Wallet,
   Wrench,
+  Gauge,
+  StickyNote,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -147,12 +149,18 @@ const VehicleCustomerModal = ({
   onUnlinkCustomer,
   unlinkingCustomer,
   vehicleNumberInputRef,
+  mileage,
+  onMileageChange,
+  notes,
+  onNotesChange,
 }) => {
   const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setDetailsExpanded(false);
+      setConfirmUnlinkOpen(false);
     }
   }, [isOpen]);
 
@@ -165,6 +173,7 @@ const VehicleCustomerModal = ({
   ].filter(Boolean);
 
   return (
+    <>
     <div
       className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
       onClick={onClose}
@@ -281,33 +290,58 @@ const VehicleCustomerModal = ({
             </div>
           )}
 
-          {/* 3. Link Customer — always optional, and independent of whether a
-              vehicle is entered at all (works for a "customer only" sale too) */}
+          {/* 3. Job Details — mileage/notes for THIS repair, both optional
+              ("if available"), independent of vehicle/customer link status */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Job Details (optional)</p>
+            <div className="relative">
+              <Gauge size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="number"
+                min="0"
+                value={mileage}
+                onChange={(e) => onMileageChange(e.target.value)}
+                placeholder="Current mileage (km), e.g. 45000"
+                className="w-full pl-7 pr-2.5 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-red-400"
+              />
+            </div>
+            <div className="relative">
+              <StickyNote size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+              <textarea
+                value={notes}
+                onChange={(e) => onNotesChange(e.target.value)}
+                rows={2}
+                placeholder="Notes about this repair, e.g. Replaced brake pads, checked alignment"
+                className="w-full pl-7 pr-2.5 py-2 text-sm bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-red-400 resize-none"
+              />
+            </div>
+          </div>
+
+          {/* 4. Link Customer — always optional, and independent of whether a
+              vehicle is entered at all (works for a "customer only" sale too).
+              Once linked, the only action is Unlink — to pick a different
+              customer, unlink first, which reopens the search/create picker. */}
           {linkedCustomer && !linkPickerOpen ? (
             <div className="bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-2">
-              <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-0.5">Linked Customer</p>
-              <p className="text-xs font-bold text-blue-900 truncate">{linkedCustomer.name}</p>
-              {(linkedCustomer.phone || linkedCustomer.email) && (
-                <p className="text-[10px] text-blue-600 truncate">
-                  {[linkedCustomer.phone, linkedCustomer.email].filter(Boolean).join(" · ")}
-                </p>
-              )}
-              {linkedCustomer.address && (
-                <p className="text-[10px] text-blue-600 truncate">{linkedCustomer.address}</p>
-              )}
-              <div className="flex gap-2 mt-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-0.5">Linked Customer</p>
+                  <p className="text-xs font-bold text-blue-900 truncate">{linkedCustomer.name}</p>
+                  {(linkedCustomer.phone || linkedCustomer.email) && (
+                    <p className="text-[10px] text-blue-600 truncate">
+                      {[linkedCustomer.phone, linkedCustomer.email].filter(Boolean).join(" · ")}
+                    </p>
+                  )}
+                  {linkedCustomer.address && (
+                    <p className="text-[10px] text-blue-600 truncate">{linkedCustomer.address}</p>
+                  )}
+                </div>
                 <button
-                  onClick={() => setLinkPickerOpen(true)}
-                  className="flex-1 py-1.5 text-[11px] font-bold text-blue-700 bg-white border border-blue-300 rounded-lg hover:bg-blue-100"
-                >
-                  Change
-                </button>
-                <button
-                  onClick={onUnlinkCustomer}
+                  onClick={() => setConfirmUnlinkOpen(true)}
                   disabled={unlinkingCustomer}
-                  className="flex-1 py-1.5 text-[11px] font-bold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
+                  className="shrink-0 px-2.5 py-1 text-[10px] font-bold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
                 >
-                  {unlinkingCustomer ? "Unlinking..." : "Unlink"}
+                  {unlinkingCustomer ? "..." : "Unlink"}
                 </button>
               </div>
             </div>
@@ -325,6 +359,16 @@ const VehicleCustomerModal = ({
         </div>
       </div>
     </div>
+
+    <ConfirmModal
+      isOpen={confirmUnlinkOpen}
+      title="Unlink Customer?"
+      message={`Remove ${linkedCustomer?.name || "this customer"} from this vehicle/job?`}
+      onConfirm={() => { setConfirmUnlinkOpen(false); onUnlinkCustomer(); }}
+      onCancel={() => setConfirmUnlinkOpen(false)}
+      confirmLabel="Unlink"
+    />
+    </>
   );
 };
 
@@ -534,6 +578,8 @@ const POSPage = () => {
           customerName: c.customer_name,
           vehicleNumber: c.vehicle_number,
           items: c.items,
+          mileage: c.mileage != null ? String(c.mileage) : "",
+          notes: c.notes || "",
         }));
 
         if (mapped.length > 0) {
@@ -555,6 +601,8 @@ const POSPage = () => {
               customerName: "",
               vehicleNumber: "",
               items: [],
+              mileage: "",
+              notes: "",
             },
           ];
           setCarts(initialCarts);
@@ -566,6 +614,8 @@ const POSPage = () => {
             customer_name: c.customerName,
             vehicle_number: c.vehicleNumber,
             items: c.items,
+            mileage: c.mileage ? parseInt(c.mileage) : null,
+            notes: c.notes || "",
           })));
         }
         // Only mark load as complete on success to prevent sync of empty state on failure
@@ -597,6 +647,8 @@ const POSPage = () => {
           customer_name: c.customerName,
           vehicle_number: c.vehicleNumber,
           items: c.items,
+          mileage: c.mileage ? parseInt(c.mileage) : null,
+          notes: c.notes || "",
         }));
         await syncActiveCarts(payload);
       } catch (error) {
@@ -636,6 +688,8 @@ const POSPage = () => {
             customerName: "",
             vehicleNumber: "",
             items: [],
+            mileage: "",
+            notes: "",
           },
         ];
         setCarts(initialCarts);
@@ -645,6 +699,8 @@ const POSPage = () => {
           customer_name: c.customerName,
           vehicle_number: c.vehicleNumber,
           items: c.items,
+          mileage: c.mileage ? parseInt(c.mileage) : null,
+          notes: c.notes || "",
         })));
       }
       // Only mark load as complete on success to prevent sync of empty state on failure
@@ -664,18 +720,21 @@ const POSPage = () => {
   const [cartToDelete, setCartToDelete] = useState(null);
   const [laborModalOpen, setLaborModalOpen] = useState(false);
   const [showNoCustomerConfirm, setShowNoCustomerConfirm] = useState(false);
+  const [itemToRemove, setItemToRemove] = useState(null);
 
   // Derived active cart states
   const activeCart = useMemo(() => {
     return (
       carts.find((c) => c.id === activeCartId) ||
-      carts[0] || { id: "default", customerName: "", vehicleNumber: "", items: [] }
+      carts[0] || { id: "default", customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }
     );
   }, [carts, activeCartId]);
 
   const cart = activeCart.items;
   const customerName = activeCart.customerName;
   const vehicleNumber = activeCart.vehicleNumber;
+  const mileage = activeCart.mileage || "";
+  const notes = activeCart.notes || "";
 
   // Persist active cart selection locally
   useEffect(() => {
@@ -778,6 +837,8 @@ const POSPage = () => {
       customerName: "",
       vehicleNumber: "",
       items: [],
+      mileage: "",
+      notes: "",
     };
     setCarts((prev) => [...prev, newCart]);
     setActiveCartId(newId);
@@ -801,7 +862,7 @@ const POSPage = () => {
       if (remaining.length === 0) {
         const newId = "cart_" + Date.now();
         setActiveCartId(newId);
-        return [{ id: newId, customerName: "", vehicleNumber: "", items: [] }];
+        return [{ id: newId, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }];
       }
       if (activeCartId === cartId) {
         setActiveCartId(remaining[0].id);
@@ -810,6 +871,15 @@ const POSPage = () => {
     });
     setCartToDelete(null);
     setAlertInfo({ type: "success", message: "Repair cart discarded." });
+  };
+
+  // Mileage/notes are per-job details — optional, entered "if available",
+  // and scoped to whichever repair cart is currently active.
+  const handleMileageChange = (value) => {
+    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, mileage: value } : c)));
+  };
+  const handleNotesChange = (value) => {
+    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, notes: value } : c)));
   };
 
   const handleVehicleNumberChange = (veh) => {
@@ -1078,6 +1148,11 @@ const POSPage = () => {
     );
   };
 
+  const handleConfirmRemoveItem = () => {
+    if (itemToRemove) removeFromCart(itemToRemove.id);
+    setItemToRemove(null);
+  };
+
   // 5. Update Quantity
   const updateQuantity = (id, delta) => {
     setCarts((prev) =>
@@ -1188,7 +1263,7 @@ const POSPage = () => {
     setCarts((prev) =>
       prev.map((c) =>
         c.id === activeCartId
-          ? { ...c, customerName: "", vehicleNumber: "", items: [] }
+          ? { ...c, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }
           : c
       )
     );
@@ -1260,6 +1335,8 @@ const POSPage = () => {
     const salePayload = {
       customer_name: customerName || "Walk-in Customer",
       vehicle_number: vehicleNumber,
+      mileage: mileage ? parseInt(mileage) : null,
+      notes: notes.trim(),
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
       payment_status: paymentMode,
       ...(isCredit ? { credit_note: creditNote.trim() } : {}),
@@ -1314,7 +1391,7 @@ const POSPage = () => {
         if (remaining.length === 0) {
           const newId = "cart_" + Date.now();
           setActiveCartId(newId);
-          return [{ id: newId, customerName: "", vehicleNumber: "", items: [] }];
+          return [{ id: newId, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }];
         } else {
           setActiveCartId(remaining[0].id);
           return remaining;
@@ -1477,6 +1554,15 @@ const POSPage = () => {
       />
 
       <ConfirmModal
+        isOpen={!!itemToRemove}
+        title="Remove Item?"
+        message={`Remove "${itemToRemove?.name || "this item"}" from the cart?`}
+        onConfirm={handleConfirmRemoveItem}
+        onCancel={() => setItemToRemove(null)}
+        confirmLabel="Remove Item"
+      />
+
+      <ConfirmModal
         isOpen={showNoCustomerConfirm}
         title="No Vehicle or Customer Linked"
         message="This sale has no vehicle or customer attached. Continue anyway?"
@@ -1505,6 +1591,10 @@ const POSPage = () => {
         onUnlinkCustomer={handleUnlinkCustomer}
         unlinkingCustomer={unlinkingCustomer}
         vehicleNumberInputRef={vehicleNumberInputRef}
+        mileage={mileage}
+        onMileageChange={handleMileageChange}
+        notes={notes}
+        onNotesChange={handleNotesChange}
       />
 
       <PaymentModal
@@ -1785,7 +1875,7 @@ const POSPage = () => {
                         )}
                       </div>
                       <button
-                        onClick={() => removeFromCart(item.id)}
+                        onClick={() => setItemToRemove(item)}
                         className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors shrink-0"
                       >
                         <XCircle size={18} />

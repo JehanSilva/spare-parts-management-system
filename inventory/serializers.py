@@ -128,6 +128,7 @@ class SaleSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'customer', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items',
             'status', 'cancel_reason', 'payment_status', 'amount_paid', 'credit_note', 'credit_settled_at',
+            'mileage', 'notes',
         ]
         read_only_fields = ['credit_settled_at']
 

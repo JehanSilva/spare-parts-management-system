@@ -4,6 +4,7 @@ import {
   createCustomerVehicle,
   updateCustomerVehicle,
   deleteCustomerVehicle,
+  fetchVehicleHistory,
 } from "../services/api";
 import {
   Car,
@@ -20,10 +21,16 @@ import {
   UserPlus,
   UserCheck,
   Link2Off,
+  History,
+  Wrench,
+  StickyNote,
 } from "lucide-react";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import CustomerLinkPicker from "../components/CustomerLinkPicker";
+
+const formatLKR = (amount) =>
+  new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
 const Field = ({ label, id, ...props }) => (
   <div>
@@ -197,7 +204,90 @@ const LinkCustomerModal = ({ vehicle, onClose, onSaved }) => {
   );
 };
 
-const VehicleCard = ({ vehicle, onEdit, onDelete, onLink }) => (
+// Service History Modal — every job (Sale) recorded against this vehicle's
+// plate number: parts used, repairs/labor performed, dates, mileage, notes.
+const VehicleHistoryModal = ({ vehicle, onClose }) => {
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!vehicle) return;
+    setLoading(true);
+    fetchVehicleHistory(vehicle.id)
+      .then(setJobs)
+      .catch(() => setJobs([]))
+      .finally(() => setLoading(false));
+  }, [vehicle]);
+
+  if (!vehicle) return null;
+
+  const formatDate = (d) =>
+    new Date(d).toLocaleString("en-LK", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-900 text-white shrink-0">
+          <h2 className="font-bold text-lg flex items-center gap-2"><History size={18} /> {vehicle.vehicle_number} — Service History</h2>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X size={18} /></button>
+        </div>
+        <div className="p-6 overflow-y-auto space-y-4">
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />)}
+            </div>
+          ) : jobs.length === 0 ? (
+            <div className="text-center py-12 text-gray-400">
+              <Wrench size={28} className="mx-auto mb-3 opacity-40" />
+              <p className="font-semibold text-gray-500">No repair history yet</p>
+              <p className="text-sm mt-1">Jobs completed for this vehicle in POS will show up here.</p>
+            </div>
+          ) : (
+            jobs.map((job) => (
+              <div key={job.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 bg-gray-50 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-gray-700">{formatDate(job.created_at)}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${job.status === "CANCELLED" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+                      {job.status}
+                    </span>
+                    {job.mileage != null && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                        <Gauge size={9} /> {job.mileage.toLocaleString()} km
+                      </span>
+                    )}
+                  </div>
+                  <span className={`text-sm font-bold ${job.status === "CANCELLED" ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                    {formatLKR(job.total_amount)}
+                  </span>
+                </div>
+                {job.notes && (
+                  <div className="px-4 py-2 bg-amber-50 border-t border-amber-100 text-xs text-amber-800 italic flex items-start gap-1.5">
+                    <StickyNote size={12} className="shrink-0 mt-0.5" /> {job.notes}
+                  </div>
+                )}
+                <div className="px-4 py-3 space-y-1.5">
+                  {job.items.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-700 flex items-center gap-1.5 min-w-0">
+                        {item.item_type === "LABOR" && <Wrench size={10} className="text-gray-400 shrink-0" />}
+                        <span className="truncate">{item.part_name}</span>
+                        <span className="text-gray-400 shrink-0">x{item.quantity}</span>
+                      </span>
+                      <span className="font-semibold text-gray-800 shrink-0">{formatLKR(item.total_price)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const VehicleCard = ({ vehicle, onEdit, onDelete, onLink, onHistory }) => (
   <div className="bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow p-5">
     <div className="flex items-start gap-4">
       <div className="w-11 h-11 rounded-full bg-red-50 flex items-center justify-center shrink-0 mt-0.5">
@@ -222,6 +312,7 @@ const VehicleCard = ({ vehicle, onEdit, onDelete, onLink }) => (
         </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
+        <button onClick={() => onHistory(vehicle)} title="Service history" className="p-2 rounded-xl hover:bg-amber-50 text-gray-400 hover:text-amber-600 transition-colors"><History size={15} /></button>
         <button onClick={() => onEdit(vehicle)} title="Edit vehicle" className="p-2 rounded-xl hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"><Pencil size={15} /></button>
         <button onClick={() => onDelete(vehicle)} title="Delete vehicle" className="p-2 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"><Trash2 size={15} /></button>
       </div>
@@ -263,6 +354,7 @@ const VehicleRegistryPage = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);
   const [linkVehicle, setLinkVehicle] = useState(null);
+  const [historyVehicle, setHistoryVehicle] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
   const load = useCallback(async () => {
@@ -302,6 +394,7 @@ const VehicleRegistryPage = () => {
       {showAddModal && <VehicleModal onClose={() => setShowAddModal(false)} onSaved={load} />}
       {editVehicle && <VehicleModal vehicle={editVehicle} onClose={() => setEditVehicle(null)} onSaved={load} />}
       {linkVehicle && <LinkCustomerModal vehicle={linkVehicle} onClose={() => setLinkVehicle(null)} onSaved={load} />}
+      {historyVehicle && <VehicleHistoryModal vehicle={historyVehicle} onClose={() => setHistoryVehicle(null)} />}
       <ConfirmModal
         isOpen={!!deleteTarget}
         title="Delete Vehicle?"
@@ -366,6 +459,7 @@ const VehicleRegistryPage = () => {
               onEdit={setEditVehicle}
               onDelete={setDeleteTarget}
               onLink={setLinkVehicle}
+              onHistory={setHistoryVehicle}
             />
           ))}
         </div>

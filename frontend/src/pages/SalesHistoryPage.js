@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { fetchSales, fetchParts, updateSale, cancelSale, markSaleAsPaid } from "../services/api";
+import { useNavigate } from "react-router-dom";
+import { fetchSales, fetchParts, updateSale, cancelSale, reverseSale, markSaleAsPaid } from "../services/api";
 import Receipt from "../components/Receipt";
 import AlertComponent from "../components/AlertComponent";
 import {
@@ -20,6 +21,7 @@ import {
   UserCheck,
   Wallet,
   CheckCircle,
+  RotateCcw,
 } from "lucide-react";
 
 // --- Edit Sale Modal Component ---
@@ -204,6 +206,49 @@ const CancelSaleModal = ({ isOpen, sale, onClose, onConfirm }) => {
   );
 };
 
+// --- Reverse Sale Modal Component ---
+const ReverseSaleModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
+  if (!isOpen || !sale) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-scale-in">
+        <div className="bg-amber-600 p-4 text-white flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <RotateCcw size={20} />
+            <h3 className="font-bold text-lg">Reverse Sale</h3>
+          </div>
+          <button onClick={onClose} className="hover:bg-amber-500 p-1 rounded-full">
+            <XCircle size={20} />
+          </button>
+        </div>
+        <div className="p-6 space-y-4 text-left">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
+            <p className="font-semibold mb-1">This will remove the sale from history.</p>
+            <p>
+              Stock will be restored and this invoice for{" "}
+              <span className="font-bold">{sale.customer_name}</span> will reopen as an
+              editable repair in the POS page, where it can be corrected and completed again.
+            </p>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition">
+              Close
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={loading}
+              className="flex-1 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition shadow-lg shadow-amber-200 disabled:opacity-60 flex items-center justify-center gap-2"
+            >
+              {loading ? "Reversing..." : (<><RotateCcw size={16} /> Reverse Sale</>)}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Mark Credit as Received Modal Component ---
 const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
   const [mode, setMode] = useState("full"); // "full" | "partial"
@@ -315,6 +360,7 @@ const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
 };
 
 const SalesHistoryPage = () => {
+  const navigate = useNavigate();
   const [sales, setSales] = useState([]);
   const [parts, setParts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -328,6 +374,8 @@ const SalesHistoryPage = () => {
   const [saleToEdit, setSaleToEdit] = useState(null);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [saleToCancel, setSaleToCancel] = useState(null);
+  const [saleToReverse, setSaleToReverse] = useState(null);
+  const [reverseLoading, setReverseLoading] = useState(false);
   const [saleToMarkPaid, setSaleToMarkPaid] = useState(null);
   const [markPaidLoading, setMarkPaidLoading] = useState(false);
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
@@ -435,6 +483,26 @@ const SalesHistoryPage = () => {
     }
   };
 
+  const handleReverseClick = (sale, e) => {
+    e.stopPropagation();
+    setSaleToReverse(sale);
+  };
+
+  const handleExecuteReverse = async () => {
+    setReverseLoading(true);
+    try {
+      const cart = await reverseSale(saleToReverse.id);
+      setSales(sales.filter((s) => s.id !== saleToReverse.id));
+      localStorage.setItem("pos_active_cart_id", cart.id);
+      setSaleToReverse(null);
+      navigate("/pos");
+    } catch (error) {
+      setAlertInfo({ type: "error", message: error.response?.data?.error || "Failed to reverse sale." });
+    } finally {
+      setReverseLoading(false);
+    }
+  };
+
   const handleMarkPaidClick = (sale, e) => {
     e.stopPropagation();
     setSaleToMarkPaid(sale);
@@ -533,6 +601,14 @@ const SalesHistoryPage = () => {
         sale={saleToEdit}
         onClose={() => setIsEditModalOpen(false)}
         onSave={handleUpdateSale}
+      />
+
+      <ReverseSaleModal
+        isOpen={!!saleToReverse}
+        sale={saleToReverse}
+        onClose={() => setSaleToReverse(null)}
+        onConfirm={handleExecuteReverse}
+        loading={reverseLoading}
       />
 
       <MarkPaidModal
@@ -743,12 +819,20 @@ const SalesHistoryPage = () => {
                     )}
 
                     {sale.status !== 'CANCELLED' ? (
-                      <button
-                        onClick={(e) => handleCancelClick(sale, e)}
-                        className="w-full bg-red-50 text-red-600 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 transition-all active:scale-95 mb-4 font-bold border border-red-100"
-                      >
-                        <Trash2 size={16} /> Cancel & Return Items
-                      </button>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        <button
+                          onClick={(e) => handleReverseClick(sale, e)}
+                          className="bg-amber-50 text-amber-700 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-amber-100 transition-all active:scale-95 font-bold border border-amber-100"
+                        >
+                          <RotateCcw size={16} /> Reverse
+                        </button>
+                        <button
+                          onClick={(e) => handleCancelClick(sale, e)}
+                          className="bg-red-50 text-red-600 py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-red-100 transition-all active:scale-95 font-bold border border-red-100"
+                        >
+                          <Trash2 size={16} /> Cancel
+                        </button>
+                      </div>
                     ) : (
                       <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-3.5 mb-4 text-xs">
                         <span className="font-bold block uppercase tracking-wider text-[10px] text-red-700 mb-1">Reason for Cancellation</span>
@@ -957,13 +1041,22 @@ const SalesHistoryPage = () => {
                             </button>
                           )}
                           {sale.status !== 'CANCELLED' ? (
-                            <button
-                              onClick={(e) => handleCancelClick(sale, e)}
-                              className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
-                              title="Cancel Sale"
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            <>
+                              <button
+                                onClick={(e) => handleReverseClick(sale, e)}
+                                className="p-2 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition"
+                                title="Reverse Sale (edit & redo in POS)"
+                              >
+                                <RotateCcw size={16} />
+                              </button>
+                              <button
+                                onClick={(e) => handleCancelClick(sale, e)}
+                                className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
+                                title="Cancel Sale"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </>
                           ) : (
                             <div className="p-2 text-gray-300 cursor-not-allowed">
                                <Trash2 size={16} />

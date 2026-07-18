@@ -22,6 +22,7 @@ urlpatterns = [
     path('parts/minimal/', views.get_parts_minimal, name='get_parts_minimal'),
     path('parts/add/', views.add_part, name='add_part'),
     path('parts/bulk-upload/', views.bulk_upload_parts, name='bulk_upload_parts'),
+    path('parts/bulk-upload/resolve/', views.resolve_bulk_upload_conflicts, name='resolve_bulk_upload_conflicts'),
     path('parts/<uuid:pk>/update/', views.update_part, name='update_part'),
     path('parts/<uuid:pk>/delete/', views.delete_part, name='delete_part'),
     path('parts/<uuid:pk>/restock/', views.restock_part, name='restock_part'),
@@ -34,6 +35,7 @@ urlpatterns = [
     path('sales/', views.get_all_sales, name='get_all_sales'),
     path('sales/<uuid:pk>/update/', views.update_sale, name='update_sale'),
     path('sales/<uuid:pk>/cancel/', views.cancel_sale, name='cancel_sale'),
+    path('sales/<uuid:pk>/reverse/', views.reverse_sale, name='reverse_sale'),
     path('sales/<uuid:pk>/mark-paid/', views.mark_sale_paid, name='mark_sale_paid'),
 
     # Reports

@@ -17,6 +17,7 @@ import {
   updatePart,
   fetchSuppliers,
   bulkUploadParts,
+  resolveBulkUploadConflicts,
 } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import AddPartForm from "../components/forms/AddPartForm";
@@ -24,6 +25,7 @@ import QuickRestockModal from "../components/forms/QuickRestockModal";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
+import bulkUploadTemplate from "../assets/template/bulk upload template.xlsx";
 
 // --- SIMPLE REORDER LIST PDF (for out-of-stock — send to suppliers) ---
 const generateReorderListPDF = (parts, supplierName) => {
@@ -247,6 +249,219 @@ const generateStockReportPDF = (parts, supplierName) => {
   printWindow.onload = () => { printWindow.print(); };
 };
 
+// --- Bulk Upload Conflict Resolution Modal ---
+// One field per conflicting part: let the user keep the existing value, take
+// the new value from the Excel sheet, or type a custom value instead.
+const CONFLICT_FIELDS = [
+  { key: "name", label: "Part Name" },
+  { key: "brand", label: "Brand" },
+  { key: "supplier", label: "Supplier" },
+  { key: "buy_price", label: "Cost Price (LKR)", numeric: true },
+  { key: "sell_price", label: "Selling Price (LKR)", numeric: true },
+  { key: "stock_qty", label: "Stock Quantity", numeric: true },
+  { key: "rack_location", label: "Rack / Bin Location" },
+  { key: "compatible_vehicles", label: "Fits Vehicles", isList: true },
+];
+
+const formatConflictFieldValue = (field, value) => {
+  if (field.isList) return Array.isArray(value) ? value.join(", ") : "";
+  if (value === null || value === undefined) return "";
+  return String(value);
+};
+
+const buildInitialResolutions = (conflicts) => {
+  const initial = {};
+  conflicts.forEach((c) => {
+    const fields = {};
+    CONFLICT_FIELDS.forEach((f) => {
+      // Skip fields the sheet didn't provide at all (e.g. no "Fits Vehicles" column)
+      if (f.isList && c.new.compatible_vehicles === null) return;
+      fields[f.key] = { choice: "existing", value: formatConflictFieldValue(f, c.existing[f.key]) };
+    });
+    initial[c.part_number] = fields;
+  });
+  return initial;
+};
+
+const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting }) => {
+  const [stepIndex, setStepIndex] = useState(0);
+  const [resolutions, setResolutions] = useState(() => buildInitialResolutions(conflicts));
+
+  const total = conflicts.length;
+  const current = conflicts[stepIndex];
+  const currentFields = resolutions[current.part_number] || {};
+
+  const setChoice = (fieldKey, choice) => {
+    const fieldConfig = CONFLICT_FIELDS.find((f) => f.key === fieldKey);
+    let value;
+    if (choice === "existing") value = formatConflictFieldValue(fieldConfig, current.existing[fieldKey]);
+    else if (choice === "new") value = formatConflictFieldValue(fieldConfig, current.new[fieldKey]);
+    else value = currentFields[fieldKey]?.value || "";
+
+    setResolutions((prev) => ({
+      ...prev,
+      [current.part_number]: {
+        ...prev[current.part_number],
+        [fieldKey]: { choice, value },
+      },
+    }));
+  };
+
+  const setCustomValue = (fieldKey, value) => {
+    setResolutions((prev) => ({
+      ...prev,
+      [current.part_number]: {
+        ...prev[current.part_number],
+        [fieldKey]: { choice: "custom", value },
+      },
+    }));
+  };
+
+  const handleFinish = () => {
+    const payload = conflicts.map((c) => {
+      const fields = resolutions[c.part_number];
+      const result = { part_number: c.part_number };
+      CONFLICT_FIELDS.forEach((f) => {
+        const fieldState = fields[f.key];
+        if (!fieldState) return;
+        if (f.isList) {
+          result[f.key] = fieldState.value
+            .split(/[,;]+/)
+            .map((s) => s.trim())
+            .filter(Boolean);
+        } else if (f.numeric) {
+          result[f.key] = parseFloat(fieldState.value) || 0;
+        } else {
+          result[f.key] = fieldState.value;
+        }
+      });
+      return result;
+    });
+    onSubmit(payload);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in">
+        <div className="bg-red-700 p-4 text-white flex justify-between items-center shrink-0">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <AlertTriangle size={20} /> Resolve Duplicate Part
+            </h3>
+            <p className="text-red-100 text-sm">
+              Part {stepIndex + 1} of {total} — Part Number:{" "}
+              <span className="font-mono">{current.part_number}</span>
+            </p>
+          </div>
+          <button onClick={onClose} className="hover:bg-red-600 p-1 rounded-full">
+            <XCircle size={20} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5 overflow-y-auto">
+          {CONFLICT_FIELDS.map((f) => {
+            const fieldState = currentFields[f.key];
+            if (!fieldState) return null;
+            const existingVal = formatConflictFieldValue(f, current.existing[f.key]);
+            const newVal = formatConflictFieldValue(f, current.new[f.key]);
+            const same = existingVal === newVal;
+            return (
+              <div key={f.key} className="border border-gray-200 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-gray-700 text-sm">{f.label}</span>
+                  {same && <span className="text-xs text-gray-400">(same value)</span>}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setChoice(f.key, "existing")}
+                    className={`text-left px-3 py-2 rounded-lg border text-sm ${
+                      fieldState.choice === "existing"
+                        ? "border-red-600 bg-red-50 text-red-800"
+                        : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="text-xs uppercase text-gray-400 mb-0.5">Existing</div>
+                    <div className="truncate">
+                      {existingVal || <span className="italic text-gray-400">empty</span>}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChoice(f.key, "new")}
+                    className={`text-left px-3 py-2 rounded-lg border text-sm ${
+                      fieldState.choice === "new"
+                        ? "border-red-600 bg-red-50 text-red-800"
+                        : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="text-xs uppercase text-gray-400 mb-0.5">From Excel</div>
+                    <div className="truncate">
+                      {newVal || <span className="italic text-gray-400">empty</span>}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChoice(f.key, "custom")}
+                    className={`text-left px-3 py-2 rounded-lg border text-sm ${
+                      fieldState.choice === "custom"
+                        ? "border-red-600 bg-red-50 text-red-800"
+                        : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="text-xs uppercase text-gray-400 mb-0.5">Custom</div>
+                    <div className="truncate">
+                      {fieldState.choice === "custom" ? fieldState.value || "Type below" : "Enter your own"}
+                    </div>
+                  </button>
+                </div>
+                {fieldState.choice === "custom" && (
+                  <input
+                    autoFocus
+                    value={fieldState.value}
+                    onChange={(e) => setCustomValue(f.key, e.target.value)}
+                    className="w-full mt-2 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 outline-none"
+                    placeholder={
+                      f.isList ? "e.g. Toyota Corolla 2015, Honda Civic 2018" : `Enter ${f.label.toLowerCase()}`
+                    }
+                    type={f.numeric ? "number" : "text"}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="p-4 border-t border-gray-100 flex items-center justify-between shrink-0">
+          <button
+            onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
+            disabled={stepIndex === 0}
+            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-600 font-semibold disabled:opacity-40"
+          >
+            Back
+          </button>
+          {stepIndex < total - 1 ? (
+            <button
+              onClick={() => setStepIndex((i) => Math.min(total - 1, i + 1))}
+              className="px-5 py-2 rounded-lg bg-red-700 text-white font-bold hover:bg-red-800"
+            >
+              Next
+            </button>
+          ) : (
+            <button
+              onClick={handleFinish}
+              disabled={isSubmitting}
+              className="px-5 py-2 rounded-lg bg-green-600 text-white font-bold hover:bg-green-700 disabled:opacity-50"
+            >
+              {isSubmitting ? "Applying..." : `Apply to All ${total} Part(s)`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const InventoryPage = () => {
   // ── Cache ────────────────────────────────────────────────────────────────
   const { allParts, partsLoading: loading, invalidateParts } = useParts();
@@ -254,6 +469,9 @@ const InventoryPage = () => {
   const [showForm, setShowForm] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef(null);
+  const [uploadConflicts, setUploadConflicts] = useState([]);
+  const [uploadCreatedCount, setUploadCreatedCount] = useState(0);
+  const [isResolvingConflicts, setIsResolvingConflicts] = useState(false);
   const [editingPart, setEditingPart] = useState(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
   const [restockInitialPart, setRestockInitialPart] = useState(null);
@@ -401,7 +619,16 @@ const InventoryPage = () => {
 
     try {
       const response = await bulkUploadParts(file);
-      setAlertInfo({ type: "success", message: response.message || "Excel file processed successfully!" });
+      if (response.conflicts && response.conflicts.length > 0) {
+        setUploadConflicts(response.conflicts);
+        setUploadCreatedCount(response.created || 0);
+        setAlertInfo({
+          type: "info",
+          message: `Created ${response.created} new part(s). ${response.conflicts.length} part(s) already exist — resolve them below.`,
+        });
+      } else {
+        setAlertInfo({ type: "success", message: response.message || "Excel file processed successfully!" });
+      }
       invalidateParts();
     } catch (error) {
       console.error("Upload Error:", error);
@@ -412,6 +639,25 @@ const InventoryPage = () => {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+    }
+  };
+
+  const handleResolveConflicts = async (resolutions) => {
+    setIsResolvingConflicts(true);
+    try {
+      const response = await resolveBulkUploadConflicts(resolutions);
+      const createdMsg = uploadCreatedCount > 0 ? `Added ${uploadCreatedCount} new part(s) and updated` : "Updated";
+      const updatedCount = response.updated ?? resolutions.length;
+      setAlertInfo({ type: "success", message: `${createdMsg} ${updatedCount} existing part(s).` });
+      invalidateParts();
+      setUploadConflicts([]);
+      setUploadCreatedCount(0);
+    } catch (error) {
+      console.error("Resolve Conflicts Error:", error);
+      const errorMsg = error.response?.data?.error || "Failed to update parts.";
+      setAlertInfo({ type: "error", message: errorMsg });
+    } finally {
+      setIsResolvingConflicts(false);
     }
   };
 
@@ -507,6 +753,16 @@ const InventoryPage = () => {
         />
       )}
 
+      {/* --- BULK UPLOAD CONFLICT RESOLUTION MODAL --- */}
+      {uploadConflicts.length > 0 && (
+        <BulkUploadConflictModal
+          conflicts={uploadConflicts}
+          isSubmitting={isResolvingConflicts}
+          onClose={() => { setUploadConflicts([]); setUploadCreatedCount(0); }}
+          onSubmit={handleResolveConflicts}
+        />
+      )}
+
       {/* --- CONFIRM MODAL --- */}
       <ConfirmModal
         isOpen={!!deleteId}
@@ -551,6 +807,15 @@ const InventoryPage = () => {
             <Download size={20} className="rotate-180" />
             {isUploading ? "Uploading..." : "Import Excel"}
           </button>
+          <a
+            href={bulkUploadTemplate}
+            download="bulk upload template.xlsx"
+            title="Download Template"
+            aria-label="Download Template"
+            className="p-2 rounded-lg shadow transition flex items-center justify-center text-white bg-gray-600 hover:bg-gray-700 shrink-0"
+          >
+            <Download size={20} />
+          </a>
           <button
             onClick={() => setShowRestockModal(true)}
             className="w-full md:w-auto px-4 py-2 rounded-lg shadow transition flex items-center justify-center gap-2 font-bold text-white bg-blue-600 hover:bg-blue-700"

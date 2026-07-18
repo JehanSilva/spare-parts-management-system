@@ -721,6 +721,8 @@ const POSPage = () => {
   const [laborModalOpen, setLaborModalOpen] = useState(false);
   const [showNoCustomerConfirm, setShowNoCustomerConfirm] = useState(false);
   const [itemToRemove, setItemToRemove] = useState(null);
+  const [showMileageWarning, setShowMileageWarning] = useState(false);
+  const [mileageOverrideConfirmed, setMileageOverrideConfirmed] = useState(false);
 
   // Derived active cart states
   const activeCart = useMemo(() => {
@@ -877,6 +879,7 @@ const POSPage = () => {
   // and scoped to whichever repair cart is currently active.
   const handleMileageChange = (value) => {
     setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, mileage: value } : c)));
+    setMileageOverrideConfirmed(false);
   };
   const handleNotesChange = (value) => {
     setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, notes: value } : c)));
@@ -895,6 +898,7 @@ const POSPage = () => {
     setLinkedVehicle(null);
     setSelectedCustomer(null);
     setLinkPickerOpen(false);
+    setMileageOverrideConfirmed(false);
     setVehicleForm({ make: "", model: "" });
     setVehicleLookupStatus("idle");
 
@@ -1005,6 +1009,7 @@ const POSPage = () => {
 
     setLinkedVehicle(null);
     setSelectedCustomer(null);
+    setMileageOverrideConfirmed(false);
     if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
     // Invalidate any lookup still in flight from before the switch (e.g. one
     // kicked off by typing on the previous cart) so its stale result can't
@@ -1303,6 +1308,17 @@ const POSPage = () => {
       });
       return;
     }
+    const enteredMileage = mileage ? parseInt(mileage, 10) : null;
+    const lastMileage = linkedVehicle?.current_mileage;
+    if (
+      !mileageOverrideConfirmed &&
+      enteredMileage != null &&
+      lastMileage != null &&
+      enteredMileage < lastMileage
+    ) {
+      setShowMileageWarning(true);
+      return;
+    }
     if (!customerName) {
       setShowNoCustomerConfirm(true);
       return;
@@ -1310,12 +1326,22 @@ const POSPage = () => {
     proceedCheckout();
   };
 
-  const handleConfirmNoCustomerCheckout = () => {
-    setShowNoCustomerConfirm(false);
-    proceedCheckout();
+  const handleConfirmMileageWarning = () => {
+    setShowMileageWarning(false);
+    setMileageOverrideConfirmed(true);
+    if (!customerName) {
+      setShowNoCustomerConfirm(true);
+    } else {
+      proceedCheckout(true);
+    }
   };
 
-  const proceedCheckout = async () => {
+  const handleConfirmNoCustomerCheckout = () => {
+    setShowNoCustomerConfirm(false);
+    proceedCheckout(mileageOverrideConfirmed);
+  };
+
+  const proceedCheckout = async (forceMileageUpdate = false) => {
     let partialPaidNow = 0;
     if (paymentMode === "PARTIAL") {
       partialPaidNow = parseFloat(partialAmountPaid);
@@ -1338,6 +1364,7 @@ const POSPage = () => {
       customer_name: customerName || fallbackCustomerName,
       vehicle_number: vehicleNumber,
       mileage: mileage ? parseInt(mileage) : null,
+      force_mileage_update: forceMileageUpdate,
       notes: notes.trim(),
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
       payment_status: paymentMode,
@@ -1562,6 +1589,19 @@ const POSPage = () => {
         onConfirm={handleConfirmRemoveItem}
         onCancel={() => setItemToRemove(null)}
         confirmLabel="Remove Item"
+      />
+
+      <ConfirmModal
+        isOpen={showMileageWarning}
+        title="Mileage Lower Than Last Recorded"
+        message={
+          `The entered mileage (${mileage ? parseInt(mileage, 10).toLocaleString() : ""} km) is less than ` +
+          `the last recorded mileage for this vehicle (${linkedVehicle?.current_mileage?.toLocaleString() || ""} km). ` +
+          `Continue anyway?`
+        }
+        onConfirm={handleConfirmMileageWarning}
+        onCancel={() => setShowMileageWarning(false)}
+        confirmLabel="Continue Anyway"
       />
 
       <ConfirmModal

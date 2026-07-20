@@ -30,6 +30,7 @@ import {
   Wrench,
   Gauge,
   StickyNote,
+  Pencil,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -477,24 +478,28 @@ const PaymentModal = ({
 };
 
 // --- REPAIR / LABOR ITEM MODAL ---
-const LaborItemModal = ({ isOpen, onClose, onAdd }) => {
+// Doubles as the "add" and "edit" form for a labor line item — editItem
+// (when passed) seeds the fields and onAdd is called with the same id back
+// so the caller can tell an edit from a fresh add.
+const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
 
   useEffect(() => {
     if (isOpen) {
-      setDescription("");
-      setPrice("");
+      setDescription(editItem ? editItem.name : "");
+      setPrice(editItem ? String(editItem.sell_price) : "");
     }
-  }, [isOpen]);
+  }, [isOpen, editItem]);
 
   if (!isOpen) return null;
 
   const canAdd = description.trim().length > 0 && parseFloat(price) > 0;
+  const isEdit = !!editItem;
 
   const handleAdd = () => {
     if (!canAdd) return;
-    onAdd(description.trim(), price);
+    onAdd(description.trim(), price, editItem ? editItem.id : null);
   };
 
   return (
@@ -508,7 +513,7 @@ const LaborItemModal = ({ isOpen, onClose, onAdd }) => {
       >
         <div className="bg-gray-900 p-4 text-white flex justify-between items-center shrink-0">
           <h3 className="font-bold text-lg flex items-center gap-2">
-            <Wrench size={20} /> Add Repair / Labor
+            <Wrench size={20} /> {isEdit ? "Edit Repair / Labor" : "Add Repair / Labor"}
           </h3>
           <button onClick={onClose} className="hover:bg-white/10 p-1 rounded-full">
             <XCircle size={20} />
@@ -548,7 +553,7 @@ const LaborItemModal = ({ isOpen, onClose, onAdd }) => {
             disabled={!canAdd}
             className="w-full py-2.5 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
           >
-            Add to Cart
+            {isEdit ? "Save Changes" : "Add to Cart"}
           </button>
         </div>
       </div>
@@ -719,8 +724,11 @@ const POSPage = () => {
 
   const [cartToDelete, setCartToDelete] = useState(null);
   const [laborModalOpen, setLaborModalOpen] = useState(false);
+  const [editingLaborItem, setEditingLaborItem] = useState(null);
   const [showNoCustomerConfirm, setShowNoCustomerConfirm] = useState(false);
   const [itemToRemove, setItemToRemove] = useState(null);
+  const [showMileageWarning, setShowMileageWarning] = useState(false);
+  const [mileageOverrideConfirmed, setMileageOverrideConfirmed] = useState(false);
 
   // Derived active cart states
   const activeCart = useMemo(() => {
@@ -877,6 +885,7 @@ const POSPage = () => {
   // and scoped to whichever repair cart is currently active.
   const handleMileageChange = (value) => {
     setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, mileage: value } : c)));
+    setMileageOverrideConfirmed(false);
   };
   const handleNotesChange = (value) => {
     setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, notes: value } : c)));
@@ -895,6 +904,7 @@ const POSPage = () => {
     setLinkedVehicle(null);
     setSelectedCustomer(null);
     setLinkPickerOpen(false);
+    setMileageOverrideConfirmed(false);
     setVehicleForm({ make: "", model: "" });
     setVehicleLookupStatus("idle");
 
@@ -1005,6 +1015,7 @@ const POSPage = () => {
 
     setLinkedVehicle(null);
     setSelectedCustomer(null);
+    setMileageOverrideConfirmed(false);
     if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
     // Invalidate any lookup still in flight from before the switch (e.g. one
     // kicked off by typing on the previous cart) so its stale result can't
@@ -1117,24 +1128,47 @@ const POSPage = () => {
     });
   }, [activeCartId]);
 
-  // 3.5 Add a Repair/Labor line item — priced by hand, not tied to the Part
-  // catalog or stock. Shaped with the same field names (name/sell_price/
-  // quantity/discountAmount/discountPercentInput) a Part-spread cart item
-  // already has, so quantity/discount handling and totals work unchanged.
-  const handleAddLaborItem = (description, price) => {
-    const newItem = {
-      id: `labor_${Date.now()}`,
-      item_type: "LABOR",
-      name: description,
-      sell_price: parseFloat(price),
-      quantity: 1,
-      discountAmount: 0,
-      discountPercentInput: "",
-    };
+  // 3.5 Add (or edit) a Repair/Labor line item — priced by hand, not tied to
+  // the Part catalog or stock. Shaped with the same field names (name/
+  // sell_price/quantity/discountAmount/discountPercentInput) a Part-spread
+  // cart item already has, so quantity/discount handling and totals work
+  // unchanged. When editItemId is set (editing an existing line via the
+  // pencil button) the item is updated in place instead of prepended.
+  const handleAddLaborItem = (description, price, editItemId) => {
     setCarts((prev) =>
-      prev.map((c) => (c.id === activeCartId ? { ...c, items: [newItem, ...c.items] } : c))
+      prev.map((c) => {
+        if (c.id !== activeCartId) return c;
+
+        if (editItemId) {
+          const newItems = c.items.map((item) => {
+            if (item.id !== editItemId) return item;
+            const newPrice = parseFloat(price);
+            let discountAmount = item.discountAmount || 0;
+            if (discountAmount > newPrice) discountAmount = newPrice;
+            return { ...item, name: description, sell_price: newPrice, discountAmount };
+          });
+          return { ...c, items: newItems };
+        }
+
+        const newItem = {
+          id: `labor_${Date.now()}`,
+          item_type: "LABOR",
+          name: description,
+          sell_price: parseFloat(price),
+          quantity: 1,
+          discountAmount: 0,
+          discountPercentInput: "",
+        };
+        return { ...c, items: [newItem, ...c.items] };
+      })
     );
     setLaborModalOpen(false);
+    setEditingLaborItem(null);
+  };
+
+  const handleOpenEditLabor = (item) => {
+    setEditingLaborItem(item);
+    setLaborModalOpen(true);
   };
 
   // 4. Remove from Cart
@@ -1274,7 +1308,7 @@ const POSPage = () => {
   // 6. Calculate Totals (Visual Only) - Memoized
   const totalAmount = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const originalPrice = parseFloat(item.sell_price);
+      const originalPrice = parseFloat(item.sell_price) || 0;
       const discountVal = parseFloat(item.discountAmount) || 0;
       const finalPrice = originalPrice - discountVal;
       return sum + finalPrice * item.quantity;
@@ -1303,6 +1337,17 @@ const POSPage = () => {
       });
       return;
     }
+    const enteredMileage = mileage ? parseInt(mileage, 10) : null;
+    const lastMileage = linkedVehicle?.current_mileage;
+    if (
+      !mileageOverrideConfirmed &&
+      enteredMileage != null &&
+      lastMileage != null &&
+      enteredMileage < lastMileage
+    ) {
+      setShowMileageWarning(true);
+      return;
+    }
     if (!customerName) {
       setShowNoCustomerConfirm(true);
       return;
@@ -1310,12 +1355,22 @@ const POSPage = () => {
     proceedCheckout();
   };
 
-  const handleConfirmNoCustomerCheckout = () => {
-    setShowNoCustomerConfirm(false);
-    proceedCheckout();
+  const handleConfirmMileageWarning = () => {
+    setShowMileageWarning(false);
+    setMileageOverrideConfirmed(true);
+    if (!customerName) {
+      setShowNoCustomerConfirm(true);
+    } else {
+      proceedCheckout(true);
+    }
   };
 
-  const proceedCheckout = async () => {
+  const handleConfirmNoCustomerCheckout = () => {
+    setShowNoCustomerConfirm(false);
+    proceedCheckout(mileageOverrideConfirmed);
+  };
+
+  const proceedCheckout = async (forceMileageUpdate = false) => {
     let partialPaidNow = 0;
     if (paymentMode === "PARTIAL") {
       partialPaidNow = parseFloat(partialAmountPaid);
@@ -1332,17 +1387,20 @@ const POSPage = () => {
 
     setLoading(true);
 
+    const fallbackCustomerName = vehicleLabel || vehicleNumber || "Walk-in Customer";
+
     const salePayload = {
-      customer_name: customerName || "Walk-in Customer",
+      customer_name: customerName || fallbackCustomerName,
       vehicle_number: vehicleNumber,
       mileage: mileage ? parseInt(mileage) : null,
+      force_mileage_update: forceMileageUpdate,
       notes: notes.trim(),
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
       payment_status: paymentMode,
       ...(isCredit ? { credit_note: creditNote.trim() } : {}),
       ...(paymentMode === "PARTIAL" ? { amount_paid: partialPaidNow } : {}),
       items: cart.map((item) => {
-        const originalPrice = parseFloat(item.sell_price);
+        const originalPrice = parseFloat(item.sell_price) || 0;
         const discountAmount = parseFloat(item.discountAmount) || 0;
 
         if (item.item_type === "LABOR") {
@@ -1563,9 +1621,26 @@ const POSPage = () => {
       />
 
       <ConfirmModal
+        isOpen={showMileageWarning}
+        title="Mileage Lower Than Last Recorded"
+        message={
+          `The entered mileage (${mileage ? parseInt(mileage, 10).toLocaleString() : ""} km) is less than ` +
+          `the last recorded mileage for this vehicle (${linkedVehicle?.current_mileage?.toLocaleString() || ""} km). ` +
+          `Continue anyway?`
+        }
+        onConfirm={handleConfirmMileageWarning}
+        onCancel={() => setShowMileageWarning(false)}
+        confirmLabel="Continue Anyway"
+      />
+
+      <ConfirmModal
         isOpen={showNoCustomerConfirm}
-        title="No Vehicle or Customer Linked"
-        message="This sale has no vehicle or customer attached. Continue anyway?"
+        title={vehicleNumber ? "No Customer Linked" : "No Vehicle or Customer Linked"}
+        message={
+          vehicleNumber
+            ? "This sale has no customer attached. Continue anyway?"
+            : "This sale has no vehicle or customer attached. Continue anyway?"
+        }
         onConfirm={handleConfirmNoCustomerCheckout}
         onCancel={() => setShowNoCustomerConfirm(false)}
         confirmLabel="Continue Anyway"
@@ -1613,8 +1688,12 @@ const POSPage = () => {
 
       <LaborItemModal
         isOpen={laborModalOpen}
-        onClose={() => setLaborModalOpen(false)}
+        onClose={() => {
+          setLaborModalOpen(false);
+          setEditingLaborItem(null);
+        }}
         onAdd={handleAddLaborItem}
+        editItem={editingLaborItem}
       />
 
       {/* TOP BAR: ACTIVE CARTS MANAGEMENT */}
@@ -1828,7 +1907,7 @@ const POSPage = () => {
               </div>
             ) : (
               cart.map((item) => {
-                const original = parseFloat(item.sell_price);
+                const original = parseFloat(item.sell_price) || 0;
                 const discountVal = parseFloat(item.discountAmount) || 0;
                 const final = original - discountVal;
 
@@ -1874,12 +1953,23 @@ const POSPage = () => {
                           </p>
                         )}
                       </div>
-                      <button
-                        onClick={() => setItemToRemove(item)}
-                        className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors shrink-0"
-                      >
-                        <XCircle size={18} />
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {item.item_type === "LABOR" && (
+                          <button
+                            onClick={() => handleOpenEditLabor(item)}
+                            className="text-gray-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded-full transition-colors"
+                            title="Edit description/price"
+                          >
+                            <Pencil size={16} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setItemToRemove(item)}
+                          className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors"
+                        >
+                          <XCircle size={18} />
+                        </button>
+                      </div>
                     </div>
 
                     {/* Row 2: Quantity controls & Final Price */}

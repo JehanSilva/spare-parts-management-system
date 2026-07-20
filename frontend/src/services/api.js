@@ -67,6 +67,8 @@ export const bulkUploadParts = async (file) => {
     headers: { 'Content-Type': 'multipart/form-data' }
   })).data;
 };
+export const resolveBulkUploadConflicts = async (resolutions) =>
+  (await API.post("/parts/bulk-upload/resolve/", { resolutions })).data;
 export const updatePart = async (id, data) =>
   (await API.put(`/parts/${id}/update/`, data)).data;
 export const deletePart = async (id) =>
@@ -104,6 +106,8 @@ export const updateSale = async (id, data) =>
   (await API.patch(`/sales/${id}/update/`, data)).data;
 export const cancelSale = async (id, data) =>
   (await API.post(`/sales/${id}/cancel/`, data)).data;
+export const reverseSale = async (id) =>
+  (await API.post(`/sales/${id}/reverse/`)).data;
 export const markSaleAsPaid = async (id, amount) =>
   (await API.post(`/sales/${id}/mark-paid/`, amount != null ? { amount } : {})).data;
 export const fetchDashboardStats = async (period = 'all') =>

@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, CustomerVehicle
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -72,39 +72,40 @@ class BulkUploadAPITest(TestCase):
             'Fits Vehicles': ['Toyota Corolla (2020)', 'Toyota Corolla (2020), Honda Civic 2021']
         }
         df = pd.DataFrame(data)
-        
+
         # Write to BytesIO
         excel_file = io.BytesIO()
         with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
             df.to_excel(writer, index=False)
         excel_file.seek(0)
         excel_file.name = 'test_parts.xlsx'
-        
+
         # Upload
         response = self.client.post(self.url, {'file': excel_file}, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
-        # Verify existing part updated
+        self.assertEqual(response.data['created'], 1)
+
+        # A part number that already exists must NOT be auto-merged — it should
+        # come back as a conflict for the user to resolve, and stay untouched in the DB.
+        self.assertEqual(len(response.data['conflicts']), 1)
+        conflict = response.data['conflicts'][0]
+        self.assertEqual(conflict['part_number'], 'B110G0131')
+        self.assertEqual(conflict['existing']['name'], 'Old Name')
+        self.assertEqual(conflict['existing']['brand'], 'Old Brand')
+        self.assertEqual(float(conflict['existing']['buy_price']), 500.00)
+        self.assertEqual(conflict['existing']['stock_qty'], 10)
+        self.assertEqual(conflict['new']['name'], 'Cworks Oil Filter')
+        self.assertEqual(conflict['new']['brand'], 'Cworks')
+        self.assertEqual(float(conflict['new']['buy_price']), 750.00)
+        self.assertEqual(conflict['new']['stock_qty'], 6)
+        self.assertEqual(conflict['new']['compatible_vehicles'], ['Toyota Corolla (2020)'])
+
         self.existing_part.refresh_from_db()
-        self.assertEqual(self.existing_part.name, 'Cworks Oil Filter')
-        self.assertEqual(self.existing_part.brand, 'Cworks')
-        self.assertEqual(float(self.existing_part.buy_price), 593.75) # weighted average: (10*500 + 6*750) / 16 = 593.75
-        self.assertEqual(float(self.existing_part.sell_price), 1000.00)
-        self.assertEqual(self.existing_part.stock_qty, 16) # accumulated: 10 + 6 = 16
-        self.assertEqual(self.existing_part.rack_location, 'Oil Filter Rack')
-        
-        # Verify supplier created and assigned
-        self.assertIsNotNone(self.existing_part.supplier)
-        self.assertEqual(self.existing_part.supplier.name, 'Toyotsu Lanka (Pvt) Ltd')
-        
-        # Verify compatible vehicles updated
-        self.assertEqual(self.existing_part.compatible_vehicles.count(), 1)
-        v1 = self.existing_part.compatible_vehicles.first()
-        self.assertEqual(v1.make, "Toyota")
-        self.assertEqual(v1.model, "Corolla")
-        self.assertEqual(v1.year, 2020)
-        
-        # Verify new part created
+        self.assertEqual(self.existing_part.name, 'Old Name')
+        self.assertEqual(self.existing_part.stock_qty, 10)
+        self.assertEqual(self.existing_part.compatible_vehicles.count(), 0)
+
+        # Verify new part created (no conflict, so this goes in immediately)
         new_part = Part.objects.get(part_number='B16019120')
         self.assertEqual(new_part.name, 'New Part Test')
         self.assertEqual(new_part.brand, 'TestBrand')
@@ -113,7 +114,7 @@ class BulkUploadAPITest(TestCase):
         self.assertEqual(new_part.stock_qty, 4)
         self.assertEqual(new_part.rack_location, 'Rack B')
         self.assertEqual(new_part.supplier.name, 'Test Supplier')
-        
+
         # Verify new part compatible vehicles
         self.assertEqual(new_part.compatible_vehicles.count(), 2)
         v_list = list(new_part.compatible_vehicles.all().order_by('make'))
@@ -123,6 +124,73 @@ class BulkUploadAPITest(TestCase):
         self.assertEqual(v_list[1].make, "Toyota")
         self.assertEqual(v_list[1].model, "Corolla")
         self.assertEqual(v_list[1].year, 2020)
+
+        # Verify purchase history was recorded for the newly created part
+        new_part_records = RestockRecord.objects.filter(part=new_part)
+        self.assertEqual(new_part_records.count(), 1)
+        self.assertEqual(new_part_records.first().quantity, 4)
+        self.assertEqual(float(new_part_records.first().buy_price), 150.00)
+
+        # The conflicting part wasn't touched, so no purchase history yet either
+        self.assertEqual(RestockRecord.objects.filter(part=self.existing_part).count(), 0)
+
+    def test_resolve_bulk_upload_conflicts(self):
+        resolve_url = reverse('resolve_bulk_upload_conflicts')
+        resolutions = [{
+            'part_number': 'B110G0131',
+            'name': 'Cworks Oil Filter',       # take "new" value
+            'brand': 'Old Brand',              # keep "existing" value
+            'supplier': 'Toyotsu Lanka (Pvt) Ltd',
+            'buy_price': 750.00,
+            'sell_price': 1000.00,
+            'stock_qty': 999,                  # custom value (neither existing nor new)
+            'rack_location': 'Oil Filter Rack',
+            'compatible_vehicles': ['Toyota Corolla (2020)'],
+        }]
+
+        response = self.client.post(resolve_url, {'resolutions': resolutions}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['updated'], 1)
+
+        self.existing_part.refresh_from_db()
+        self.assertEqual(self.existing_part.name, 'Cworks Oil Filter')
+        self.assertEqual(self.existing_part.brand, 'Old Brand')
+        self.assertEqual(float(self.existing_part.buy_price), 750.00)
+        self.assertEqual(float(self.existing_part.sell_price), 1000.00)
+        self.assertEqual(self.existing_part.stock_qty, 999)
+        self.assertEqual(self.existing_part.rack_location, 'Oil Filter Rack')
+        self.assertEqual(self.existing_part.supplier.name, 'Toyotsu Lanka (Pvt) Ltd')
+        self.assertEqual(self.existing_part.compatible_vehicles.count(), 1)
+        v1 = self.existing_part.compatible_vehicles.first()
+        self.assertEqual(v1.make, "Toyota")
+        self.assertEqual(v1.model, "Corolla")
+        self.assertEqual(v1.year, 2020)
+
+        # Stock went from 10 -> 999, so the 989-unit increase should show up
+        # in Purchase History just like a manual restock would.
+        records = RestockRecord.objects.filter(part=self.existing_part)
+        self.assertEqual(records.count(), 1)
+        record = records.first()
+        self.assertEqual(record.quantity, 989)
+        self.assertEqual(float(record.buy_price), 750.00)
+        self.assertEqual(record.supplier.name, 'Toyotsu Lanka (Pvt) Ltd')
+
+    def test_resolve_bulk_upload_conflicts_no_stock_increase_skips_purchase_history(self):
+        resolve_url = reverse('resolve_bulk_upload_conflicts')
+        resolutions = [{
+            'part_number': 'B110G0131',
+            'name': 'Old Name',
+            'brand': 'Old Brand',
+            'supplier': '',
+            'buy_price': 500.00,
+            'sell_price': 800.00,
+            'stock_qty': 10,  # unchanged from existing
+            'rack_location': 'Old Location',
+        }]
+
+        response = self.client.post(resolve_url, {'resolutions': resolutions}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(RestockRecord.objects.filter(part=self.existing_part).count(), 0)
 
 
 class PartCalculationAPITest(TestCase):
@@ -675,5 +743,56 @@ class SalePaymentAPITest(TestCase):
         self.assertIsNotNone(sale.credit_settled_at)
 
 
+class SaleMileageSyncAPITest(TestCase):
+    """
+    Completing a POS sale should keep CustomerVehicle.current_mileage in sync:
+    normally only advancing it forward, but overwriting it when the frontend
+    confirms the user explicitly chose to override a lower reading.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
 
+        self.part = Part.objects.create(
+            name="Brake Pad",
+            part_number="BP-100",
+            buy_price=500,
+            sell_price=1000,
+            stock_qty=10,
+        )
+        self.vehicle = CustomerVehicle.objects.create(vehicle_number="ABC-1234", current_mileage=50000)
+
+    def _sale_payload(self, **overrides):
+        payload = {
+            "customer_name": "John Doe",
+            "vehicle_number": "ABC-1234",
+            "items": [
+                {"part_id": str(self.part.id), "quantity": 1, "unit_price": 1000, "discount": 0}
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_higher_mileage_updates_vehicle_registry(self):
+        response = self.client.post(reverse('create_sale'), self._sale_payload(mileage=55000), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.current_mileage, 55000)
+
+    def test_lower_mileage_without_force_is_ignored(self):
+        response = self.client.post(reverse('create_sale'), self._sale_payload(mileage=40000), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.current_mileage, 50000)
+
+    def test_lower_mileage_with_force_overrides_vehicle_registry(self):
+        response = self.client.post(
+            reverse('create_sale'),
+            self._sale_payload(mileage=40000, force_mileage_update=True),
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.current_mileage, 40000)
 

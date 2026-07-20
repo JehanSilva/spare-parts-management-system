@@ -1,3 +1,4 @@
+import uuid
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -660,6 +661,7 @@ def create_sale(request):
     customer_id = data.get('customer') or None
     items_data = data.get('items', [])
     mileage = data.get('mileage') or None
+    force_mileage_update = bool(data.get('force_mileage_update', False))
     notes = data.get('notes', '')
 
     payment_status = data.get('payment_status', 'PAID')
@@ -734,11 +736,15 @@ def create_sale(request):
 
     # 3b. Keep the vehicle registry's "current mileage" in sync with the
     # latest known reading — only advance it forward, never regress it from
-    # an out-of-order or mistyped lower value.
+    # an out-of-order or mistyped lower value, unless the frontend confirms
+    # the user explicitly chose to override a lower reading anyway.
     if mileage and vehicle_number:
-        CustomerVehicle.objects.filter(vehicle_number__iexact=vehicle_number).filter(
-            Q(current_mileage__isnull=True) | Q(current_mileage__lt=mileage)
-        ).update(current_mileage=mileage)
+        if force_mileage_update:
+            CustomerVehicle.objects.filter(vehicle_number__iexact=vehicle_number).update(current_mileage=mileage)
+        else:
+            CustomerVehicle.objects.filter(vehicle_number__iexact=vehicle_number).filter(
+                Q(current_mileage__isnull=True) | Q(current_mileage__lt=mileage)
+            ).update(current_mileage=mileage)
 
     # 4. Process Items (Now safe to deduct)
     for item in items_data:
@@ -826,6 +832,66 @@ def cancel_sale(request, pk):
     sale.save()
 
     return Response(SaleSerializer(sale).data)
+
+@api_view(['POST'])
+@transaction.atomic
+def reverse_sale(request, pk):
+    """
+    Reverse a sale: restore stock for its items (unless the sale was already
+    cancelled and stock was already returned), rebuild those items as a new
+    ActiveCart so the POS page can pick it up for editing, then delete the
+    sale entirely so it no longer shows up in Sales History.
+    """
+    sale = get_object_or_404(Sale, pk=pk)
+
+    cart_items = []
+    for item in sale.items.all():
+        unit_price = float(item.unit_price)
+        discount = float(item.discount)
+        percent = round((discount / unit_price) * 100, 2) if unit_price else 0
+
+        if item.item_type == 'LABOR':
+            cart_items.append({
+                'id': f"labor_{uuid.uuid4().hex}",
+                'item_type': 'LABOR',
+                'name': item.description,
+                'sell_price': unit_price,
+                'quantity': item.quantity,
+                'discountAmount': discount,
+                'discountPercentInput': str(percent) if discount else "",
+            })
+            continue
+
+        part = item.part
+        if sale.status != 'CANCELLED':
+            part.stock_qty += item.quantity
+            part.save()
+
+        cart_items.append({
+            **PartSerializer(part).data,
+            # Reflect the sale's original pricing/warranty, not the part's
+            # current catalog price, so the reversed cart matches what the
+            # customer was actually charged.
+            'sell_price': unit_price,
+            'quantity': item.quantity,
+            'discountAmount': discount,
+            'discountPercentInput': str(percent) if discount else "",
+            'warranty': item.warranty_period_months,
+        })
+
+    cart = ActiveCart.objects.create(
+        id=f"cart_reversed_{uuid.uuid4().hex[:12]}",
+        customer_name=sale.customer_name,
+        vehicle_number=sale.vehicle_number or '',
+        items=cart_items,
+        mileage=sale.mileage,
+        notes=sale.notes,
+    )
+
+    sale.delete()
+
+    return Response(ActiveCartSerializer(cart).data, status=status.HTTP_200_OK)
+
 
 @api_view(['POST'])
 def mark_sale_paid(request, pk):
@@ -1198,8 +1264,8 @@ def bulk_upload_parts(request):
         df.columns = [str(c).strip().lower() for c in df.columns]
         
         created_count = 0
-        updated_count = 0
-        
+        conflicts = []
+
         # Get all existing unique makes for smart parsing of multi-word makes (e.g. "Land Rover")
         existing_makes = list(Vehicle.objects.values_list('make', flat=True).distinct())
         common_makes = ["Toyota", "Honda", "Nissan", "Mitsubishi", "Suzuki", "Mazda", "Hyundai", "Kia", "BMW", "Mercedes-Benz", "Audi", "Ford", "Chevrolet", "Land Rover", "Range Rover", "Lexus"]
@@ -1302,37 +1368,35 @@ def bulk_upload_parts(request):
                                 
                 # Find if part already exists
                 existing_part = Part.objects.filter(part_number=part_number).first()
-                
+
                 if existing_part:
-                    # Update other details
-                    existing_part.name = name
-                    existing_part.brand = brand
-                    existing_part.supplier = supplier_obj
-                    existing_part.rack_location = rack_location
-                    
-                    old_qty = existing_part.stock_qty
-                    new_qty = stock_qty
-                    
-                    # Calculate new weighted average buy price using quick restock logic if buy_price is provided
-                    if buy_price > 0:
-                        if old_qty > 0 and new_qty > 0:
-                            old_val = old_qty * float(existing_part.buy_price)
-                            new_val = new_qty * buy_price
-                            existing_part.buy_price = round((old_val + new_val) / (old_qty + new_qty), 2)
-                        else:
-                            existing_part.buy_price = buy_price
-                    
-                    # Accumulate stock level
-                    existing_part.stock_qty = old_qty + new_qty
-                    
-                    # Update sell_price directly if provided
-                    if sell_price > 0:
-                        existing_part.sell_price = sell_price
-                        
-                    existing_part.save()
-                    if has_fits_col:
-                        existing_part.compatible_vehicles.set(vehicle_objs)
-                    updated_count += 1
+                    # Don't merge automatically — collect both versions so the
+                    # user can resolve each field (existing / new / custom) on the frontend.
+                    supplier_display = supplier_name if supplier_name and supplier_name.lower() != 'nan' else ""
+                    conflicts.append({
+                        "part_number": part_number,
+                        "existing": {
+                            "id": str(existing_part.id),
+                            "name": existing_part.name,
+                            "brand": existing_part.brand,
+                            "supplier": existing_part.supplier.name if existing_part.supplier else "",
+                            "buy_price": float(existing_part.buy_price),
+                            "sell_price": float(existing_part.sell_price),
+                            "stock_qty": existing_part.stock_qty,
+                            "rack_location": existing_part.rack_location,
+                            "compatible_vehicles": [str(v) for v in existing_part.compatible_vehicles.all()],
+                        },
+                        "new": {
+                            "name": name,
+                            "brand": brand,
+                            "supplier": supplier_display,
+                            "buy_price": buy_price,
+                            "sell_price": sell_price,
+                            "stock_qty": stock_qty,
+                            "rack_location": rack_location,
+                            "compatible_vehicles": [str(v) for v in vehicle_objs] if has_fits_col else None,
+                        },
+                    })
                 else:
                     # Create new part
                     new_part = Part.objects.create(
@@ -1347,16 +1411,126 @@ def bulk_upload_parts(request):
                     )
                     if has_fits_col:
                         new_part.compatible_vehicles.set(vehicle_objs)
+                    if stock_qty > 0:
+                        RestockRecord.objects.create(
+                            part=new_part,
+                            supplier=supplier_obj,
+                            quantity=stock_qty,
+                            buy_price=buy_price,
+                            notes="Initial stock from bulk Excel upload",
+                        )
                     created_count += 1
                     
+        message = f"Successfully processed Excel file. Created {created_count} new parts."
+        if conflicts:
+            message += f" {len(conflicts)} part(s) already exist and need conflict resolution."
+
         return Response({
-            "message": f"Successfully processed Excel file. Created {created_count} new parts, Updated {updated_count} existing parts.",
+            "message": message,
             "created": created_count,
-            "updated": updated_count
+            "conflicts": conflicts,
         }, status=status.HTTP_200_OK)
-        
+
     except Exception as e:
         return Response({"error": f"Error processing file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def resolve_bulk_upload_conflicts(request):
+    """
+    Apply user-resolved field values for parts that already existed during a
+    bulk Excel upload (see bulk_upload_parts). For each conflicting part number,
+    the frontend sends the final chosen value per field (existing / new / a
+    custom value the user typed in) and this simply writes those values.
+    """
+    resolutions = request.data.get('resolutions')
+    if not isinstance(resolutions, list):
+        return Response({"error": "Expected a list of resolutions."}, status=status.HTTP_400_BAD_REQUEST)
+
+    existing_makes = list(Vehicle.objects.values_list('make', flat=True).distinct())
+    updated_count = 0
+    errors = []
+
+    with transaction.atomic():
+        for res in resolutions:
+            part_number = res.get('part_number')
+            part = Part.objects.filter(part_number=part_number).first()
+            if not part:
+                errors.append(f"Part {part_number} not found.")
+                continue
+
+            old_qty = part.stock_qty
+
+            part.name = str(res.get('name', part.name)).strip() or part.name
+            part.brand = str(res.get('brand', part.brand)).strip()
+
+            supplier_name = str(res.get('supplier', '')).strip()
+            if supplier_name:
+                supplier_obj, _ = Supplier.objects.get_or_create(name=supplier_name)
+                part.supplier = supplier_obj
+            else:
+                part.supplier = None
+
+            try:
+                part.buy_price = float(res.get('buy_price'))
+            except (TypeError, ValueError):
+                pass
+
+            try:
+                part.sell_price = float(res.get('sell_price'))
+            except (TypeError, ValueError):
+                pass
+
+            try:
+                part.stock_qty = int(res.get('stock_qty'))
+            except (TypeError, ValueError):
+                pass
+
+            part.rack_location = str(res.get('rack_location', part.rack_location)).strip()
+            part.save()
+
+            # Record purchase history for any stock increase, same as the
+            # "Add Part" duplicate-part-number path — only the delta counts as a purchase.
+            added_qty = part.stock_qty - old_qty
+            if added_qty > 0:
+                RestockRecord.objects.create(
+                    part=part,
+                    supplier=part.supplier,
+                    quantity=added_qty,
+                    buy_price=part.buy_price,
+                    notes="Added via bulk Excel upload (conflict resolved)",
+                )
+
+            vehicle_strs = res.get('compatible_vehicles')
+            if vehicle_strs is not None:
+                vehicle_objs = []
+                for v_str in vehicle_strs:
+                    parsed = parse_vehicle_string(str(v_str), existing_makes)
+                    if not parsed:
+                        continue
+                    v_obj = Vehicle.objects.filter(
+                        make__iexact=parsed['make'],
+                        model__iexact=parsed['model'],
+                        year=parsed['year']
+                    ).first()
+                    if not v_obj:
+                        v_obj = Vehicle.objects.create(
+                            make=parsed['make'],
+                            model=parsed['model'],
+                            year=parsed['year']
+                        )
+                        if parsed['make'] not in existing_makes:
+                            existing_makes.append(parsed['make'])
+                    vehicle_objs.append(v_obj)
+                part.compatible_vehicles.set(vehicle_objs)
+
+            updated_count += 1
+
+    return Response({
+        "message": f"Successfully updated {updated_count} part(s).",
+        "updated": updated_count,
+        "errors": errors,
+    }, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
 def get_active_carts(request):

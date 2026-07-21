@@ -175,6 +175,8 @@ class SaleSerializer(serializers.ModelSerializer):
         return sale
 
 class ActiveCartSerializer(serializers.ModelSerializer):
+    customer_details = CustomerBasicSerializer(source='customer', read_only=True)
+
     class Meta:
         model = ActiveCart
         fields = '__all__'
@@ -225,7 +227,7 @@ class RestockRecordSerializer(serializers.ModelSerializer):
         model = RestockRecord
         fields = [
             'id', 'part', 'supplier', 'supplier_name',
-            'quantity', 'buy_price', 'restocked_at', 'notes',
+            'quantity', 'buy_price', 'restocked_at', 'notes', 'invoice_number',
             'status', 'returned_quantity', 'return_reason', 'returned_at',
         ]
 

@@ -60,21 +60,31 @@ export const fetchParts = async (params) => {
 };
 export const createPart = async (data) =>
   (await API.post("/parts/add/", data)).data;
-export const bulkUploadParts = async (file) => {
+export const bulkUploadParts = async (file, invoiceNumber = "") => {
   const formData = new FormData();
   formData.append('file', file);
+  if (invoiceNumber) formData.append('invoice_number', invoiceNumber);
   return (await API.post("/parts/bulk-upload/", formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })).data;
 };
-export const resolveBulkUploadConflicts = async (resolutions) =>
-  (await API.post("/parts/bulk-upload/resolve/", { resolutions })).data;
+export const resolveBulkUploadConflicts = async (resolutions, invoiceNumber = "") =>
+  (await API.post("/parts/bulk-upload/resolve/", { resolutions, invoice_number: invoiceNumber })).data;
+export const cancelBulkUpload = async (createdPartIds) =>
+  (await API.post("/parts/bulk-upload/cancel/", { created_part_ids: createdPartIds })).data;
 export const updatePart = async (id, data) =>
   (await API.put(`/parts/${id}/update/`, data)).data;
 export const deletePart = async (id) =>
   await API.delete(`/parts/${id}/delete/`);
-export const restockPart = async (id, entries) =>
-  (await API.post(`/parts/${id}/restock/`, { entries })).data;
+export const restockPart = async (id, entries, sellPrice) =>
+  (
+    await API.post(`/parts/${id}/restock/`, {
+      entries,
+      ...(sellPrice !== undefined && sellPrice !== null && sellPrice !== ""
+        ? { sell_price: sellPrice }
+        : {}),
+    })
+  ).data;
 export const fetchRestockHistory = async (id) =>
   (await API.get(`/parts/${id}/restock-history/`)).data;
 export const returnRestockRecord = async (partId, recordId, data) =>
@@ -152,6 +162,8 @@ export const deleteCustomerVehicle = async (vehicleId) =>
   await API.delete(`/customers/vehicles/${vehicleId}/delete/`);
 export const updateCustomerVehicle = async (vehicleId, data) =>
   (await API.patch(`/customers/vehicles/${vehicleId}/update/`, data)).data;
+export const fetchCustomerHistory = async (customerId) =>
+  (await API.get(`/customers/${customerId}/history/`)).data;
 
 // --- VEHICLE REGISTRY SERVICES (real registered plates — independent master data) ---
 export const fetchCustomerVehicles = async (search = '') =>

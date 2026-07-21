@@ -130,6 +130,18 @@ def get_vehicle_history(request, pk):
     return Response(SaleSerializer(sales, many=True).data)
 
 
+@api_view(['GET'])
+def get_customer_history(request, pk):
+    """
+    GET /customers/<pk>/history/
+    All sales tied to this customer via the Sale.customer FK, whether or not
+    each sale had a vehicle attached, newest first.
+    """
+    customer = get_object_or_404(Customer, pk=pk)
+    sales = customer.sales.order_by('-created_at')
+    return Response(SaleSerializer(sales, many=True).data)
+
+
 @api_view(['POST'])
 def add_vehicle_to_customer(request, pk):
     """
@@ -451,7 +463,8 @@ def restock_part(request, pk):
         "entries": [
             { "supplier_id": 1, "quantity": 10, "buy_price": 1500.00, "notes": "" },
             { "supplier_id": 2, "quantity": 5,  "buy_price": 1450.00, "notes": "" }
-        ]
+        ],
+        "sell_price": 1800.00  # optional; defaults to the part's current sell_price
     }
     """
     part = get_object_or_404(Part, pk=pk)
@@ -459,6 +472,15 @@ def restock_part(request, pk):
 
     if not entries_data:
         return Response({"error": "At least one restock entry is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    sell_price = request.data.get('sell_price', None)
+    if sell_price is not None:
+        try:
+            sell_price = Decimal(str(sell_price))
+        except (InvalidOperation, ValueError):
+            return Response({"error": "Invalid sell_price."}, status=status.HTTP_400_BAD_REQUEST)
+        if sell_price < 0:
+            return Response({"error": "sell_price must be ≥ 0."}, status=status.HTTP_400_BAD_REQUEST)
 
     # Validate all entries first
     serializer = RestockEntrySerializer(data=entries_data, many=True)
@@ -511,6 +533,8 @@ def restock_part(request, pk):
 
     part.stock_qty = new_total_qty
     part.buy_price = new_avg_price
+    if sell_price is not None:
+        part.sell_price = sell_price
     part.save()
 
     return Response({
@@ -1236,9 +1260,12 @@ def parse_vehicle_string(vehicle_str, existing_makes):
         make = parts[0]
         model = ' '.join(parts[1:]) if len(parts) > 1 else "Unknown"
 
+    # Vehicle.make/model are CharField(max_length=50) — guard against freeform
+    # "fits vehicles" text (or a make that failed to match and swallowed the
+    # whole remaining string as the model) overflowing the DB column.
     return {
-        'make': make.strip(),
-        'model': model.strip(),
+        'make': make.strip()[:50],
+        'model': model.strip()[:50],
         'year': year
     }
 
@@ -1254,7 +1281,9 @@ def bulk_upload_parts(request):
     
     if not excel_file.name.endswith('.xlsx') and not excel_file.name.endswith('.xls'):
         return Response({"error": "Invalid file format. Only Excel files are supported."}, status=status.HTTP_400_BAD_REQUEST)
-        
+
+    invoice_number = str(request.data.get('invoice_number', '')).strip()
+
     try:
         import pandas as pd
         # Read the Excel file, using the first row (index 0) as column headers (skipping the 1st line as data)
@@ -1264,6 +1293,7 @@ def bulk_upload_parts(request):
         df.columns = [str(c).strip().lower() for c in df.columns]
         
         created_count = 0
+        created_part_ids = []
         conflicts = []
 
         # Get all existing unique makes for smart parsing of multi-word makes (e.g. "Land Rover")
@@ -1418,9 +1448,11 @@ def bulk_upload_parts(request):
                             quantity=stock_qty,
                             buy_price=buy_price,
                             notes="Initial stock from bulk Excel upload",
+                            invoice_number=invoice_number,
                         )
                     created_count += 1
-                    
+                    created_part_ids.append(str(new_part.id))
+
         message = f"Successfully processed Excel file. Created {created_count} new parts."
         if conflicts:
             message += f" {len(conflicts)} part(s) already exist and need conflict resolution."
@@ -1428,6 +1460,7 @@ def bulk_upload_parts(request):
         return Response({
             "message": message,
             "created": created_count,
+            "created_part_ids": created_part_ids,
             "conflicts": conflicts,
         }, status=status.HTTP_200_OK)
 
@@ -1446,6 +1479,8 @@ def resolve_bulk_upload_conflicts(request):
     resolutions = request.data.get('resolutions')
     if not isinstance(resolutions, list):
         return Response({"error": "Expected a list of resolutions."}, status=status.HTTP_400_BAD_REQUEST)
+
+    invoice_number = str(request.data.get('invoice_number', '')).strip()
 
     existing_makes = list(Vehicle.objects.values_list('make', flat=True).distinct())
     updated_count = 0
@@ -1499,6 +1534,7 @@ def resolve_bulk_upload_conflicts(request):
                     quantity=added_qty,
                     buy_price=part.buy_price,
                     notes="Added via bulk Excel upload (conflict resolved)",
+                    invoice_number=invoice_number,
                 )
 
             vehicle_strs = res.get('compatible_vehicles')
@@ -1531,6 +1567,44 @@ def resolve_bulk_upload_conflicts(request):
         "updated": updated_count,
         "errors": errors,
     }, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@transaction.atomic
+def cancel_bulk_upload(request):
+    """
+    Abort a bulk Excel upload before conflict resolution is finished.
+
+    bulk_upload_parts already commits brand-new parts (and their initial-stock
+    RestockRecords) to the DB immediately, before the user resolves any
+    conflicting rows. If the user backs out of the conflict-resolution wizard,
+    this deletes those brand-new parts (RestockRecords cascade-delete with
+    them) so the aborted upload leaves no trace. Conflicting parts are never
+    touched here since resolve_bulk_upload_conflicts only writes them once the
+    user explicitly submits resolutions — so there's nothing to revert for those.
+
+    Payload: { "created_part_ids": ["<uuid>", ...] }
+    """
+    part_ids = request.data.get('created_part_ids', [])
+    if not isinstance(part_ids, list):
+        return Response({"error": "Expected a list of part ids."}, status=status.HTTP_400_BAD_REQUEST)
+
+    deleted_count = 0
+    for pid in part_ids:
+        part = Part.objects.filter(pk=pid).first()
+        if not part:
+            continue
+        # Safety: never delete a part that already has sales against it.
+        if part.saleitem_set.exists():
+            continue
+        part.delete()
+        deleted_count += 1
+
+    return Response({
+        "message": f"Upload cancelled. Removed {deleted_count} part(s).",
+        "deleted": deleted_count,
+    }, status=status.HTTP_200_OK)
+
 
 @api_view(['GET'])
 def get_active_carts(request):
@@ -1568,6 +1642,7 @@ def sync_active_carts(request):
             defaults={
                 'customer_name': cart.get('customer_name', ''),
                 'vehicle_number': cart.get('vehicle_number', ''),
+                'customer_id': cart.get('customer'),
                 'items': cart.get('items', []),
                 'mileage': cart.get('mileage'),
                 'notes': cart.get('notes', ''),

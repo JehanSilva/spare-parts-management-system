@@ -582,6 +582,8 @@ const POSPage = () => {
           id: c.id,
           customerName: c.customer_name,
           vehicleNumber: c.vehicle_number,
+          customerId: c.customer || null,
+          customerDetails: c.customer_details || null,
           items: c.items,
           mileage: c.mileage != null ? String(c.mileage) : "",
           notes: c.notes || "",
@@ -605,6 +607,8 @@ const POSPage = () => {
               id: newId,
               customerName: "",
               vehicleNumber: "",
+              customerId: null,
+              customerDetails: null,
               items: [],
               mileage: "",
               notes: "",
@@ -618,6 +622,7 @@ const POSPage = () => {
             id: c.id,
             customer_name: c.customerName,
             vehicle_number: c.vehicleNumber,
+            customer: c.customerId || null,
             items: c.items,
             mileage: c.mileage ? parseInt(c.mileage) : null,
             notes: c.notes || "",
@@ -651,6 +656,7 @@ const POSPage = () => {
           id: c.id,
           customer_name: c.customerName,
           vehicle_number: c.vehicleNumber,
+          customer: c.customerId || null,
           items: c.items,
           mileage: c.mileage ? parseInt(c.mileage) : null,
           notes: c.notes || "",
@@ -677,7 +683,11 @@ const POSPage = () => {
         id: c.id,
         customerName: c.customer_name,
         vehicleNumber: c.vehicle_number,
+        customerId: c.customer || null,
+        customerDetails: c.customer_details || null,
         items: c.items,
+        mileage: c.mileage != null ? String(c.mileage) : "",
+        notes: c.notes || "",
       }));
       if (mapped.length > 0) {
         setCarts(mapped);
@@ -692,6 +702,8 @@ const POSPage = () => {
             id: newId,
             customerName: "",
             vehicleNumber: "",
+            customerId: null,
+            customerDetails: null,
             items: [],
             mileage: "",
             notes: "",
@@ -703,6 +715,7 @@ const POSPage = () => {
           id: c.id,
           customer_name: c.customerName,
           vehicle_number: c.vehicleNumber,
+          customer: c.customerId || null,
           items: c.items,
           mileage: c.mileage ? parseInt(c.mileage) : null,
           notes: c.notes || "",
@@ -971,12 +984,22 @@ const POSPage = () => {
     try {
       if (linkedVehicle) {
         setLinkedVehicle(await updateCustomerVehicle(linkedVehicle.id, { customer: customer.id }));
+        setCarts((prev) =>
+          prev.map((c) => (c.id === activeCartId ? { ...c, customerName: customer.name } : c))
+        );
       } else {
+        // Customer-only path (no vehicle): stamp the real id + details onto
+        // the cart itself so this link survives a tab switch or reload —
+        // selectedCustomer alone is transient state.
         setSelectedCustomer(customer);
+        setCarts((prev) =>
+          prev.map((c) =>
+            c.id === activeCartId
+              ? { ...c, customerName: customer.name, customerId: customer.id, customerDetails: customer }
+              : c
+          )
+        );
       }
-      setCarts((prev) =>
-        prev.map((c) => (c.id === activeCartId ? { ...c, customerName: customer.name } : c))
-      );
       setLinkPickerOpen(false);
     } catch {
       setAlertInfo({ type: "error", message: "Failed to link customer." });
@@ -988,12 +1011,17 @@ const POSPage = () => {
     try {
       if (linkedVehicle) {
         setLinkedVehicle(await updateCustomerVehicle(linkedVehicle.id, { customer: null }));
+        setCarts((prev) =>
+          prev.map((c) => (c.id === activeCartId ? { ...c, customerName: "" } : c))
+        );
       } else {
         setSelectedCustomer(null);
+        setCarts((prev) =>
+          prev.map((c) =>
+            c.id === activeCartId ? { ...c, customerName: "", customerId: null, customerDetails: null } : c
+          )
+        );
       }
-      setCarts((prev) =>
-        prev.map((c) => (c.id === activeCartId ? { ...c, customerName: "" } : c))
-      );
     } catch {
       setAlertInfo({ type: "error", message: "Failed to unlink customer." });
     } finally {
@@ -1014,7 +1042,10 @@ const POSPage = () => {
     setPaymentModalOpen(false);
 
     setLinkedVehicle(null);
-    setSelectedCustomer(null);
+    // Restore a customer-only link (no vehicle) from the cart itself — this
+    // is what makes that link survive a tab switch or a full page reload,
+    // instead of only ever living in this transient state.
+    setSelectedCustomer(activeCart.customerDetails || null);
     setMileageOverrideConfirmed(false);
     if (vehicleLookupTimer.current) clearTimeout(vehicleLookupTimer.current);
     // Invalidate any lookup still in flight from before the switch (e.g. one

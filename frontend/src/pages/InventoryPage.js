@@ -18,6 +18,7 @@ import {
   fetchSuppliers,
   bulkUploadParts,
   resolveBulkUploadConflicts,
+  cancelBulkUpload,
 } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import AddPartForm from "../components/forms/AddPartForm";
@@ -252,15 +253,63 @@ const generateStockReportPDF = (parts, supplierName) => {
 // --- Bulk Upload Conflict Resolution Modal ---
 // One field per conflicting part: let the user keep the existing value, take
 // the new value from the Excel sheet, or type a custom value instead.
+
+// Normalizes a vehicle display string for comparison/dedup — collapses any
+// run of whitespace to a single space and lowercases, so cosmetic differences
+// (extra spaces, casing) between an existing catalog entry and a freshly
+// Excel-parsed one don't get treated as a real conflict/duplicate.
+const normalizeVehicleName = (v) => String(v).replace(/\s+/g, " ").trim().toLowerCase();
+
 const CONFLICT_FIELDS = [
   { key: "name", label: "Part Name" },
   { key: "brand", label: "Brand" },
   { key: "supplier", label: "Supplier" },
-  { key: "buy_price", label: "Cost Price (LKR)", numeric: true },
-  { key: "sell_price", label: "Selling Price (LKR)", numeric: true },
-  { key: "stock_qty", label: "Stock Quantity", numeric: true },
+  {
+    key: "buy_price",
+    label: "Cost Price (LKR)",
+    numeric: true,
+    alwaysShow: true,
+    // Weighted-average cost across the existing stock and the incoming Excel quantity,
+    // same formula as the single-part Quick Restock preview.
+    combined: (c) => {
+      const existingQty = Number(c.existing.stock_qty) || 0;
+      const newQty = Number(c.new.stock_qty) || 0;
+      const existingPrice = Number(c.existing.buy_price) || 0;
+      const newPrice = Number(c.new.buy_price) || 0;
+      const totalQty = existingQty + newQty;
+      if (totalQty <= 0) return existingPrice;
+      return Math.round(((existingQty * existingPrice + newQty * newPrice) / totalQty) * 100) / 100;
+    },
+  },
+  { key: "sell_price", label: "Selling Price (LKR)", numeric: true, alwaysShow: true },
+  {
+    key: "stock_qty",
+    label: "Stock Quantity",
+    numeric: true,
+    alwaysShow: true,
+    combined: (c) => (Number(c.existing.stock_qty) || 0) + (Number(c.new.stock_qty) || 0),
+  },
   { key: "rack_location", label: "Rack / Bin Location" },
-  { key: "compatible_vehicles", label: "Fits Vehicles", isList: true },
+  {
+    key: "compatible_vehicles",
+    label: "Fits Vehicles",
+    isList: true,
+    // Union of existing + Excel vehicles, de-duplicated (whitespace/case-insensitive).
+    combined: (c) => {
+      const existingList = Array.isArray(c.existing.compatible_vehicles) ? c.existing.compatible_vehicles : [];
+      const newList = Array.isArray(c.new.compatible_vehicles) ? c.new.compatible_vehicles : [];
+      const seen = new Set();
+      const result = [];
+      [...existingList, ...newList].forEach((v) => {
+        const key = normalizeVehicleName(v);
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          result.push(String(v).replace(/\s+/g, " ").trim());
+        }
+      });
+      return result;
+    },
+  },
 ];
 
 const formatConflictFieldValue = (field, value) => {
@@ -283,7 +332,63 @@ const buildInitialResolutions = (conflicts) => {
   return initial;
 };
 
-const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting }) => {
+const BulkUploadInvoiceModal = ({ fileName, onCancel, onConfirm, isUploading }) => {
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="bg-red-700 px-5 py-4 text-white flex items-center justify-between">
+          <h3 className="font-bold text-lg">Confirm Import</h3>
+          <button onClick={onCancel} className="hover:bg-red-600 p-1 rounded-full transition-colors">
+            <XCircle size={20} />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-sm text-gray-600">
+            Importing <span className="font-mono font-semibold text-gray-800">{fileName}</span>.
+            Optionally attach an invoice number to this restock batch.
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">
+              Invoice Number <span className="text-gray-400 font-normal">(optional)</span>
+            </label>
+            <input
+              autoFocus
+              value={invoiceNumber}
+              onChange={(e) => setInvoiceNumber(e.target.value)}
+              placeholder="e.g. Invoice #123"
+              className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:outline-none"
+            />
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-3">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(invoiceNumber.trim())}
+            disabled={isUploading}
+            className="px-5 py-2 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
+          >
+            {isUploading ? "Uploading..." : "Confirm & Upload"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting, onCancelUpload, isCancelling }) => {
   const [stepIndex, setStepIndex] = useState(0);
   const [resolutions, setResolutions] = useState(() => buildInitialResolutions(conflicts));
 
@@ -296,6 +401,7 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting })
     let value;
     if (choice === "existing") value = formatConflictFieldValue(fieldConfig, current.existing[fieldKey]);
     else if (choice === "new") value = formatConflictFieldValue(fieldConfig, current.new[fieldKey]);
+    else if (choice === "combined") value = formatConflictFieldValue(fieldConfig, fieldConfig.combined(current));
     else value = currentFields[fieldKey]?.value || "";
 
     setResolutions((prev) => ({
@@ -353,7 +459,7 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting })
               <span className="font-mono">{current.part_number}</span>
             </p>
           </div>
-          <button onClick={onClose} className="hover:bg-red-600 p-1 rounded-full">
+          <button onClick={onClose} disabled={isCancelling} className="hover:bg-red-600 p-1 rounded-full disabled:opacity-50">
             <XCircle size={20} />
           </button>
         </div>
@@ -364,14 +470,44 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting })
             if (!fieldState) return null;
             const existingVal = formatConflictFieldValue(f, current.existing[f.key]);
             const newVal = formatConflictFieldValue(f, current.new[f.key]);
-            const same = existingVal === newVal;
+            const same = f.isList
+              ? (() => {
+                  const a = (Array.isArray(current.existing[f.key]) ? current.existing[f.key] : [])
+                    .map(normalizeVehicleName)
+                    .filter(Boolean)
+                    .sort();
+                  const b = (Array.isArray(current.new[f.key]) ? current.new[f.key] : [])
+                    .map(normalizeVehicleName)
+                    .filter(Boolean)
+                    .sort();
+                  return a.length === b.length && a.every((v, i) => v === b[i]);
+                })()
+              : existingVal === newVal;
+            const showChooser = f.alwaysShow || !same;
+
+            if (!showChooser) {
+              // No conflict on this field (and it's not one of the always-show fields) —
+              // just display it for context, no choice needed.
+              return (
+                <div key={f.key} className="border border-gray-100 rounded-xl p-3 bg-gray-50">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-500 text-sm">{f.label}</span>
+                    <span className="text-xs text-gray-400">(no conflict)</span>
+                  </div>
+                  <div className="text-sm text-gray-700 mt-1 truncate">
+                    {existingVal || <span className="italic text-gray-400">empty</span>}
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div key={f.key} className="border border-gray-200 rounded-xl p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-gray-700 text-sm">{f.label}</span>
                   {same && <span className="text-xs text-gray-400">(same value)</span>}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className={`grid grid-cols-1 ${f.combined ? "sm:grid-cols-2 md:grid-cols-4" : "sm:grid-cols-3"} gap-2`}>
                   <button
                     type="button"
                     onClick={() => setChoice(f.key, "existing")}
@@ -381,7 +517,10 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting })
                         : "border-gray-200 text-gray-600 hover:bg-gray-50"
                     }`}
                   >
-                    <div className="text-xs uppercase text-gray-400 mb-0.5">Existing</div>
+                    <div className="text-xs uppercase text-gray-400 mb-0.5">
+                      Existing
+                      {f.isList && ` (${Array.isArray(current.existing[f.key]) ? current.existing[f.key].length : 0})`}
+                    </div>
                     <div className="truncate">
                       {existingVal || <span className="italic text-gray-400">empty</span>}
                     </div>
@@ -395,11 +534,35 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting })
                         : "border-gray-200 text-gray-600 hover:bg-gray-50"
                     }`}
                   >
-                    <div className="text-xs uppercase text-gray-400 mb-0.5">From Excel</div>
+                    <div className="text-xs uppercase text-gray-400 mb-0.5">
+                      From Excel
+                      {f.isList && ` (${Array.isArray(current.new[f.key]) ? current.new[f.key].length : 0})`}
+                    </div>
                     <div className="truncate">
                       {newVal || <span className="italic text-gray-400">empty</span>}
                     </div>
                   </button>
+                  {f.combined && (
+                    <button
+                      type="button"
+                      onClick={() => setChoice(f.key, "combined")}
+                      className={`text-left px-3 py-2 rounded-lg border text-sm ${
+                        fieldState.choice === "combined"
+                          ? "border-red-600 bg-red-50 text-red-800"
+                          : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      <div className="text-xs uppercase text-gray-400 mb-0.5">
+                        Combined
+                        {f.isList && ` (${f.combined(current).length})`}
+                      </div>
+                      <div className="truncate">
+                        {formatConflictFieldValue(f, f.combined(current)) || (
+                          <span className="italic text-gray-400">empty</span>
+                        )}
+                      </div>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setChoice(f.key, "custom")}
@@ -432,14 +595,24 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting })
           })}
         </div>
 
-        <div className="p-4 border-t border-gray-100 flex items-center justify-between shrink-0">
-          <button
-            onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
-            disabled={stepIndex === 0}
-            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-600 font-semibold disabled:opacity-40"
-          >
-            Back
-          </button>
+        <div className="p-4 border-t border-gray-100 flex items-center justify-between shrink-0 gap-2">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onCancelUpload}
+              disabled={isCancelling}
+              title="Delete the newly-created parts from this file and drop all pending conflicts — nothing from this upload will be kept."
+              className="px-4 py-2 rounded-lg border border-red-300 text-red-600 font-semibold hover:bg-red-50 disabled:opacity-50"
+            >
+              {isCancelling ? "Cancelling..." : "Cancel Entire Upload"}
+            </button>
+            <button
+              onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
+              disabled={stepIndex === 0}
+              className="px-4 py-2 rounded-lg border border-gray-300 text-gray-600 font-semibold disabled:opacity-40"
+            >
+              Back
+            </button>
+          </div>
           {stepIndex < total - 1 ? (
             <button
               onClick={() => setStepIndex((i) => Math.min(total - 1, i + 1))}
@@ -472,6 +645,11 @@ const InventoryPage = () => {
   const [uploadConflicts, setUploadConflicts] = useState([]);
   const [uploadCreatedCount, setUploadCreatedCount] = useState(0);
   const [isResolvingConflicts, setIsResolvingConflicts] = useState(false);
+  const [pendingUploadFile, setPendingUploadFile] = useState(null);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [bulkInvoiceNumber, setBulkInvoiceNumber] = useState("");
+  const [pendingCreatedPartIds, setPendingCreatedPartIds] = useState([]);
+  const [isCancellingUpload, setIsCancellingUpload] = useState(false);
   const [editingPart, setEditingPart] = useState(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
   const [restockInitialPart, setRestockInitialPart] = useState(null);
@@ -610,18 +788,24 @@ const InventoryPage = () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const handleFileUpload = async (event) => {
+  const handleFileSelected = (event) => {
     const file = event.target.files[0];
     if (!file) return;
+    setPendingUploadFile(file);
+    setShowInvoiceModal(true);
+  };
 
+  const handleConfirmedUpload = async (file, invoiceNumber) => {
     setIsUploading(true);
+    setBulkInvoiceNumber(invoiceNumber);
     setAlertInfo({ type: "info", message: "Uploading and processing Excel file... Please wait." });
 
     try {
-      const response = await bulkUploadParts(file);
+      const response = await bulkUploadParts(file, invoiceNumber);
       if (response.conflicts && response.conflicts.length > 0) {
         setUploadConflicts(response.conflicts);
         setUploadCreatedCount(response.created || 0);
+        setPendingCreatedPartIds(response.created_part_ids || []);
         setAlertInfo({
           type: "info",
           message: `Created ${response.created} new part(s). ${response.conflicts.length} part(s) already exist — resolve them below.`,
@@ -636,6 +820,8 @@ const InventoryPage = () => {
       setAlertInfo({ type: "error", message: errorMsg });
     } finally {
       setIsUploading(false);
+      setShowInvoiceModal(false);
+      setPendingUploadFile(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -645,19 +831,40 @@ const InventoryPage = () => {
   const handleResolveConflicts = async (resolutions) => {
     setIsResolvingConflicts(true);
     try {
-      const response = await resolveBulkUploadConflicts(resolutions);
+      const response = await resolveBulkUploadConflicts(resolutions, bulkInvoiceNumber);
       const createdMsg = uploadCreatedCount > 0 ? `Added ${uploadCreatedCount} new part(s) and updated` : "Updated";
       const updatedCount = response.updated ?? resolutions.length;
       setAlertInfo({ type: "success", message: `${createdMsg} ${updatedCount} existing part(s).` });
       invalidateParts();
       setUploadConflicts([]);
       setUploadCreatedCount(0);
+      setBulkInvoiceNumber("");
+      setPendingCreatedPartIds([]);
     } catch (error) {
       console.error("Resolve Conflicts Error:", error);
       const errorMsg = error.response?.data?.error || "Failed to update parts.";
       setAlertInfo({ type: "error", message: errorMsg });
     } finally {
       setIsResolvingConflicts(false);
+    }
+  };
+
+  const handleCancelBulkUpload = async () => {
+    setIsCancellingUpload(true);
+    try {
+      await cancelBulkUpload(pendingCreatedPartIds);
+      setAlertInfo({ type: "info", message: "Upload cancelled — no changes were kept." });
+      invalidateParts();
+    } catch (error) {
+      console.error("Cancel Upload Error:", error);
+      const errorMsg = error.response?.data?.error || "Failed to cancel upload.";
+      setAlertInfo({ type: "error", message: errorMsg });
+    } finally {
+      setIsCancellingUpload(false);
+      setUploadConflicts([]);
+      setUploadCreatedCount(0);
+      setBulkInvoiceNumber("");
+      setPendingCreatedPartIds([]);
     }
   };
 
@@ -753,13 +960,29 @@ const InventoryPage = () => {
         />
       )}
 
+      {/* --- BULK UPLOAD INVOICE CONFIRM MODAL --- */}
+      {showInvoiceModal && pendingUploadFile && (
+        <BulkUploadInvoiceModal
+          fileName={pendingUploadFile.name}
+          isUploading={isUploading}
+          onCancel={() => {
+            setShowInvoiceModal(false);
+            setPendingUploadFile(null);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+          }}
+          onConfirm={(invoiceNumber) => handleConfirmedUpload(pendingUploadFile, invoiceNumber)}
+        />
+      )}
+
       {/* --- BULK UPLOAD CONFLICT RESOLUTION MODAL --- */}
       {uploadConflicts.length > 0 && (
         <BulkUploadConflictModal
           conflicts={uploadConflicts}
           isSubmitting={isResolvingConflicts}
-          onClose={() => { setUploadConflicts([]); setUploadCreatedCount(0); }}
+          onClose={() => { setUploadConflicts([]); setUploadCreatedCount(0); setBulkInvoiceNumber(""); setPendingCreatedPartIds([]); }}
           onSubmit={handleResolveConflicts}
+          onCancelUpload={handleCancelBulkUpload}
+          isCancelling={isCancellingUpload}
         />
       )}
 
@@ -797,7 +1020,7 @@ const InventoryPage = () => {
             accept=".xlsx, .xls"
             className="hidden"
             ref={fileInputRef}
-            onChange={handleFileUpload}
+            onChange={handleFileSelected}
           />
           <button
             onClick={() => fileInputRef.current?.click()}

@@ -152,6 +152,7 @@ class ActiveCart(models.Model):
     id = models.CharField(max_length=50, primary_key=True) # Matches the frontend cart.id
     customer_name = models.CharField(max_length=100, blank=True, default='')
     vehicle_number = models.CharField(max_length=20, blank=True, default='')
+    customer = models.ForeignKey('Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='active_carts')
     items = models.JSONField(default=list, blank=True)
     mileage = models.PositiveIntegerField(null=True, blank=True)
     notes = models.TextField(blank=True, default='')
@@ -271,6 +272,7 @@ class RestockRecord(models.Model):
     buy_price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Unit buy price from this supplier for this batch")
     restocked_at = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(blank=True)
+    invoice_number = models.CharField(max_length=100, blank=True, default='')
 
     # Return tracking
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_ACTIVE)

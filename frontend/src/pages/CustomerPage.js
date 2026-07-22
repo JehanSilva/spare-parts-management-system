@@ -7,6 +7,7 @@ import {
   addVehicleToCustomer,
   deleteCustomerVehicle,
   updateCustomerVehicle,
+  fetchCustomerHistory,
 } from "../services/api";
 import {
   User,
@@ -24,9 +25,15 @@ import {
   ShoppingBag,
   Gauge,
   Palette,
+  History,
+  Wrench,
+  StickyNote,
 } from "lucide-react";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
+
+const formatLKR = (amount) =>
+  new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
 const Field = ({ label, id, ...props }) => (
   <div>
@@ -195,7 +202,98 @@ const VehicleModal = ({ customerId, vehicle, onClose, onSaved }) => {
   );
 };
 
-const CustomerCard = ({ customer, onEdit, onDelete, onRefresh, autoExpand }) => {
+// Purchase History Modal — every sale tied to this customer (Sale.customer FK),
+// whether or not that sale had a vehicle attached. Mirrors VehicleHistoryModal
+// in VehicleRegistryPage.js, but scoped by customer instead of by plate number.
+const CustomerHistoryModal = ({ customer, onClose }) => {
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!customer) return;
+    setLoading(true);
+    fetchCustomerHistory(customer.id)
+      .then(setJobs)
+      .catch(() => setJobs([]))
+      .finally(() => setLoading(false));
+  }, [customer]);
+
+  if (!customer) return null;
+
+  const formatDate = (d) =>
+    new Date(d).toLocaleString("en-LK", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-900 text-white shrink-0">
+          <h2 className="font-bold text-lg flex items-center gap-2"><History size={18} /> {customer.name} — Purchase History</h2>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X size={18} /></button>
+        </div>
+        <div className="p-6 overflow-y-auto space-y-4">
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />)}
+            </div>
+          ) : jobs.length === 0 ? (
+            <div className="text-center py-12 text-gray-400">
+              <ShoppingBag size={28} className="mx-auto mb-3 opacity-40" />
+              <p className="font-semibold text-gray-500">No purchases yet</p>
+              <p className="text-sm mt-1">Sales made for this customer in POS will show up here.</p>
+            </div>
+          ) : (
+            jobs.map((job) => (
+              <div key={job.id} className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 bg-gray-50 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-gray-700">{formatDate(job.created_at)}</span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${job.status === "CANCELLED" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+                      {job.status}
+                    </span>
+                    {job.vehicle_number ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                        <Car size={9} /> {job.vehicle_number}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">No Vehicle</span>
+                    )}
+                    {job.mileage != null && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                        <Gauge size={9} /> {job.mileage.toLocaleString()} km
+                      </span>
+                    )}
+                  </div>
+                  <span className={`text-sm font-bold ${job.status === "CANCELLED" ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                    {formatLKR(job.total_amount)}
+                  </span>
+                </div>
+                {job.notes && (
+                  <div className="px-4 py-2 bg-amber-50 border-t border-amber-100 text-xs text-amber-800 italic flex items-start gap-1.5">
+                    <StickyNote size={12} className="shrink-0 mt-0.5" /> {job.notes}
+                  </div>
+                )}
+                <div className="px-4 py-3 space-y-1.5">
+                  {job.items.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between text-xs">
+                      <span className="text-gray-700 flex items-center gap-1.5 min-w-0">
+                        {item.item_type === "LABOR" && <Wrench size={10} className="text-gray-400 shrink-0" />}
+                        <span className="truncate">{item.part_name}</span>
+                        <span className="text-gray-400 shrink-0">x{item.quantity}</span>
+                      </span>
+                      <span className="font-semibold text-gray-800 shrink-0">{formatLKR(item.total_price)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoExpand }) => {
   const [expanded, setExpanded] = useState(!!autoExpand);
   const [showAddVehicle, setShowAddVehicle] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);
@@ -239,6 +337,7 @@ const CustomerCard = ({ customer, onEdit, onDelete, onRefresh, autoExpand }) => 
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <button onClick={() => onHistory(customer)} title="Purchase history" className="p-2 rounded-xl hover:bg-amber-50 text-gray-400 hover:text-amber-600 transition-colors"><History size={15} /></button>
             <button onClick={() => onEdit(customer)} title="Edit customer" className="p-2 rounded-xl hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"><Pencil size={15} /></button>
             <button onClick={() => onDelete(customer)} title="Delete customer" className="p-2 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"><Trash2 size={15} /></button>
             <button onClick={() => setExpanded(p => !p)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${expanded ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
@@ -331,6 +430,7 @@ const CustomerPage = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editCustomer, setEditCustomer] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [historyCustomer, setHistoryCustomer] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -366,6 +466,7 @@ const CustomerPage = () => {
       {alertInfo.message && <AlertComponent type={alertInfo.type} message={alertInfo.message} onClose={() => setAlertInfo({ type: "", message: "" })} />}
       {showAddModal && <CustomerModal onClose={() => setShowAddModal(false)} onSaved={load} />}
       {editCustomer && <CustomerModal customer={editCustomer} onClose={() => setEditCustomer(null)} onSaved={load} />}
+      {historyCustomer && <CustomerHistoryModal customer={historyCustomer} onClose={() => setHistoryCustomer(null)} />}
       <ConfirmModal isOpen={!!deleteTarget} title="Delete Customer?" message={`This will permanently delete ${deleteTarget?.name} and all their vehicles. This cannot be undone.`} onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} />
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -423,6 +524,7 @@ const CustomerPage = () => {
                 customer={c}
                 onEdit={setEditCustomer}
                 onDelete={setDeleteTarget}
+                onHistory={setHistoryCustomer}
                 onRefresh={load}
                 autoExpand={autoExpand}
               />

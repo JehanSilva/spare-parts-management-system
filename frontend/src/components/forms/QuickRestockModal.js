@@ -89,6 +89,7 @@ const HistoryTab = ({ partId }) => {
             <th className="px-3 py-2">Supplier</th>
             <th className="px-3 py-2 text-right">Qty</th>
             <th className="px-3 py-2 text-right">Buy Price</th>
+            <th className="px-3 py-2">Invoice #</th>
             <th className="px-3 py-2">Notes</th>
           </tr>
         </thead>
@@ -111,6 +112,7 @@ const HistoryTab = ({ partId }) => {
               <td className="px-3 py-2 text-right text-gray-700">
                 {formatLKR(r.buy_price)}
               </td>
+              <td className="px-3 py-2 text-gray-500 text-xs font-mono">{r.invoice_number || "—"}</td>
               <td className="px-3 py-2 text-gray-400 text-xs">{r.notes || "—"}</td>
             </tr>
           ))}
@@ -132,6 +134,7 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
   const [entries, setEntries] = useState(
     initialPart ? [{ ...emptyEntry(), buy_price: initialPart.buy_price || "" }] : [emptyEntry()]
   );
+  const [sellPrice, setSellPrice] = useState(initialPart ? initialPart.sell_price || "" : "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
@@ -169,6 +172,7 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
     setSearchTerm(part.name);
     setSearchResults([]);
     setEntries([{ ...emptyEntry(), buy_price: part.buy_price || "" }]);
+    setSellPrice(part.sell_price || "");
     setError("");
     setFieldErrors({});
   };
@@ -177,6 +181,7 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
     setSelectedPart(null);
     setSearchTerm("");
     setEntries([emptyEntry()]);
+    setSellPrice("");
     setError("");
     setFieldErrors({});
     setActiveTab("restock");
@@ -215,6 +220,13 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
         valid = false;
       }
     });
+
+    const sell = parseFloat(sellPrice);
+    if (isNaN(sell) || sell < 0) {
+      errors.sell_price = "Selling price must be ≥ 0";
+      valid = false;
+    }
+
     setFieldErrors(errors);
     return valid;
   };
@@ -241,7 +253,7 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
 
     setIsSubmitting(true);
     try {
-      const result = await restockPart(selectedPart.id, payload);
+      const result = await restockPart(selectedPart.id, payload, parseFloat(sellPrice));
       const supplierCount = new Set(payload.map((p) => p.supplier_id).filter(Boolean)).size;
       const msg =
         supplierCount > 1
@@ -519,6 +531,37 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
                   >
                     <Plus size={15} /> Add Another Supplier
                   </button>
+
+                  {/* ── Selling Price ── */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">
+                      Selling Price (LKR) <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="e.g. 1800.00"
+                      className={`w-full sm:w-1/3 p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm ${
+                        fieldErrors.sell_price ? "border-red-400 bg-red-50" : "border-gray-300"
+                      }`}
+                      value={sellPrice}
+                      onChange={(e) => {
+                        setSellPrice(e.target.value);
+                        setFieldErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.sell_price;
+                          return next;
+                        });
+                      }}
+                    />
+                    {fieldErrors.sell_price && (
+                      <p className="text-xs text-red-500 mt-0.5">{fieldErrors.sell_price}</p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">
+                      Defaults to the current selling price. Leave as-is to keep it unchanged.
+                    </p>
+                  </div>
 
                   {/* ── Live Preview Summary ── */}
                   {preview && preview.addedQty > 0 && (

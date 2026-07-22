@@ -179,6 +179,7 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {formatDate(r.restocked_at)}
+                    {r.invoice_number ? ` · Invoice #${r.invoice_number}` : ""}
                     {r.notes ? ` · ${r.notes}` : ""}
                   </p>
                   {/* Return info */}

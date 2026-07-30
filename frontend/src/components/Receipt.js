@@ -75,7 +75,7 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
         <h1 className="text-xl font-bold uppercase tracking-wider">
           NSS Auto Spares
         </h1>
-        <div className="mt-2 flex flex-col items-center gap-1 text-[10px]">
+        <div className="mt-2 flex flex-col items-center space-y-1 text-[10px]">
           <span>No. 272 Thudella, Ja-ela</span>
           <span>+94 71 618 8187</span>
         </div>
@@ -84,7 +84,7 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
       <div className="border-b-2 border-black border-dashed my-2"></div>
 
       {/* META */}
-      <div className="flex flex-col gap-1 mb-2">
+      <div className="flex flex-col space-y-1 mb-2">
         <div className="flex justify-between">
           <span>Date:</span>
           <span>{date}</span>
@@ -95,7 +95,7 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
         </div>
         <div className="flex justify-between">
           <span>Customer:</span>
-          <span className="text-right truncate">{customer}</span>
+          <span className="text-right">{customer}</span>
         </div>
         {vehicle && (
           <div className="flex justify-between">
@@ -131,7 +131,7 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
               <td className="py-2 text-center align-top">{item.qty}</td>
               <td className="py-2 text-right align-top">
                 {item.discountAmount > 0 ? (
-                  <div className="flex flex-col items-end leading-none gap-0.5">
+                  <div className="flex flex-col items-end leading-none space-y-0.5">
                     <span className="line-through text-[9px] text-gray-400">
                       {item.originalPrice.toFixed(2)}
                     </span>
@@ -154,7 +154,7 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
       <div className="border-b-2 border-black border-dashed mb-2"></div>
 
       {/* TOTALS */}
-      <div className="flex flex-col gap-1 text-right mb-4">
+      <div className="flex flex-col space-y-1 text-right mb-4">
         {totalSavings > 0 && (
           <div className="flex justify-between text-sm text-gray-500">
             <span>Subtotal:</span>

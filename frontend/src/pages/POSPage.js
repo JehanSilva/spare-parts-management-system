@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
-import html2canvas from "html2canvas";
-import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle, updateCustomer } from "../services/api";
+import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle } from "../services/api";
 import { useParts } from "../context/PartsContext";
-import Receipt from "../components/Receipt";
+import { useSettings } from "../context/SettingsContext";
+import BillingDocument from "../components/BillingDocument";
+import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
@@ -33,9 +34,6 @@ import {
   StickyNote,
   Pencil,
   MessageCircle,
-  Users,
-  Phone,
-  ChevronRight,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -566,144 +564,11 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
   );
 };
 
-// Lets the cashier pick how to send the receipt: straight to the registered
-// customer's number (only offered when one is on file), by picking a chat in
-// WhatsApp itself, or by typing a one-off number.
-const WhatsAppShareModal = ({ customerName, customerPhone, onCancel, onSelect }) => {
-  const options = [
-    customerPhone && {
-      key: "registered",
-      icon: UserCheck,
-      title: "Send to registered number",
-      subtitle: `${customerName || "Customer"} — ${customerPhone}`,
-    },
-    {
-      key: "contacts",
-      icon: Users,
-      title: "Choose from WhatsApp contacts",
-      subtitle: "Opens WhatsApp so you can pick the chat",
-    },
-    {
-      key: "manual",
-      icon: Phone,
-      title: "Enter a number",
-      subtitle: "Type the number to send the receipt to",
-    },
-  ].filter(Boolean);
-
-  return (
-    <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
-      onClick={onCancel}
-    >
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="bg-green-600 px-5 py-4 text-white flex items-center justify-between">
-          <h3 className="font-bold text-lg flex items-center gap-2">
-            <MessageCircle size={18} /> Share to WhatsApp
-          </h3>
-          <button onClick={onCancel} className="hover:bg-green-700 p-1 rounded-full transition-colors">
-            <XCircle size={20} />
-          </button>
-        </div>
-        <div className="p-4 space-y-2">
-          {options.map(({ key, icon: Icon, title, subtitle }) => (
-            <button
-              key={key}
-              onClick={() => onSelect(key)}
-              className="w-full flex items-center gap-3 p-3 text-left border border-gray-200 rounded-xl hover:border-green-500 hover:bg-green-50 transition-colors"
-            >
-              <span className="p-2 bg-green-100 text-green-700 rounded-lg shrink-0">
-                <Icon size={18} />
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-bold text-gray-800">{title}</span>
-                <span className="block text-xs text-gray-500 truncate">{subtitle}</span>
-              </span>
-              <ChevronRight size={18} className="text-gray-400 shrink-0" />
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Prompts for a one-off phone number to send the receipt to — either because
-// the customer has none on file yet, or because the cashier chose to type one.
-const WhatsAppPhoneModal = ({ onCancel, onBack, onSubmit, isSaving }) => {
-  const [phone, setPhone] = useState("");
-  const [error, setError] = useState("");
-
-  const handleSubmit = () => {
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length < 9) {
-      setError("Enter a valid phone number.");
-      return;
-    }
-    onSubmit(phone.trim());
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
-      onClick={onCancel}
-    >
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="bg-green-600 px-5 py-4 text-white flex items-center justify-between">
-          <h3 className="font-bold text-lg flex items-center gap-2">
-            <MessageCircle size={18} /> Enter WhatsApp Number
-          </h3>
-          <button onClick={onCancel} className="hover:bg-green-700 p-1 rounded-full transition-colors">
-            <XCircle size={20} />
-          </button>
-        </div>
-        <div className="p-5 space-y-3">
-          <p className="text-sm text-gray-600">
-            Enter the WhatsApp number to send this receipt to.
-          </p>
-          <input
-            autoFocus
-            type="tel"
-            value={phone}
-            onChange={(e) => {
-              setPhone(e.target.value);
-              setError("");
-            }}
-            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-            placeholder="e.g. 0771234567"
-            className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-green-500 focus:outline-none"
-          />
-          {error && <p className="text-xs text-red-500">{error}</p>}
-        </div>
-        <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-3">
-          <button
-            onClick={onBack || onCancel}
-            className="px-4 py-2 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-          >
-            {onBack ? "Back" : "Cancel"}
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={isSaving}
-            className="px-5 py-2 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
-          >
-            {isSaving ? "Sharing..." : "Share"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const POSPage = () => {
   // ── Parts cache ──────────────────────────────────────────────────────────
   const { allParts, partsLoading, invalidateParts } = useParts();
+  // Billing method (Home → Options): "Receipt" or "Invoice".
+  const { documentLabel } = useSettings();
   const [selectedPart, setSelectedPart] = useState(null);
 
   const [carts, setCarts] = useState([]);
@@ -962,142 +827,12 @@ const POSPage = () => {
   // offscreen iframe's content and falls back to printing the whole page.
   const handlePrint = () => window.print();
 
-  // ── Share receipt to WhatsApp ──────────────────────────────────────────
-  const receiptRef = useRef(null);
-  const [whatsappShareModalOpen, setWhatsappShareModalOpen] = useState(false);
-  const [whatsappPhoneModalOpen, setWhatsappPhoneModalOpen] = useState(false);
+  // ── Share receipt/invoice to WhatsApp ──────────────────────────────────
+  // The flow itself (option chooser, phone entry, rasterising) lives in the
+  // shared WhatsAppShareFlow, which Sales History reuses.
+  const [saleToShare, setSaleToShare] = useState(null);
   const [whatsappSharing, setWhatsappSharing] = useState(false);
 
-  // No per-item lines — the attached receipt image already itemises the sale.
-  const buildWhatsAppCaption = (sale) => {
-    return (
-      `Hi ${sale.customer_name}, thank you for your purchase at NSS Auto Spares!\n\n` +
-      `Invoice #${sale.id.substring(0, 8).toUpperCase()}\n` +
-      (sale.vehicle_number ? `Vehicle: ${sale.vehicle_number}\n` : "") +
-      `\nTotal: LKR ${parseFloat(sale.total_amount).toLocaleString()}\n\n` +
-      `Thank you for your business!`
-    );
-  };
-
-  // Sri Lankan numbers are stored locally (e.g. "0765722909"); wa.me needs
-  // the full international number with no leading zero or plus sign.
-  const formatPhoneForWhatsApp = (phone) => {
-    const digits = phone.replace(/\D/g, "");
-    if (digits.startsWith("0")) return `94${digits.slice(1)}`;
-    return digits;
-  };
-
-  // Only phones/tablets reliably offer WhatsApp (or another chat app) as a
-  // real target in the native share sheet for a file. Desktop browsers that
-  // report canShare()===true (e.g. Chrome on macOS) still only expose a
-  // generic "Copy" action there, which round-trips through the clipboard and
-  // produces duplicated/garbled pastes in WhatsApp Desktop/Web — so desktop
-  // is always treated as "can't share a file" and gets the download+link
-  // fallback instead, regardless of what canShare() reports.
-  const isMobileDevice = () => {
-    if (navigator.userAgentData) return !!navigator.userAgentData.mobile;
-    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  };
-
-  // html2canvas can fire before a freshly-mounted <img> (the logo) has
-  // finished loading, silently capturing a blank spot where it should be.
-  const waitForImagesToLoad = async (container) => {
-    const imgs = Array.from(container.querySelectorAll("img"));
-    await Promise.all(
-      imgs.map((img) =>
-        img.complete
-          ? img.decode?.().catch(() => {})
-          : new Promise((resolve) => {
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-            })
-      )
-    );
-  };
-
-  const downloadBlob = (blob, fileName) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  // `phone` may be null — that's the "pick a contact in WhatsApp yourself"
-  // path, where wa.me is opened without a recipient so WhatsApp shows its own
-  // chat chooser.
-  const shareReceiptToWhatsApp = async (phone) => {
-    setWhatsappSharing(true);
-    try {
-      await waitForImagesToLoad(receiptRef.current);
-      const canvas = await html2canvas(receiptRef.current, { scale: 2, backgroundColor: "#ffffff", useCORS: true });
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-      const caption = buildWhatsAppCaption(saleSuccess);
-      const fileName = `receipt-${saleSuccess.id.substring(0, 8)}.png`;
-
-      if (blob && isMobileDevice()) {
-        const file = new File([blob], fileName, { type: "image/png" });
-        if (navigator.canShare?.({ files: [file] })) {
-          await navigator.share({ files: [file], text: caption, title: "Receipt" });
-          return;
-        }
-      }
-
-      // Desktop (or a mobile browser without file-share support): wa.me can
-      // only pre-fill text, never attach a file, so download the receipt
-      // image separately and let the cashier attach it themselves in the
-      // WhatsApp chat that just opened.
-      if (blob) downloadBlob(blob, fileName);
-      const recipient = phone ? formatPhoneForWhatsApp(phone) : "";
-      window.open(`https://wa.me/${recipient}?text=${encodeURIComponent(caption)}`, "_blank");
-      if (blob) {
-        setAlertInfo({
-          type: "info",
-          message: "Receipt image downloaded — attach it in the WhatsApp chat that just opened.",
-        });
-      }
-    } catch (err) {
-      if (err?.name !== "AbortError") {
-        setAlertInfo({ type: "error", message: "Failed to share receipt." });
-      }
-    } finally {
-      setWhatsappSharing(false);
-    }
-  };
-
-  const handleShareWhatsApp = () => {
-    if (!saleSuccess) return;
-    setWhatsappShareModalOpen(true);
-  };
-
-  const handleWhatsappOptionSelect = (option) => {
-    setWhatsappShareModalOpen(false);
-    if (option === "registered") {
-      shareReceiptToWhatsApp(saleSuccess.customer_phone);
-    } else if (option === "contacts") {
-      shareReceiptToWhatsApp(null);
-    } else {
-      setWhatsappPhoneModalOpen(true);
-    }
-  };
-
-  const handleWhatsappPhoneSubmit = async (phone) => {
-    setWhatsappPhoneModalOpen(false);
-    // Only backfill the customer record when it has no number yet — a typed-in
-    // one-off number must not overwrite an already-registered one.
-    if (saleSuccess?.customer && !saleSuccess.customer_phone) {
-      setSaleSuccess((prev) => (prev ? { ...prev, customer_phone: phone } : prev));
-      try {
-        await updateCustomer(saleSuccess.customer, { phone });
-      } catch {
-        // Non-fatal — still share the receipt even if saving the phone failed.
-      }
-    }
-    await shareReceiptToWhatsApp(phone);
-  };
 
   // ── Client-side search — instant, zero network calls ──────────────────
   const filteredParts = useMemo(() => {
@@ -1751,7 +1486,7 @@ const POSPage = () => {
 
       // Capture the customer's phone now — linkedCustomer is about to be reset
       // to the next active cart's customer as soon as activeCartId changes below.
-      const enrichedSale = { ...result, items: enrichedItems, customer_phone: linkedCustomer?.phone || null };
+      const enrichedSale = { ...result, items: enrichedItems, customer_phone: linkedCustomer?.phone || result.customer_phone || null };
       setSaleSuccess(enrichedSale);
 
       setCarts((prev) => {
@@ -1878,10 +1613,10 @@ const POSPage = () => {
               onClick={handlePrint}
               className="flex-1 bg-slate-900 text-white px-5 py-3.5 rounded-xl shadow-md shadow-slate-100 hover:shadow-lg hover:bg-slate-800 hover:translate-y-[-1px] active:translate-y-0 flex items-center justify-center gap-2 font-bold text-sm transition-all duration-200 whitespace-nowrap"
             >
-              <Printer size={18} /> Invoice
+              <Printer size={18} /> {documentLabel}
             </button>
             <button
-              onClick={handleShareWhatsApp}
+              onClick={() => setSaleToShare(saleSuccess)}
               disabled={whatsappSharing}
               className="flex-1 bg-emerald-600 text-white px-5 py-3.5 rounded-xl shadow-md shadow-emerald-100 hover:shadow-lg hover:bg-emerald-500 hover:translate-y-[-1px] active:translate-y-0 flex items-center justify-center gap-2 font-bold text-sm transition-all duration-200 disabled:opacity-60 whitespace-nowrap"
             >
@@ -1898,31 +1633,17 @@ const POSPage = () => {
       </div>
     </div>
 
-    {whatsappShareModalOpen && (
-      <WhatsAppShareModal
-        customerName={saleSuccess.customer_name}
-        customerPhone={saleSuccess.customer_phone}
-        onCancel={() => setWhatsappShareModalOpen(false)}
-        onSelect={handleWhatsappOptionSelect}
-      />
-    )}
+    <WhatsAppShareFlow
+      sale={saleToShare}
+      onClose={() => setSaleToShare(null)}
+      onAlert={setAlertInfo}
+      onSharingChange={setWhatsappSharing}
+    />
 
-    {whatsappPhoneModalOpen && (
-      <WhatsAppPhoneModal
-        onCancel={() => setWhatsappPhoneModalOpen(false)}
-        onBack={() => {
-          setWhatsappPhoneModalOpen(false);
-          setWhatsappShareModalOpen(true);
-        }}
-        onSubmit={handleWhatsappPhoneSubmit}
-        isSaving={whatsappSharing}
-      />
-    )}
-
-    {/* Receipt — kept off-screen (not display:none) so html2canvas can still
-        rasterize it for WhatsApp sharing; only positioned normally for print. */}
+    {/* Receipt/Invoice (per Options → Billing Method) — rendered off-screen
+        and only positioned normally for print. */}
     <div className="fixed top-0 -left-[9999px] print:static print:left-auto">
-      <Receipt ref={receiptRef} sale={saleSuccess} />
+      <BillingDocument sale={saleSuccess} />
     </div>
     </>
   ) : (

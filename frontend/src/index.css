@@ -53,6 +53,16 @@
     display: none !important;
   }
 
+  /* A4 invoice (Home → Options → Billing Method): the on-screen sheet carries
+     its own 210x297mm page geometry, which would double up with @page's
+     margins and spill onto a second sheet. Let the printed page supply them. */
+  .billing-invoice {
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
   /* Daily report container — fill page width, no extra spacing */
   .print-report-container {
     max-width: 100% !important;

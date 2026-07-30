@@ -809,8 +809,9 @@ def create_sale(request):
 
 @api_view(['GET'])
 def get_all_sales(request):
-    # Order by creation date descending (newest first)
-    sales = Sale.objects.all().order_by('-created_at')
+    # Order by creation date descending (newest first). select_related on the
+    # customer keeps SaleSerializer.customer_phone from firing a query per sale.
+    sales = Sale.objects.select_related('customer').all().order_by('-created_at')
     serializer = SaleSerializer(sales, many=True)
     return Response(serializer.data)
 

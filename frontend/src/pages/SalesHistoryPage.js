@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchSales, fetchParts, updateSale, cancelSale, reverseSale, markSaleAsPaid } from "../services/api";
-import Receipt from "../components/Receipt";
+import BillingDocument from "../components/BillingDocument";
+import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
+import { useSettings } from "../context/SettingsContext";
 import AlertComponent from "../components/AlertComponent";
 import {
   Search,
@@ -22,6 +24,7 @@ import {
   Wallet,
   CheckCircle,
   RotateCcw,
+  MessageCircle,
 } from "lucide-react";
 
 // --- Edit Sale Modal Component ---
@@ -361,6 +364,8 @@ const MarkPaidModal = ({ isOpen, sale, onClose, onConfirm, loading }) => {
 
 const SalesHistoryPage = () => {
   const navigate = useNavigate();
+  // Billing method (Home → Options): "Receipt" or "Invoice".
+  const { documentLabel } = useSettings();
   const [sales, setSales] = useState([]);
   const [parts, setParts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -386,6 +391,9 @@ const SalesHistoryPage = () => {
   // iOS Safari doesn't reliably scope window.print() to an offscreen iframe's
   // content and falls back to printing the whole page instead of the receipt.
   const [selectedSaleForPrint, setSelectedSaleForPrint] = useState(null);
+
+  // --- WhatsApp Sharing State (flow lives in WhatsAppShareFlow) ---
+  const [saleToShare, setSaleToShare] = useState(null);
 
   useEffect(() => {
     if (!selectedSaleForPrint) return;
@@ -419,6 +427,12 @@ const SalesHistoryPage = () => {
     e.stopPropagation();
     const enriched = getEnrichedSale(sale);
     setSelectedSaleForPrint(enriched);
+  };
+
+  const shareToWhatsApp = (sale, e) => {
+    e.stopPropagation();
+    // Same part-number enrichment the printed document gets.
+    setSaleToShare(getEnrichedSale(sale));
   };
 
   // --- Load Data ---
@@ -797,9 +811,9 @@ const SalesHistoryPage = () => {
                           ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                           : 'bg-gray-800 text-white hover:bg-gray-900'
                         }`}
-                        title={sale.status === 'CANCELLED' ? "Cannot print receipt for cancelled sales" : "Print Receipt"}
+                        title={sale.status === 'CANCELLED' ? `Cannot print ${documentLabel.toLowerCase()} for cancelled sales` : `Print ${documentLabel}`}
                       >
-                        <Printer size={16} /> Receipt
+                        <Printer size={16} /> {documentLabel}
                       </button>
                       <button
                         onClick={(e) => handleEditClick(sale, e)}
@@ -808,6 +822,16 @@ const SalesHistoryPage = () => {
                         <Edit2 size={16} /> Edit
                       </button>
                     </div>
+
+                    {sale.status !== 'CANCELLED' && (
+                      <button
+                        onClick={(e) => shareToWhatsApp(sale, e)}
+                        className="w-full bg-emerald-600 text-white py-2.5 rounded-xl flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all active:scale-95 mb-3 font-bold shadow-sm"
+                        title={`Share ${documentLabel.toLowerCase()} to WhatsApp`}
+                      >
+                        <MessageCircle size={16} /> Share to WhatsApp
+                      </button>
+                    )}
 
                     {sale.status !== 'CANCELLED' && (sale.payment_status === 'CREDIT' || sale.payment_status === 'PARTIAL') && (
                       <button
@@ -1011,60 +1035,20 @@ const SalesHistoryPage = () => {
                         </div>
                       </td>
                       <td className="p-4 text-center text-gray-400">
-                        <div className="flex justify-center items-center gap-2">
+                        <div className="flex justify-center items-center">
+                          {/* Expansion Toggle Chevron */}
                           <button
-                            onClick={(e) => printReceipt(sale, e)}
-                            disabled={sale.status === 'CANCELLED'}
-                            className={`p-2 rounded-lg transition ${
-                              sale.status === 'CANCELLED'
-                              ? 'text-gray-200 cursor-not-allowed'
-                              : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
-                            }`}
-                            title={sale.status === 'CANCELLED' ? "Cannot print receipt for cancelled sales" : "Print Receipt"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleExpand(sale.id);
+                            }}
+                            className="p-2 hover:bg-gray-100 text-gray-500 rounded-lg transition"
+                            title={expandedSaleId === sale.id ? "Hide Details" : "Show Details"}
                           >
-                            <Printer size={16} />
-                          </button>
-                          <button
-                            onClick={(e) => handleEditClick(sale, e)}
-                            className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition"
-                            title="Edit Sale"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                          {sale.status !== 'CANCELLED' && (sale.payment_status === 'CREDIT' || sale.payment_status === 'PARTIAL') && (
-                            <button
-                              onClick={(e) => handleMarkPaidClick(sale, e)}
-                              className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg transition"
-                              title="Mark as Received"
-                            >
-                              <Wallet size={16} />
-                            </button>
-                          )}
-                          {sale.status !== 'CANCELLED' ? (
-                            <>
-                              <button
-                                onClick={(e) => handleReverseClick(sale, e)}
-                                className="p-2 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition"
-                                title="Reverse Sale (edit & redo in POS)"
-                              >
-                                <RotateCcw size={16} />
-                              </button>
-                              <button
-                                onClick={(e) => handleCancelClick(sale, e)}
-                                className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition"
-                                title="Cancel Sale"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </>
-                          ) : (
-                            <div className="p-2 text-gray-300 cursor-not-allowed">
-                               <Trash2 size={16} />
+                            <div className={`transition-transform duration-300 ${expandedSaleId === sale.id ? 'rotate-180' : ''}`}>
+                              <ChevronDown size={20} />
                             </div>
-                          )}
-                          <div className={`transition-transform duration-300 ${expandedSaleId === sale.id ? 'rotate-180' : ''}`}>
-                            <ChevronDown size={18} />
-                          </div>
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -1077,6 +1061,75 @@ const SalesHistoryPage = () => {
                           className="p-4 border-t border-gray-200 shadow-inner"
                         >
                           <div className="ml-4 pl-4 border-l-2 border-red-300">
+                            {/* Desktop Row Actions */}
+                            <div className="flex flex-wrap gap-3 mb-6 bg-white border border-gray-200 rounded-2xl p-4 shadow-sm max-w-4xl">
+                              <button
+                                onClick={(e) => printReceipt(sale, e)}
+                                disabled={sale.status === 'CANCELLED'}
+                                className={`px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-bold transition shadow-sm hover:shadow active:scale-95 ${
+                                  sale.status === 'CANCELLED'
+                                  ? 'bg-gray-100 text-gray-400 cursor-not-allowed border border-transparent'
+                                  : 'bg-slate-900 hover:bg-slate-800 text-white border border-transparent'
+                                }`}
+                                title={sale.status === 'CANCELLED' ? `Cannot print ${documentLabel.toLowerCase()} for cancelled sales` : `Print ${documentLabel}`}
+                              >
+                                <Printer size={15} />
+                                <span>Print {documentLabel}</span>
+                              </button>
+
+                              {sale.status !== 'CANCELLED' && (
+                                <button
+                                  onClick={(e) => shareToWhatsApp(sale, e)}
+                                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl flex items-center gap-2 text-xs font-bold transition shadow-sm hover:shadow active:scale-95"
+                                >
+                                  <MessageCircle size={15} />
+                                  <span>Share on WhatsApp</span>
+                                </button>
+                              )}
+
+                              <button
+                                onClick={(e) => handleEditClick(sale, e)}
+                                className="px-4 py-2 bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 rounded-xl flex items-center gap-2 text-xs font-bold transition shadow-sm hover:shadow active:scale-95"
+                              >
+                                <Edit2 size={15} />
+                                <span>Edit Sale</span>
+                              </button>
+
+                              {sale.status !== 'CANCELLED' && (sale.payment_status === 'CREDIT' || sale.payment_status === 'PARTIAL') && (
+                                <button
+                                  onClick={(e) => handleMarkPaidClick(sale, e)}
+                                  className="px-4 py-2 bg-white border border-green-200 text-green-700 hover:bg-green-50 rounded-xl flex items-center gap-2 text-xs font-bold transition shadow-sm hover:shadow active:scale-95"
+                                >
+                                  <Wallet size={15} />
+                                  <span>Mark as Received</span>
+                                </button>
+                              )}
+
+                              {sale.status !== 'CANCELLED' && (
+                                <button
+                                  onClick={(e) => handleReverseClick(sale, e)}
+                                  className="px-4 py-2 bg-white border border-amber-200 text-amber-600 hover:bg-amber-50 rounded-xl flex items-center gap-2 text-xs font-bold transition shadow-sm hover:shadow active:scale-95"
+                                >
+                                  <RotateCcw size={15} />
+                                  <span>Reverse & Redo</span>
+                                </button>
+                              )}
+
+                              {sale.status !== 'CANCELLED' ? (
+                                <button
+                                  onClick={(e) => handleCancelClick(sale, e)}
+                                  className="px-4 py-2 bg-white border border-red-200 text-red-600 hover:bg-red-50 rounded-xl flex items-center gap-2 text-xs font-bold transition shadow-sm hover:shadow active:scale-95 ml-auto"
+                                >
+                                  <Trash2 size={15} />
+                                  <span>Cancel Sale</span>
+                                </button>
+                              ) : (
+                                <div className="px-4 py-2 bg-gray-50 border border-gray-100 text-gray-400 rounded-xl flex items-center gap-2 text-xs font-bold cursor-not-allowed ml-auto">
+                                  <Trash2 size={15} className="text-gray-300" />
+                                  <span>Cancelled</span>
+                                </div>
+                              )}
+                            </div>
                              {sale.status === 'CANCELLED' && (
                                <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-4 mb-4 text-sm max-w-xl">
                                  <span className="font-bold block uppercase tracking-wider text-xs text-red-700 mb-1">Reason for Cancellation</span>
@@ -1218,9 +1271,16 @@ const SalesHistoryPage = () => {
       )}
     </div>
 
-    {/* Receipt — invisible on screen, only rendered for window.print() */}
+    <WhatsAppShareFlow
+      sale={saleToShare}
+      onClose={() => setSaleToShare(null)}
+      onAlert={setAlertInfo}
+    />
+
+    {/* Receipt/Invoice (per Options → Billing Method) — invisible on screen,
+        only rendered for window.print() */}
     <div className="hidden print:block">
-      {selectedSaleForPrint && <Receipt sale={selectedSaleForPrint} />}
+      {selectedSaleForPrint && <BillingDocument sale={selectedSaleForPrint} />}
     </div>
     </>
   );

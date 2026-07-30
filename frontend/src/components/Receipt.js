@@ -67,10 +67,14 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
     >
       {/* HEADER */}
       <div className="flex flex-col items-center text-center mb-4">
+        {/* Width-only sizing (never a fixed square): html2canvas ignores
+            object-fit when rasterizing the receipt for WhatsApp/download, so a
+            box that doesn't match the logo's ~2.4:1 aspect ratio comes out
+            stretched even though the browser letterboxes it correctly. */}
         <img
           src={logo}
           alt="Logo"
-          className="w-16 h-16 object-contain mb-2 grayscale"
+          className="w-28 h-auto mb-2 grayscale"
         />
         <h1 className="text-xl font-bold uppercase tracking-wider">
           NSS Auto Spares

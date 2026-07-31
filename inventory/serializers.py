@@ -122,13 +122,16 @@ class SaleItemSerializer(serializers.ModelSerializer):
 class SaleSerializer(serializers.ModelSerializer):
     # We allow writing items here now so we can send the whole cart in one JSON
     items = SaleItemSerializer(many=True)
+    # Read-only convenience field so the frontend can offer "share receipt to
+    # the registered number" without a second lookup per sale.
+    customer_phone = serializers.CharField(source='customer.phone', read_only=True, default=None)
 
     class Meta:
         model = Sale
         fields = [
-            'id', 'customer', 'customer_name', 'vehicle_number', 'created_at', 'total_amount', 'items',
-            'status', 'cancel_reason', 'payment_status', 'amount_paid', 'credit_note', 'credit_settled_at',
-            'mileage', 'notes',
+            'id', 'customer', 'customer_name', 'customer_phone', 'vehicle_number', 'created_at',
+            'total_amount', 'items', 'status', 'cancel_reason', 'payment_status', 'amount_paid',
+            'credit_note', 'credit_settled_at', 'mileage', 'notes',
         ]
         read_only_fields = ['credit_settled_at']
 

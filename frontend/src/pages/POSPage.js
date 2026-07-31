@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
 import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle } from "../services/api";
 import { useParts } from "../context/PartsContext";
-import Receipt from "../components/Receipt";
+import { useSettings } from "../context/SettingsContext";
+import BillingDocument from "../components/BillingDocument";
+import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
@@ -31,6 +33,7 @@ import {
   Gauge,
   StickyNote,
   Pencil,
+  MessageCircle,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -564,6 +567,8 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
 const POSPage = () => {
   // ── Parts cache ──────────────────────────────────────────────────────────
   const { allParts, partsLoading, invalidateParts } = useParts();
+  // Billing method (Home → Options): "Receipt" or "Invoice".
+  const { documentLabel } = useSettings();
   const [selectedPart, setSelectedPart] = useState(null);
 
   const [carts, setCarts] = useState([]);
@@ -821,6 +826,13 @@ const POSPage = () => {
   // approach — iOS Safari doesn't reliably scope window.print() to an
   // offscreen iframe's content and falls back to printing the whole page.
   const handlePrint = () => window.print();
+
+  // ── Share receipt/invoice to WhatsApp ──────────────────────────────────
+  // The flow itself (option chooser, phone entry, rasterising) lives in the
+  // shared WhatsAppShareFlow, which Sales History reuses.
+  const [saleToShare, setSaleToShare] = useState(null);
+  const [whatsappSharing, setWhatsappSharing] = useState(false);
+
 
   // ── Client-side search — instant, zero network calls ──────────────────
   const filteredParts = useMemo(() => {
@@ -1472,7 +1484,9 @@ const POSPage = () => {
         };
       });
 
-      const enrichedSale = { ...result, items: enrichedItems };
+      // Capture the customer's phone now — linkedCustomer is about to be reset
+      // to the next active cart's customer as soon as activeCartId changes below.
+      const enrichedSale = { ...result, items: enrichedItems, customer_phone: linkedCustomer?.phone || result.customer_phone || null };
       setSaleSuccess(enrichedSale);
 
       setCarts((prev) => {
@@ -1480,7 +1494,7 @@ const POSPage = () => {
         if (remaining.length === 0) {
           const newId = "cart_" + Date.now();
           setActiveCartId(newId);
-          return [{ id: newId, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }];
+          return [{ id: newId, customerName: "", vehicleNumber: "", customerId: null, customerDetails: null, items: [], mileage: "", notes: "" }];
         } else {
           setActiveCartId(remaining[0].id);
           return remaining;
@@ -1593,26 +1607,43 @@ const POSPage = () => {
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-4">
-          <button
-            onClick={handlePrint}
-            className="flex-1 bg-gray-900 text-white px-6 py-4 rounded-xl shadow-lg shadow-gray-200 hover:shadow-xl hover:translate-y-[-2px] flex items-center justify-center gap-2 font-bold transition-all duration-300"
-          >
-            <Printer size={20} /> Invoice
-          </button>
+        <div className="space-y-3">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={handlePrint}
+              className="flex-1 bg-slate-900 text-white px-5 py-3.5 rounded-xl shadow-md shadow-slate-100 hover:shadow-lg hover:bg-slate-800 hover:translate-y-[-1px] active:translate-y-0 flex items-center justify-center gap-2 font-bold text-sm transition-all duration-200 whitespace-nowrap"
+            >
+              <Printer size={18} /> {documentLabel}
+            </button>
+            <button
+              onClick={() => setSaleToShare(saleSuccess)}
+              disabled={whatsappSharing}
+              className="flex-1 bg-emerald-600 text-white px-5 py-3.5 rounded-xl shadow-md shadow-emerald-100 hover:shadow-lg hover:bg-emerald-500 hover:translate-y-[-1px] active:translate-y-0 flex items-center justify-center gap-2 font-bold text-sm transition-all duration-200 disabled:opacity-60 whitespace-nowrap"
+            >
+              <MessageCircle size={18} /> {whatsappSharing ? "Preparing..." : "Share to WhatsApp"}
+            </button>
+          </div>
           <button
             onClick={() => setSaleSuccess(null)}
-            className="flex-1 bg-white text-red-600 border-2 border-red-50 px-6 py-4 rounded-xl hover:bg-red-50 hover:border-red-100 font-bold flex items-center justify-center gap-2 transition-all duration-300"
+            className="w-full bg-red-600 text-white px-5 py-3.5 rounded-xl shadow-md shadow-red-100 hover:shadow-lg hover:bg-red-700 hover:translate-y-[-1px] active:translate-y-0 font-bold flex items-center justify-center gap-2 transition-all duration-200"
           >
-            <Plus size={20} /> New Sale
+            <Plus size={18} /> New Sale
           </button>
         </div>
       </div>
     </div>
 
-    {/* Receipt — invisible on screen, only rendered for window.print() */}
-    <div className="hidden print:block">
-      <Receipt sale={saleSuccess} />
+    <WhatsAppShareFlow
+      sale={saleToShare}
+      onClose={() => setSaleToShare(null)}
+      onAlert={setAlertInfo}
+      onSharingChange={setWhatsappSharing}
+    />
+
+    {/* Receipt/Invoice (per Options → Billing Method) — rendered off-screen
+        and only positioned normally for print. */}
+    <div className="fixed top-0 -left-[9999px] print:static print:left-auto">
+      <BillingDocument sale={saleSuccess} />
     </div>
     </>
   ) : (

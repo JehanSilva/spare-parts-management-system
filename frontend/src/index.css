@@ -53,6 +53,43 @@
     display: none !important;
   }
 
+  /* A4 invoice (Home → Options → Billing Method): the on-screen sheet carries
+     its own 210x297mm page geometry, which would double up with @page's
+     margins and spill onto a second sheet. Let the printed page supply them. */
+  .billing-invoice {
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Long sales run past one sheet — keep line items whole and repeat the
+     column headers on each page. */
+  .billing-invoice tr {
+    page-break-inside: avoid !important;
+  }
+
+  .billing-invoice thead {
+    display: table-header-group !important;
+  }
+
+  /* Repair estimate — same page geometry handling as the invoice: the sheet
+     carries its own A4 size on screen, the printed page supplies the margins. */
+  .estimate-doc {
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .estimate-doc tr {
+    page-break-inside: avoid !important;
+  }
+
+  .estimate-doc thead {
+    display: table-header-group !important;
+  }
+
   /* Daily report container — fill page width, no extra spacing */
   .print-report-container {
     max-width: 100% !important;

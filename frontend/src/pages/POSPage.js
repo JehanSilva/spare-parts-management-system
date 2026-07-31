@@ -1532,6 +1532,100 @@ const POSPage = () => {
     ? parseFloat(saleSuccess.total_amount) - parseFloat(saleSuccess.amount_paid || 0)
     : 0;
 
+  // Repair tabs live inside the products column so the cart panel can run
+  // the full height of the screen; on mobile (where the two panels are
+  // swapped views rather than side by side) it stays above both.
+  const activeRepairsBar = (
+        <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 z-30 shadow-sm shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="bg-red-50 text-red-600 p-1.5 rounded-lg">
+              <Car size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-extrabold text-gray-800 text-sm tracking-tight leading-none">Active Repairs</h1>
+                <button
+                  onClick={refreshCarts}
+                  disabled={cartsLoading}
+                  className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-100 transition-colors"
+                  title="Sync Repairs with Database"
+                >
+                  <RefreshCw size={12} className={cartsLoading ? "animate-spin" : ""} />
+                </button>
+              </div>
+              <span className="text-[10px] text-gray-400 font-semibold">{carts.length} ongoing repair{carts.length > 1 ? 's' : ''}</span>
+            </div>
+          </div>
+
+          {/* Scrollable Cart Tabs */}
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0">
+            {carts.map((c, index) => {
+              const isActive = c.id === activeCartId;
+              const displayName = c.vehicleNumber
+                ? c.vehicleNumber
+                : (c.customerName ? c.customerName : `Repair ${index + 1}`);
+              const cartVehicleInfo = c.vehicleNumber
+                ? vehicleInfoByNumber[c.vehicleNumber.trim().toUpperCase()]
+                : null;
+              const subText = c.vehicleNumber && cartVehicleInfo
+                ? [cartVehicleInfo.make, cartVehicleInfo.model].filter(Boolean).join(" ")
+                : "";
+
+              return (
+                <div
+                  key={c.id}
+                  onClick={() => setActiveCartId(c.id)}
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 transition-all duration-200 shrink-0 cursor-pointer select-none relative group ${isActive
+                      ? "bg-red-50 border-red-500 text-red-700 shadow-sm"
+                      : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300"
+                    }`}
+                >
+                  <Car size={13} className={isActive ? "text-red-500" : "text-gray-400"} />
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold whitespace-nowrap leading-none">
+                      {displayName}
+                    </span>
+                    {subText && (
+                      <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap leading-none mt-1">
+                        {subText}
+                      </span>
+                    )}
+                  </div>
+                  {c.items.length > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold leading-none ${isActive ? "bg-red-200 text-red-800" : "bg-gray-200 text-gray-700"
+                      }`}>
+                      {c.items.length}
+                    </span>
+                  )}
+                  {/* Delete Cart button - show only if we have more than 1 cart */}
+                  {carts.length > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteCart(c.id);
+                      }}
+                      className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-200 transition-colors ml-1 shrink-0"
+                      title="Delete Cart"
+                    >
+                      <XCircle size={14} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add New Cart Button */}
+            <button
+              onClick={handleAddNewCart}
+              className="flex items-center justify-center p-2 rounded-xl border border-dashed border-gray-300 hover:border-gray-500 text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 active:scale-95 transition-all shrink-0 w-8 h-8"
+              title="Add New Cart/Repair"
+            >
+              <Plus size={16} />
+            </button>
+          </div>
+        </div>
+  );
+
   return saleSuccess ? (
     <>
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50/50 p-4 animate-fade-in backdrop-blur-sm print:hidden">
@@ -1758,95 +1852,9 @@ const POSPage = () => {
         editItem={editingLaborItem}
       />
 
-      {/* TOP BAR: ACTIVE CARTS MANAGEMENT */}
-      <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 z-30 shadow-sm shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="bg-red-50 text-red-600 p-1.5 rounded-lg">
-            <Car size={20} />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h1 className="font-extrabold text-gray-800 text-sm tracking-tight leading-none">Active Repairs</h1>
-              <button
-                onClick={refreshCarts}
-                disabled={cartsLoading}
-                className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-100 transition-colors"
-                title="Sync Repairs with Database"
-              >
-                <RefreshCw size={12} className={cartsLoading ? "animate-spin" : ""} />
-              </button>
-            </div>
-            <span className="text-[10px] text-gray-400 font-semibold">{carts.length} ongoing repair{carts.length > 1 ? 's' : ''}</span>
-          </div>
-        </div>
-
-        {/* Scrollable Cart Tabs */}
-        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0">
-          {carts.map((c, index) => {
-            const isActive = c.id === activeCartId;
-            const displayName = c.vehicleNumber
-              ? c.vehicleNumber
-              : (c.customerName ? c.customerName : `Repair ${index + 1}`);
-            const cartVehicleInfo = c.vehicleNumber
-              ? vehicleInfoByNumber[c.vehicleNumber.trim().toUpperCase()]
-              : null;
-            const subText = c.vehicleNumber && cartVehicleInfo
-              ? [cartVehicleInfo.make, cartVehicleInfo.model].filter(Boolean).join(" ")
-              : "";
-
-            return (
-              <div
-                key={c.id}
-                onClick={() => setActiveCartId(c.id)}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 transition-all duration-200 shrink-0 cursor-pointer select-none relative group ${isActive
-                    ? "bg-red-50 border-red-500 text-red-700 shadow-sm"
-                    : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300"
-                  }`}
-              >
-                <Car size={13} className={isActive ? "text-red-500" : "text-gray-400"} />
-                <div className="flex flex-col text-left">
-                  <span className="text-xs font-bold whitespace-nowrap leading-none">
-                    {displayName}
-                  </span>
-                  {subText && (
-                    <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap leading-none mt-1">
-                      {subText}
-                    </span>
-                  )}
-                </div>
-                {c.items.length > 0 && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold leading-none ${isActive ? "bg-red-200 text-red-800" : "bg-gray-200 text-gray-700"
-                    }`}>
-                    {c.items.length}
-                  </span>
-                )}
-                {/* Delete Cart button - show only if we have more than 1 cart */}
-                {carts.length > 1 && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteCart(c.id);
-                    }}
-                    className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-200 transition-colors ml-1 shrink-0"
-                    title="Delete Cart"
-                  >
-                    <XCircle size={14} />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Add New Cart Button */}
-          <button
-            onClick={handleAddNewCart}
-            className="flex items-center justify-center p-2 rounded-xl border border-dashed border-gray-300 hover:border-gray-500 text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 active:scale-95 transition-all shrink-0 w-8 h-8"
-            title="Add New Cart/Repair"
-          >
-            <Plus size={16} />
-          </button>
-        </div>
-      </div>
+      {/* Mobile: products and cart are alternating views, so the repair tabs
+          sit above both and stay reachable from either. */}
+      <div className="md:hidden shrink-0">{activeRepairsBar}</div>
 
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         {/* LEFT SIDE: PRODUCT LIST */}
@@ -1854,6 +1862,10 @@ const POSPage = () => {
           className={`w-full md:w-3/5 flex flex-col h-full bg-gray-50 transition-all duration-300 ${mobileView === "cart" ? "hidden md:flex" : "flex"
             }`}
         >
+          {/* Desktop: inside this column only, so the cart panel beside it
+              starts at the top of the screen. */}
+          <div className="hidden md:block shrink-0">{activeRepairsBar}</div>
+
           <div className="p-3 bg-white shadow-sm z-10">
             <div className="relative">
               <Search className="absolute left-3 top-3 text-gray-400" size={20} />

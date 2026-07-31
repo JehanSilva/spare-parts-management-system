@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   ShoppingCart,
@@ -10,129 +10,134 @@ import {
   Menu,
   X,
   FileText,
-  LogOut,
+  Power,
 } from "lucide-react";
 import logoImg from "../assets/logo.png";
 import { logoutUser } from "../services/api";
 
+const NAV_ITEMS = [
+  { path: "/", label: "Home", icon: Home },
+  { path: "/pos", label: "POS", icon: ShoppingCart },
+  { path: "/inventory", label: "Inventory", icon: Package },
+  { path: "/suppliers", label: "Suppliers", icon: Truck },
+  { path: "/vehicles", label: "Vehicles", icon: Car },
+  { path: "/vehicle-models", label: "Models", icon: Layers },
+  { path: "/sales-history", label: "Sales", icon: FileText },
+];
+
+// Terminal-style chrome: dark bar, live clock and compact icon-over-label
+// tabs. Kept at h-16 — POSPage sizes its panels with calc(100vh-64px).
 const Navbar = () => {
   const location = useLocation();
-  const [isOpen, setIsOpen] = useState(false); // State for mobile menu
+  const [isOpen, setIsOpen] = useState(false);
+  const [now, setNow] = useState(new Date());
 
-  const toggleMenu = () => setIsOpen(!isOpen);
+  // The clock only shows minutes, so tick every 30s rather than every second.
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
 
-  // Helper for active link styles
-  const isActive = (path) =>
-    location.pathname === path
-      ? "bg-white/10 text-white font-bold shadow-sm backdrop-blur-sm border border-white/10"
-      : "text-red-100 hover:bg-white/5 hover:text-white transition-all duration-200 border border-transparent";
-
-  const navItems = [
-    { path: "/", label: "Home", icon: Home },
-    { path: "/pos", label: "POS", icon: ShoppingCart },
-    { path: "/inventory", label: "Inventory", icon: Package },
-    { path: "/suppliers", label: "Suppliers", icon: Truck },
-    { path: "/vehicles", label: "Vehicles", icon: Car },
-    { path: "/vehicle-models", label: "Vehicle Models", icon: Layers },
-    { path: "/sales-history", label: "Sales History", icon: FileText },
-  ];
-
+  const dateLabel = now.toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+  const timeLabel = now.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
   return (
-    <nav className="bg-gradient-to-r from-red-900 via-red-800 to-red-900 shadow-xl sticky top-0 z-50 transition-all duration-300 print:hidden">
-      <div className="container mx-auto px-4">
-        <div className="flex justify-between items-center h-16">
-          {/* Logo Section */}
-          <Link
-            to="/"
-            className="text-white text-xl font-bold flex items-center gap-3 group"
-          >
-            <div className="relative">
-              <div className="absolute inset-0 bg-white/20 rounded-full blur-md group-hover:blur-lg transition-all"></div>
-              <img
-                src={logoImg}
-                alt="NSS Logo"
-                className="w-10 h-10 object-contain bg-white rounded-full p-1 relative z-10 shadow-lg"
-              />
-            </div>
-            <div className="flex flex-col leading-none">
-                <span className="tracking-wide text-lg">NSS Auto Spares</span>
-                <span className="text-[10px] text-red-200 tracking-wider font-light uppercase">Management System</span>
-            </div>
-          </Link>
+    <nav className="bg-slate-950 border-b border-white/10 sticky top-0 z-50 print:hidden">
+      <div className="px-3 sm:px-5">
+        {/* The side groups share the leftover space equally (flex-1) so the tab
+            group lands on the true centre of the bar — justify-between alone
+            would push it right, the brand block being far wider than the
+            single power button opposite it. */}
+        <div className="flex items-center h-16 gap-4">
+          {/* Brand + clock */}
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <Link to="/" className="flex items-center gap-2.5 group">
+              <span className="w-9 h-9 rounded-full bg-white flex items-center justify-center shrink-0 overflow-hidden">
+                <img src={logoImg} alt="NSS" className="w-7 h-auto" />
+              </span>
+              <span className="text-white font-bold tracking-wide hidden sm:block group-hover:text-red-400 transition-colors">
+                NSS Auto Spares
+              </span>
+            </Link>
 
-          {/* --- DESKTOP MENU --- */}
-          <div className="hidden lg:flex space-x-1 items-center">
-            {navItems.map((item) => (
-               <Link
-               key={item.path}
-               to={item.path}
-               className={`px-4 py-2 rounded-lg flex items-center gap-2 text-sm ${isActive(item.path)}`}
-             >
-               <item.icon size={18} /> {item.label}
-             </Link>
-            ))}
-
-            {/* Desktop Logout Button */}
-            <div className="h-6 w-px bg-red-700 mx-2"></div>
-            <button
-              onClick={logoutUser}
-              className="group flex items-center gap-2 text-red-100 hover:text-white hover:bg-red-950/50 px-4 py-2 rounded-lg transition-all duration-200 border border-transparent hover:border-red-700/50"
-            >
-              <LogOut size={18} className="group-hover:text-red-400 transition-colors"/> Logout
-            </button>
+            <span className="hidden xl:block h-6 w-px bg-white/10" />
+            <span className="hidden xl:block text-[11px] text-slate-400 whitespace-nowrap">
+              {dateLabel} <span className="text-slate-600">•</span> {timeLabel}
+            </span>
           </div>
 
-          {/* --- MOBILE HAMBURGER BUTTON --- */}
-          <div className="lg:hidden flex items-center">
+          {/* Tabs */}
+          <div className="hidden lg:flex items-center gap-1 shrink-0">
+            {NAV_ITEMS.map((item) => {
+              const active = location.pathname === item.path;
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-lg min-w-[62px] transition-colors ${
+                    active
+                      ? "bg-red-500/15 text-red-400"
+                      : "text-slate-400 hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  <item.icon size={17} />
+                  <span className="text-[10px] font-semibold tracking-wide">{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* Actions */}
+          <div className="flex items-center gap-2 flex-1 justify-end">
             <button
-              onClick={toggleMenu}
-              className="text-white bg-white/10 p-2 rounded-lg hover:bg-white/20 transition focus:outline-none focus:ring-2 focus:ring-white/20"
+              onClick={logoutUser}
+              title="Logout"
+              className="w-9 h-9 rounded-lg flex items-center justify-center text-red-400 hover:text-white hover:bg-red-600 transition-colors"
             >
-              {isOpen ? <X size={24} /> : <Menu size={24} />}
+              <Power size={18} />
+            </button>
+
+            <button
+              onClick={() => setIsOpen((v) => !v)}
+              className="lg:hidden w-9 h-9 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/10 transition-colors"
+            >
+              {isOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
           </div>
         </div>
       </div>
 
-      {/* --- MOBILE MENU DROPDOWN --- */}
-      <div 
-        className={`lg:hidden overflow-hidden transition-all duration-300 ease-in-out ${
-            isOpen ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
+      {/* Mobile tabs */}
+      <div
+        className={`lg:hidden overflow-hidden transition-all duration-300 ${
+          isOpen ? "max-h-96 border-t border-white/10" : "max-h-0"
         }`}
       >
-        <div className="bg-red-900/95 backdrop-blur-xl border-t border-red-800 pb-4 shadow-inner px-4 pt-2">
-            {navItems.map((item) => (
-                 <Link
-                 key={item.path}
-                 to={item.path}
-                 onClick={toggleMenu}
-                 className={`block px-4 py-3 rounded-xl mb-1 ${
-                    location.pathname === item.path 
-                    ? "bg-white/15 text-white font-bold" 
-                    : "text-red-100 hover:bg-white/5 hover:text-white"
-                 }`}
-               >
-                 <div className="flex items-center gap-3">
-                   <item.icon size={20} /> {item.label}
-                 </div>
-               </Link>
-            ))}
-
-          {/* Mobile Logout Button (Added Here) */}
-          <div className="border-t border-red-800 mt-3 pt-3">
-            <button
-              onClick={() => {
-                toggleMenu();
-                logoutUser();
-              }}
-              className="block w-full text-left px-4 py-3 rounded-xl text-red-200 hover:bg-red-950 hover:text-white transition group"
-            >
-              <div className="flex items-center gap-3">
-                <LogOut size={20} className="text-red-400 group-hover:text-red-300"/> Logout
-              </div>
-            </button>
-          </div>
+        <div className="grid grid-cols-4 gap-1 p-3">
+          {NAV_ITEMS.map((item) => {
+            const active = location.pathname === item.path;
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                onClick={() => setIsOpen(false)}
+                className={`flex flex-col items-center gap-1 py-2.5 rounded-lg ${
+                  active ? "bg-red-500/15 text-red-400" : "text-slate-400 hover:bg-white/5"
+                }`}
+              >
+                <item.icon size={18} />
+                <span className="text-[10px] font-semibold">{item.label}</span>
+              </Link>
+            );
+          })}
         </div>
       </div>
     </nav>

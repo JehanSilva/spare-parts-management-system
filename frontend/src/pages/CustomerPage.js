@@ -31,19 +31,20 @@ import {
 } from "lucide-react";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
+import AvatarBadge from "../components/AvatarBadge";
 
 const formatLKR = (amount) =>
   new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
 const Field = ({ label, id, ...props }) => (
   <div>
-    <label htmlFor={id} className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+    <label htmlFor={id} className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">
       {label}
     </label>
     <input
       id={id}
       {...props}
-      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all"
+      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-0 focus:border-gray-900 focus:bg-white transition-colors disabled:text-gray-400"
     />
   </div>
 );
@@ -78,25 +79,55 @@ const CustomerModal = ({ customer, onClose, onSaved }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-900 text-white">
-          <h2 className="font-bold text-lg flex items-center gap-2">
-            <User size={18} /> {isEdit ? "Edit Customer" : "Add New Customer"}
-          </h2>
-          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X size={18} /></button>
+        {/* Header — mirrors a customer card: avatar, muted meta line, bold title */}
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4">
+          <div className="flex items-center gap-3 min-w-0">
+            {form.name.trim() ? (
+              <AvatarBadge name={form.name} />
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center shrink-0">
+                <User size={20} />
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs text-gray-400 font-medium">
+                {isEdit ? "Editing customer" : "New customer"}
+              </p>
+              <h2 className="text-lg font-bold text-gray-900 truncate">
+                {form.name.trim() || (isEdit ? "Edit Customer" : "Add New Customer")}
+              </h2>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors shrink-0"
+          >
+            <X size={18} />
+          </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} className="px-6 pb-6 space-y-4">
           {error && <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">{error}</p>}
           <Field label="Full Name *" id="cust-name" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. John Doe" />
           <Field label="Phone" id="cust-phone" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} placeholder="e.g. 077 123 4567" />
           <Field label="Email" id="cust-email" type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="e.g. john@email.com" />
           <div>
-            <label htmlFor="cust-address" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Address</label>
-            <textarea id="cust-address" value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))} rows={2} placeholder="e.g. 42 Main Street, Colombo" className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all resize-none" />
+            <label htmlFor="cust-address" className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">Address</label>
+            <textarea id="cust-address" value={form.address} onChange={e => setForm(p => ({ ...p, address: e.target.value }))} rows={2} placeholder="e.g. 42 Main Street, Colombo" className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-0 focus:border-gray-900 focus:bg-white transition-colors resize-none" />
           </div>
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50 transition-colors text-sm">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-colors text-sm disabled:opacity-60">
-              {loading ? "Saving..." : isEdit ? "Save Changes" : "Add Customer"}
+          <div className="border-t border-gray-100 mt-2 pt-4 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-2.5 rounded-full transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="bg-gray-900 hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold px-5 py-2.5 rounded-full transition-colors"
+            >
+              {loading ? "Saving..." : isEdit ? "Save changes" : "Add customer"}
             </button>
           </div>
         </form>
@@ -152,7 +183,7 @@ const VehicleModal = ({ customerId, vehicle, onClose, onSaved }) => {
           <h2 className="font-bold text-lg flex items-center gap-2"><Car size={18} /> {isEdit ? 'Edit Vehicle' : 'Add Vehicle'}</h2>
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X size={18} /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="px-6 pb-6 space-y-4 max-h-[80vh] overflow-y-auto">
           {error && <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">{error}</p>}
 
           {/* Registration Number */}
@@ -180,13 +211,13 @@ const VehicleModal = ({ customerId, vehicle, onClose, onSaved }) => {
 
           {/* Notes */}
           <div>
-            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Notes</label>
+            <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">Notes</label>
             <textarea
               value={form.notes}
               onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
               rows={2}
               placeholder="Optional notes about this vehicle"
-              className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all resize-none"
+              className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-0 focus:border-gray-900 focus:bg-white transition-colors resize-none"
             />
           </div>
 
@@ -316,32 +347,95 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
       {editVehicle && <VehicleModal vehicle={editVehicle} onClose={() => setEditVehicle(null)} onSaved={onRefresh} />}
       <ConfirmModal isOpen={!!vehicleToDelete} title="Remove Vehicle?" message={`Remove ${vehicleToDelete?.vehicle_number} from ${customer.name}?`} onConfirm={handleDeleteVehicle} onCancel={() => setVehicleToDelete(null)} />
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow overflow-hidden">
-        <div className="flex items-start gap-4 p-5">
-          <div className="w-11 h-11 rounded-full bg-red-50 flex items-center justify-center shrink-0 mt-0.5">
-            <User size={20} className="text-red-500" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-bold text-gray-900 text-base truncate">{customer.name}</h3>
-              {customer.total_sales > 0 && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-100">
-                  <ShoppingBag size={9} /> {customer.total_sales} sale{customer.total_sales > 1 ? "s" : ""}
-                </span>
-              )}
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl transition-shadow duration-300 overflow-hidden">
+        <div className="p-5">
+          {/* Header: avatar + actions */}
+          <div className="flex items-start justify-between gap-3">
+            <AvatarBadge name={customer.name} />
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={() => onHistory(customer)}
+                title="Purchase history"
+                className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-full transition-colors"
+              >
+                <History size={14} />
+              </button>
+              <button
+                onClick={() => onEdit(customer)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors"
+                title="Edit customer"
+              >
+                Edit <Pencil size={12} />
+              </button>
+              <button
+                onClick={() => onDelete(customer)}
+                title="Delete customer"
+                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
-            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-              {customer.phone && <span className="flex items-center gap-1 text-xs text-gray-500"><Phone size={11} className="text-gray-400" /> {customer.phone}</span>}
-              {customer.email && <span className="flex items-center gap-1 text-xs text-gray-500"><Mail size={11} className="text-gray-400" /> {customer.email}</span>}
-              {customer.address && <span className="flex items-center gap-1 text-xs text-gray-500 truncate max-w-xs"><MapPin size={11} className="text-gray-400 shrink-0" /> {customer.address}</span>}
-            </div>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button onClick={() => onHistory(customer)} title="Purchase history" className="p-2 rounded-xl hover:bg-amber-50 text-gray-400 hover:text-amber-600 transition-colors"><History size={15} /></button>
-            <button onClick={() => onEdit(customer)} title="Edit customer" className="p-2 rounded-xl hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"><Pencil size={15} /></button>
-            <button onClick={() => onDelete(customer)} title="Delete customer" className="p-2 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"><Trash2 size={15} /></button>
-            <button onClick={() => setExpanded(p => !p)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${expanded ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-              <Car size={13} /> {customer.vehicles?.length || 0}
+
+          {/* Identity */}
+          <p className="text-xs text-gray-400 font-medium mt-4">
+            {customer.total_sales > 0
+              ? `${customer.total_sales} sale${customer.total_sales > 1 ? "s" : ""}`
+              : "No sales yet"}
+            {customer.vehicles?.length > 0 &&
+              ` · ${customer.vehicles.length} vehicle${customer.vehicles.length > 1 ? "s" : ""}`}
+          </p>
+          <h3 className="text-lg font-bold text-gray-900 leading-snug mt-0.5 truncate">
+            {customer.name}
+          </h3>
+
+          {/* Chips */}
+          <div className="flex flex-wrap gap-2 mt-3">
+            {customer.phone && (
+              <a
+                href={`tel:${customer.phone}`}
+                className="inline-flex items-center gap-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors"
+              >
+                <Phone size={12} className="shrink-0 text-gray-400" /> {customer.phone}
+              </a>
+            )}
+            {customer.email && (
+              <a
+                href={`mailto:${customer.email}`}
+                title={customer.email}
+                className="inline-flex items-center gap-1.5 max-w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors"
+              >
+                <Mail size={12} className="shrink-0 text-gray-400" />
+                <span className="truncate">{customer.email}</span>
+              </a>
+            )}
+            {customer.address && (
+              <span
+                title={customer.address}
+                className="inline-flex items-center gap-1.5 max-w-full bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg"
+              >
+                <MapPin size={12} className="shrink-0 text-gray-400" />
+                <span className="truncate">{customer.address}</span>
+              </span>
+            )}
+          </div>
+
+          {/* Footer: vehicles count + expand action */}
+          <div className="border-t border-gray-100 mt-4 pt-4 flex items-end justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-lg font-bold text-gray-900 leading-none">
+                {customer.vehicles?.length || 0}
+              </p>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Registered vehicle{customer.vehicles?.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            <button
+              onClick={() => setExpanded(p => !p)}
+              className="flex items-center gap-1.5 bg-gray-900 hover:bg-black text-white text-xs font-bold px-4 py-2.5 rounded-full transition-colors shrink-0"
+            >
+              <Car size={13} /> {expanded ? "Hide" : "Vehicles"}
               {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </button>
           </div>
@@ -351,8 +445,8 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
           <div className="border-t border-gray-100 px-5 pb-4 pt-3 bg-gray-50/60">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Registered Vehicles</span>
-              <button onClick={() => setShowAddVehicle(true)} className="flex items-center gap-1 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-lg transition-colors">
-                <Plus size={12} /> Add Vehicle
+              <button onClick={() => setShowAddVehicle(true)} className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors">
+                <Plus size={13} /> Add vehicle
               </button>
             </div>
             {customer.vehicles?.length === 0 ? (
@@ -364,9 +458,7 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
                     {/* Vehicle Header */}
                     <div className="flex items-center justify-between px-3 py-2.5">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
-                          <Car size={14} className="text-red-500" />
-                        </div>
+                        <AvatarBadge name={v.vehicle_number} icon={Car} iconSize={14} size="w-8 h-8" />
                         <div>
                           <p className="font-bold text-sm text-gray-800 tracking-wide">{v.vehicle_number}</p>
                           {(v.make || v.model || v.year) && (
@@ -397,13 +489,13 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
                     {(v.color || v.current_mileage || v.notes) && (
                       <div className="flex flex-wrap gap-2 px-3 pb-2.5 pt-0">
                         {v.color && (
-                          <span className="inline-flex items-center gap-1 text-[11px] bg-gray-50 border border-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
-                            <Palette size={9} className="text-gray-400" /> {v.color}
+                          <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg">
+                            <Palette size={12} className="shrink-0 text-gray-400" /> {v.color}
                           </span>
                         )}
                         {v.current_mileage && (
-                          <span className="inline-flex items-center gap-1 text-[11px] bg-blue-50 border border-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
-                            <Gauge size={9} /> {v.current_mileage.toLocaleString()} km
+                          <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg">
+                            <Gauge size={12} className="shrink-0 text-gray-400" /> {v.current_mileage.toLocaleString()} km
                           </span>
                         )}
                         {v.notes && (

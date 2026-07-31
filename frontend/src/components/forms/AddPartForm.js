@@ -11,7 +11,19 @@ import {
   Loader2,
   Package,
   Plus,
+  Tag,
+  Truck,
+  MapPin,
 } from "lucide-react";
+import AvatarBadge from "../AvatarBadge";
+
+// Small uppercase section heading, matching the muted meta line on the cards.
+const SectionLabel = ({ children, action }) => (
+  <div className="flex items-center justify-between gap-3 mb-3">
+    <span className="text-[11px] font-bold uppercase tracking-widest text-gray-400">{children}</span>
+    {action}
+  </div>
+);
 
 const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const [suppliers, setSuppliers] = useState([]);
@@ -218,34 +230,54 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     }
   };
 
+  const inputClass =
+    "w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors";
+  const iconInputClass = `${inputClass} pl-9`;
+
   return (
-    <div className="bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden animate-fade-in-down mb-8">
-      {/* Header */}
-      <div className="bg-red-700 p-6 flex justify-between items-center text-white">
-        <h2 className="text-2xl font-bold flex items-center gap-3">
-          <Package className="w-7 h-7" />
-          {editingPart ? "Edit Part Details" : "Add New Part"}
-        </h2>
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 md:p-6 mb-8 animate-fade-in-down">
+      {/* Header — mirrors a card: avatar, muted meta line, bold title */}
+      <div className="flex items-start justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3 min-w-0">
+          {formData.name.trim() ? (
+            <AvatarBadge name={formData.name} />
+          ) : (
+            <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center shrink-0">
+              <Package size={20} />
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">
+              {editingPart ? "Editing part" : "New part"}
+            </p>
+            <h2 className="text-lg font-bold text-gray-900 truncate">
+              {formData.name.trim() || (editingPart ? "Edit Part Details" : "Add New Part")}
+            </h2>
+          </div>
+        </div>
+
         {onCancel && (
           <button
+            type="button"
             onClick={onCancel}
-            className="text-white/80 hover:text-white hover:bg-red-600 p-2 rounded-full transition-colors"
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors shrink-0"
+            title="Close"
           >
-            <X size={24} />
+            <X size={18} />
           </button>
         )}
       </div>
 
-      <form onSubmit={handleSubmit} className="p-6 md:p-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* LEFT COLUMN: Image & Critical Info */}
-          <div className="lg:col-span-1 space-y-6">
-            {/* Image Upload */}
-            <div 
+      <form onSubmit={handleSubmit}>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* LEFT COLUMN: Image & identifiers */}
+          <div className="lg:col-span-1">
+            <SectionLabel>Photo</SectionLabel>
+
+            <div
               onPaste={handlePaste}
               tabIndex="0"
-              className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-50 hover:border-red-300 focus:border-red-500 focus:ring-2 focus:ring-red-200 focus:outline-none transition-all cursor-pointer group bg-gray-50/50"
+              className="flex flex-col items-center justify-center p-5 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50 hover:border-gray-400 focus:border-gray-900 focus:outline-none transition-colors cursor-pointer group"
             >
               <input
                 type="file"
@@ -259,202 +291,201 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                 className="cursor-pointer flex flex-col items-center gap-3 w-full"
               >
                 {previewUrl ? (
-                  <div className="relative w-full aspect-square bg-white p-2 rounded-lg shadow-sm">
+                  <div className="relative w-full aspect-square bg-white p-2 rounded-xl border border-gray-100">
                     <img
                       src={previewUrl}
                       alt="Preview"
-                      className="w-full h-full object-contain rounded"
+                      className="w-full h-full object-contain rounded-lg"
                     />
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded">
-                      <p className="text-white font-bold flex items-center gap-2">
-                         <Upload size={18} /> Change
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded-xl">
+                      <p className="text-white text-xs font-bold flex items-center gap-1.5">
+                        <Upload size={14} /> Change
                       </p>
                     </div>
                   </div>
                 ) : (
-                  <div className="h-40 w-40 bg-gray-200 rounded-full flex items-center justify-center text-gray-400 group-hover:text-red-500 transition-colors">
-                    <ImageIcon size={64} />
-                  </div>
-                )}
-                {!previewUrl && (
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="text-gray-500 font-medium group-hover:text-red-600 transition-colors flex items-center gap-2">
-                         <Upload size={18} /> Upload Image
-                      </span>
-                      <span className="text-[10px] text-gray-400 font-medium">Or Paste Image (Ctrl+V)</span>
+                  <>
+                    <div className="h-28 w-28 bg-gray-200 rounded-full flex items-center justify-center text-gray-400 group-hover:text-gray-600 transition-colors">
+                      <ImageIcon size={44} />
                     </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                        <Upload size={13} /> Upload image
+                      </span>
+                      <span className="text-[10px] text-gray-400">Or paste (Ctrl+V)</span>
+                    </div>
+                  </>
                 )}
               </label>
             </div>
 
-             {/* Basic Identifiers */}
-             <div className="space-y-4">
-               <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Part Name <span className="text-red-500">*</span></label>
+            <div className="mt-5">
+              <SectionLabel>Identity</SectionLabel>
+              <div className="space-y-3">
+                <div className="relative">
+                  <Package className="absolute left-3 top-3 text-gray-400" size={16} />
                   <input
                     name="name"
                     value={formData.name}
                     onChange={handleChange}
                     required
-                    placeholder="e.g. Brake Pad Set"
-                    className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all"
+                    placeholder="Part name * — e.g. Brake Pad Set"
+                    className={iconInputClass}
                   />
-               </div>
-               <div>
-                 <label className="block text-sm font-semibold text-gray-700 mb-1">Part Number <span className="text-red-500">*</span></label>
-                 <input
-                   name="part_number"
-                   value={formData.part_number}
-                   onChange={handleChange}
-                   required
-                   placeholder="e.g. BP-12345-X"
-                   className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-all font-mono text-base"
-                 />
-               </div>
-             </div>
+                </div>
+                <div className="relative">
+                  <Tag className="absolute left-3 top-3 text-gray-400" size={16} />
+                  <input
+                    name="part_number"
+                    value={formData.part_number}
+                    onChange={handleChange}
+                    required
+                    placeholder="Part number * — e.g. BP-12345-X"
+                    className={`${iconInputClass} font-mono`}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* RIGHT COLUMN: Details & Specifics */}
-          <div className="lg:col-span-2 space-y-6">
-            
-            {/* Row 1: Brand & Supplier */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Brand</label>
+          {/* RIGHT COLUMN: Details */}
+          <div className="lg:col-span-2">
+            <SectionLabel>Supply</SectionLabel>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="relative">
+                <Tag className="absolute left-3 top-3 text-gray-400" size={16} />
                 <input
                   name="brand"
                   value={formData.brand}
                   onChange={handleChange}
-                  placeholder="e.g. Toyota, Bosch"
-                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                  placeholder="Brand — e.g. Toyota, Bosch"
+                  className={iconInputClass}
                 />
               </div>
-              <div>
-                 <label className="block text-sm font-semibold text-gray-700 mb-1">Supplier</label>
-                 <div className="relative">
-                   <select
-                     name="supplier"
-                     value={formData.supplier}
-                     onChange={handleChange}
-                     className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none appearance-none bg-white"
-                   >
-                     <option value="">Select a Supplier...</option>
-                     {suppliers.map((s) => (
-                       <option key={s.id} value={s.id}>
-                         {s.name}
-                       </option>
-                     ))}
-                   </select>
-                   <div className="fill-current h-4 w-4 absolute right-3 top-3.5 pointer-events-none text-gray-400">
-                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
-                   </div>
-                 </div>
+              <div className="relative">
+                <Truck className="absolute left-3 top-3 text-gray-400 z-10" size={16} />
+                <select
+                  name="supplier"
+                  value={formData.supplier}
+                  onChange={handleChange}
+                  className={`${iconInputClass} appearance-none`}
+                >
+                  <option value="">Select a supplier...</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="h-4 w-4 absolute right-3 top-3.5 pointer-events-none text-gray-400 fill-current">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                </div>
               </div>
             </div>
 
-            {/* Row 2: Pricing & Stock (Card) */}
-            <div className="bg-gray-50/80 p-5 rounded-xl border border-gray-100">
-              <h3 className="text-sm uppercase tracking-wide text-gray-500 font-bold mb-4 border-b pb-2">Inventory & Pricing</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                 <div>
-                    <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Cost Price (LKR)</label>
-                    <input
-                      type="number"
-                      name="buy_price"
-                      value={formData.buy_price}
-                      onChange={handleChange}
-                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none font-mono"
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Selling Price (LKR)</label>
-                    <input
-                      type="number"
-                      name="sell_price"
-                      value={formData.sell_price}
-                      onChange={handleChange}
-                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none font-bold text-gray-800 font-mono"
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Current Stock</label>
-                    <input
-                      type="number"
-                      name="stock_qty"
-                      value={formData.stock_qty}
-                      onChange={handleChange}
-                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 outline-none"
-                    />
-                 </div>
-                 <div>
-                    <label className="block text-xs uppercase font-bold text-gray-500 mb-1">Rack / Bin Location</label>
+            {/* Pricing & stock */}
+            <div className="bg-gray-50 rounded-2xl border border-gray-100 p-4 mt-5">
+              <SectionLabel>Inventory &amp; Pricing</SectionLabel>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 mb-1">Cost price (LKR)</label>
+                  <input
+                    type="number"
+                    name="buy_price"
+                    value={formData.buy_price}
+                    onChange={handleChange}
+                    className="w-full p-2.5 bg-white border border-gray-200 rounded-xl text-sm font-mono focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 mb-1">Selling price (LKR)</label>
+                  <input
+                    type="number"
+                    name="sell_price"
+                    value={formData.sell_price}
+                    onChange={handleChange}
+                    className="w-full p-2.5 bg-white border border-gray-200 rounded-xl text-sm font-mono font-bold text-gray-900 focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 mb-1">Current stock</label>
+                  <input
+                    type="number"
+                    name="stock_qty"
+                    value={formData.stock_qty}
+                    onChange={handleChange}
+                    className="w-full p-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 mb-1">Rack / bin location</label>
+                  <div className="relative">
+                    <MapPin className="absolute left-3 top-3 text-gray-400" size={16} />
                     <input
                       name="rack_location"
                       value={formData.rack_location}
                       onChange={handleChange}
                       placeholder="e.g. A-12"
-                      className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 outline-none"
+                      className="w-full pl-9 p-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                     />
-                 </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Row 3: Compatible Vehicles */}
-            <div className="bg-blue-50/50 p-5 rounded-xl border border-blue-100">
-              <h3 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
-                <Car size={20} /> Fits Vehicles
-              </h3>
-
-              <div className="relative mb-4" ref={dropdownRef}>
-                <div className="flex items-center border border-blue-200 rounded-lg bg-white overflow-hidden shadow-sm focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-blue-500">
-                  <div className="pl-3 text-blue-300">
-                    <Search size={18} />
-                  </div>
-                  <input
-                    type="text"
-                    value={vehicleSearch}
-                    onChange={(e) => {
-                      setVehicleSearch(e.target.value);
-                      setShowVehicleDropdown(true);
-                    }}
-                    onFocus={() => setShowVehicleDropdown(true)}
-                    placeholder="Search Vehicle..."
-                    className="flex-1 min-w-0 py-2.5 px-2 outline-none text-base"
-                  />
+            {/* Compatible vehicles */}
+            <div className="bg-gray-50 rounded-2xl border border-gray-100 p-4 mt-5">
+              <SectionLabel
+                action={
                   <button
                     type="button"
                     onClick={() => setIsCreatingVehicle(!isCreatingVehicle)}
-                    className="shrink-0 mr-2 p-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors flex items-center gap-1 text-sm font-bold whitespace-nowrap"
+                    className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded-full transition-colors"
                   >
-                    <Plus size={16} /> {isCreatingVehicle ? "Cancel" : "New"}
+                    <Plus size={13} /> {isCreatingVehicle ? "Cancel" : "New model"}
                   </button>
-                </div>
+                }
+              >
+                Fits Vehicles
+              </SectionLabel>
 
-                {/* Inline Vehicle Creation Form */}
+              <div className="relative mb-3" ref={dropdownRef}>
+                <Search className="absolute left-3 top-3 text-gray-400" size={16} />
+                <input
+                  type="text"
+                  value={vehicleSearch}
+                  onChange={(e) => {
+                    setVehicleSearch(e.target.value);
+                    setShowVehicleDropdown(true);
+                  }}
+                  onFocus={() => setShowVehicleDropdown(true)}
+                  placeholder="Search vehicle models..."
+                  className="w-full pl-9 p-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
+                />
+
+                {/* Inline vehicle creation */}
                 {isCreatingVehicle && (
-                  <div className="mt-3 p-4 bg-white border border-blue-200 rounded-lg shadow-inner animate-fade-in-down">
-                    <h4 className="text-sm font-bold text-blue-800 mb-3 flex items-center gap-2">
-                       <Plus size={14} /> Add New Vehicle
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="mt-3 p-4 bg-white border border-gray-200 rounded-2xl animate-fade-in-down">
+                    <SectionLabel>New Vehicle Model</SectionLabel>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <input
-                        placeholder="Make (e.g. Toyota)"
+                        placeholder="Make — e.g. Toyota"
                         value={newVehicle.make}
-                        onChange={(e) => setNewVehicle({...newVehicle, make: e.target.value})}
-                        className="p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                        onChange={(e) => setNewVehicle({ ...newVehicle, make: e.target.value })}
+                        className="p-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                       />
                       <input
-                        placeholder="Model (e.g. Prius)"
+                        placeholder="Model — e.g. Prius"
                         value={newVehicle.model}
-                        onChange={(e) => setNewVehicle({...newVehicle, model: e.target.value})}
-                        className="p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                        onChange={(e) => setNewVehicle({ ...newVehicle, model: e.target.value })}
+                        className="p-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                       />
                       <input
                         type="number"
-                        placeholder="Year (Optional)"
+                        placeholder="Year (optional)"
                         value={newVehicle.year}
-                        onChange={(e) => setNewVehicle({...newVehicle, year: e.target.value})}
-                        className="p-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                        onChange={(e) => setNewVehicle({ ...newVehicle, year: e.target.value })}
+                        className="p-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                       />
                     </div>
                     <div className="mt-3 flex md:justify-end">
@@ -462,44 +493,38 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                         type="button"
                         onClick={handleCreateVehicle}
                         disabled={vehicleSaving || !newVehicle.make || !newVehicle.model}
-                        className="bg-blue-600 text-white px-4 py-2.5 md:py-1.5 rounded text-sm font-bold hover:bg-blue-700 disabled:bg-gray-400 flex items-center justify-center gap-2 w-full md:w-auto"
+                        className="flex items-center justify-center gap-1.5 bg-gray-900 hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold px-5 py-2.5 rounded-full transition-colors w-full md:w-auto"
                       >
-                        {vehicleSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                        Save & Add Vehicle
+                        {vehicleSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                        Save &amp; add
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* Dropdown List */}
+                {/* Dropdown list */}
                 {showVehicleDropdown && (
-                  <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-lg mt-1 max-h-60 overflow-y-auto shadow-xl custom-scrollbar animate-fade-in-up">
+                  <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-2xl mt-1 max-h-60 overflow-y-auto shadow-xl custom-scrollbar animate-fade-in-up">
                     {filteredVehicles.length > 0 ? (
                       filteredVehicles.map((v) => {
-                        const isSelected = formData.compatible_vehicles.includes(
-                          v.id
-                        );
+                        const isSelected = formData.compatible_vehicles.includes(v.id);
                         return (
                           <div
                             key={v.id}
                             onClick={() => !isSelected && addVehicleToPart(v.id)}
-                            className={`p-3 cursor-pointer flex justify-between items-center border-b last:border-b-0 hover:bg-blue-50 transition-colors ${
-                              isSelected
-                                ? "bg-blue-50/80 opacity-60 cursor-default"
-                                : ""
-                            }`}
+                            className={`px-3 py-2.5 cursor-pointer flex justify-between items-center border-b border-gray-50 last:border-b-0 hover:bg-gray-50 transition-colors ${isSelected ? "opacity-50 cursor-default" : ""
+                              }`}
                           >
-                            <span className="text-sm font-medium text-gray-700">
-                              {v.year && <span className="text-gray-400 mr-1">{v.year}</span>} {v.make} <span className="font-bold">{v.model}</span>
+                            <span className="text-sm text-gray-700">
+                              {v.year && <span className="text-gray-400 mr-1">{v.year}</span>} {v.make}{" "}
+                              <span className="font-bold">{v.model}</span>
                             </span>
-                            {isSelected && (
-                              <Check size={16} className="text-blue-600" />
-                            )}
+                            {isSelected && <Check size={15} className="text-gray-900" />}
                           </div>
                         );
                       })
                     ) : (
-                      <div className="p-4 text-gray-500 text-center text-sm">
+                      <div className="p-4 text-gray-400 text-center text-sm">
                         No vehicles found matching "{vehicleSearch}"
                       </div>
                     )}
@@ -507,66 +532,69 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                 )}
               </div>
 
-              {/* Selected Tags */}
-              <div className="flex flex-wrap gap-2 min-h-[40px]">
+              {/* Selected chips */}
+              <div className="flex flex-wrap gap-2 min-h-[34px]">
                 {formData.compatible_vehicles.map((id) => (
                   <span
                     key={id}
-                    className="bg-white border border-blue-200 text-blue-800 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2 shadow-sm animate-scale-in"
+                    className="inline-flex items-center gap-1.5 bg-gray-200 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg animate-scale-in"
                   >
+                    <Car size={12} className="shrink-0 text-gray-400" />
                     {getVehicleName(id)}
                     <button
                       type="button"
                       onClick={() => removeVehicle(id)}
-                      className="text-blue-300 hover:text-red-500 transition-colors"
+                      className="text-gray-400 hover:text-red-600 transition-colors"
                     >
-                      <X size={14} />
+                      <X size={12} />
                     </button>
                   </span>
                 ))}
                 {formData.compatible_vehicles.length === 0 && (
-                  <div className="text-sm text-blue-300 italic flex items-center gap-2">
-                     <span className="w-1.5 h-1.5 bg-blue-300 rounded-full"></span>
-                     No vehicles selected yet.
-                  </div>
+                  <span className="text-xs text-gray-400 italic self-center">
+                    No vehicles selected yet.
+                  </span>
                 )}
               </div>
             </div>
-
           </div>
         </div>
 
-        {/* Footer / Submit */}
-        <div className="border-t border-gray-100 mt-8 pt-6 flex justify-end gap-3">
+        {/* Footer — hint on the left, actions on the right */}
+        <div className="border-t border-gray-100 mt-6 pt-4 flex items-center justify-between gap-3">
+          <p className="text-[11px] text-gray-400">
+            {formData.compatible_vehicles.length > 0
+              ? `Fits ${formData.compatible_vehicles.length} vehicle model${formData.compatible_vehicles.length > 1 ? "s" : ""}`
+              : "Link vehicle models so this part shows up in compatibility searches."}
+          </p>
+
+          <div className="flex items-center gap-2 shrink-0">
             {onCancel && (
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    className="px-6 py-2.5 rounded-lg border border-gray-300 text-gray-600 font-bold hover:bg-gray-50 transition-colors"
-                    disabled={isSubmitting}
-                >
-                    Cancel
-                </button>
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={isSubmitting}
+                className="text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-2.5 rounded-full transition-colors"
+              >
+                Cancel
+              </button>
             )}
             <button
-                type="submit"
-                disabled={isSubmitting}
-                className={`px-8 py-2.5 rounded-lg text-white font-bold flex items-center gap-2 shadow-md transition-all ${
-                    isSubmitting 
-                    ? "bg-gray-400 cursor-not-allowed" 
-                    : "bg-red-600 hover:bg-red-700 hover:shadow-lg active:scale-95"
-                }`}
+              type="submit"
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 bg-gray-900 hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold px-5 py-2.5 rounded-full transition-colors"
             >
-                {isSubmitting ? (
-                    <>
-                        <Loader2 size={20} className="animate-spin" /> Saving...
-                    </>
-                ) : (
-                    <>
-                        <Save size={20} /> {editingPart ? "Update Part" : "Save Part"}
-                    </>
-                )}
+              {isSubmitting ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save size={13} /> {editingPart ? "Update part" : "Save part"}
+                </>
+              )}
             </button>
+          </div>
         </div>
       </form>
     </div>

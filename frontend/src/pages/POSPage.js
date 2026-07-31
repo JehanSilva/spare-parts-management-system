@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
-const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
+const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
   const pressTimer = useRef(null);
   const isLongPress = useRef(false);
@@ -74,9 +74,18 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
       onTouchStart={startPress}
       onTouchEnd={endPress}
       onTouchMove={endPress}
-      className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation"
+      className={`bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation border ${cartQty > 0 ? "border-red-300" : "border-gray-200"
+        }`}
     >
-      <div className="h-28 md:h-32 bg-gray-100 relative">
+      {/* Notification-style count of how many are already in the cart. Sits
+          outside the image well's overflow clipping so it can overhang. */}
+      {cartQty > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 z-20 min-w-[20px] h-5 px-1.5 rounded-full bg-red-600 text-white text-[11px] font-extrabold flex items-center justify-center shadow-md ring-2 ring-white pointer-events-none">
+          {cartQty}
+        </span>
+      )}
+
+      <div className="h-20 md:h-24 bg-gray-100 relative rounded-t-xl overflow-hidden">
         {part.image ? (
           <>
             {!imgLoaded && (
@@ -98,7 +107,7 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
           </>
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
-            <Package size={32} />
+            <Package size={24} />
           </div>
         )}
         <div className="absolute bottom-1.5 left-1.5">
@@ -113,18 +122,18 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
           )}
         </div>
       </div>
-      <div className="p-3 flex-1 flex flex-col justify-between">
+      <div className="p-2 flex-1 flex flex-col justify-between">
         <div>
-          <h3 className="font-bold text-gray-800 text-xs md:text-sm leading-snug line-clamp-2">
+          <h3 className="font-bold text-gray-800 text-[11px] md:text-xs leading-snug line-clamp-2">
             {part.name}
           </h3>
           <p className="text-[10px] text-gray-400 font-mono mt-0.5">
             {part.part_number}
           </p>
         </div>
-        <div className="mt-2 pt-2 border-t border-gray-50 flex items-center justify-between">
-          <p className="text-xs text-gray-500">{part.brand}</p>
-          <p className="text-sm font-bold text-red-600">
+        <div className="mt-1.5 pt-1.5 border-t border-gray-50 flex items-center justify-between">
+          <p className="text-[10px] text-gray-500 truncate">{part.brand}</p>
+          <p className="text-xs font-bold text-red-600 shrink-0">
             {parseFloat(part.sell_price).toLocaleString()}
           </p>
         </div>
@@ -1349,6 +1358,16 @@ const POSPage = () => {
   };
 
   // 6. Calculate Totals (Visual Only) - Memoized
+  // How many of each part are already in the active cart, so every product
+  // card can show its own count badge without scanning the cart per card.
+  const cartQtyByPartId = useMemo(() => {
+    const map = {};
+    cart.forEach((item) => {
+      map[item.id] = (map[item.id] || 0) + item.quantity;
+    });
+    return map;
+  }, [cart]);
+
   const totalAmount = useMemo(() => {
     return cart.reduce((sum, item) => {
       const originalPrice = parseFloat(item.sell_price) || 0;
@@ -1531,6 +1550,100 @@ const POSPage = () => {
   const successDue = saleSuccess
     ? parseFloat(saleSuccess.total_amount) - parseFloat(saleSuccess.amount_paid || 0)
     : 0;
+
+  // Repair tabs live inside the products column so the cart panel can run
+  // the full height of the screen; on mobile (where the two panels are
+  // swapped views rather than side by side) it stays above both.
+  const activeRepairsBar = (
+        <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 z-30 shadow-sm shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="bg-red-50 text-red-600 p-1.5 rounded-lg">
+              <Car size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-extrabold text-gray-800 text-sm tracking-tight leading-none">Active Repairs</h1>
+                <button
+                  onClick={refreshCarts}
+                  disabled={cartsLoading}
+                  className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-100 transition-colors"
+                  title="Sync Repairs with Database"
+                >
+                  <RefreshCw size={12} className={cartsLoading ? "animate-spin" : ""} />
+                </button>
+              </div>
+              <span className="text-[10px] text-gray-400 font-semibold">{carts.length} ongoing repair{carts.length > 1 ? 's' : ''}</span>
+            </div>
+          </div>
+
+          {/* Scrollable Cart Tabs */}
+          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0">
+            {carts.map((c, index) => {
+              const isActive = c.id === activeCartId;
+              const displayName = c.vehicleNumber
+                ? c.vehicleNumber
+                : (c.customerName ? c.customerName : `Repair ${index + 1}`);
+              const cartVehicleInfo = c.vehicleNumber
+                ? vehicleInfoByNumber[c.vehicleNumber.trim().toUpperCase()]
+                : null;
+              const subText = c.vehicleNumber && cartVehicleInfo
+                ? [cartVehicleInfo.make, cartVehicleInfo.model].filter(Boolean).join(" ")
+                : "";
+
+              return (
+                <div
+                  key={c.id}
+                  onClick={() => setActiveCartId(c.id)}
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 transition-all duration-200 shrink-0 cursor-pointer select-none relative group ${isActive
+                      ? "bg-red-50 border-red-500 text-red-700 shadow-sm"
+                      : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300"
+                    }`}
+                >
+                  <Car size={13} className={isActive ? "text-red-500" : "text-gray-400"} />
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold whitespace-nowrap leading-none">
+                      {displayName}
+                    </span>
+                    {subText && (
+                      <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap leading-none mt-1">
+                        {subText}
+                      </span>
+                    )}
+                  </div>
+                  {c.items.length > 0 && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold leading-none ${isActive ? "bg-red-200 text-red-800" : "bg-gray-200 text-gray-700"
+                      }`}>
+                      {c.items.length}
+                    </span>
+                  )}
+                  {/* Delete Cart button - show only if we have more than 1 cart */}
+                  {carts.length > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteCart(c.id);
+                      }}
+                      className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-200 transition-colors ml-1 shrink-0"
+                      title="Delete Cart"
+                    >
+                      <XCircle size={14} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Add New Cart Button */}
+            <button
+              onClick={handleAddNewCart}
+              className="flex items-center justify-center p-2 rounded-xl border border-dashed border-gray-300 hover:border-gray-500 text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 active:scale-95 transition-all shrink-0 w-8 h-8"
+              title="Add New Cart/Repair"
+            >
+              <Plus size={16} />
+            </button>
+          </div>
+        </div>
+  );
 
   return saleSuccess ? (
     <>
@@ -1758,102 +1871,20 @@ const POSPage = () => {
         editItem={editingLaborItem}
       />
 
-      {/* TOP BAR: ACTIVE CARTS MANAGEMENT */}
-      <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 z-30 shadow-sm shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="bg-red-50 text-red-600 p-1.5 rounded-lg">
-            <Car size={20} />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h1 className="font-extrabold text-gray-800 text-sm tracking-tight leading-none">Active Repairs</h1>
-              <button
-                onClick={refreshCarts}
-                disabled={cartsLoading}
-                className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-100 transition-colors"
-                title="Sync Repairs with Database"
-              >
-                <RefreshCw size={12} className={cartsLoading ? "animate-spin" : ""} />
-              </button>
-            </div>
-            <span className="text-[10px] text-gray-400 font-semibold">{carts.length} ongoing repair{carts.length > 1 ? 's' : ''}</span>
-          </div>
-        </div>
-
-        {/* Scrollable Cart Tabs */}
-        <div className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0">
-          {carts.map((c, index) => {
-            const isActive = c.id === activeCartId;
-            const displayName = c.vehicleNumber
-              ? c.vehicleNumber
-              : (c.customerName ? c.customerName : `Repair ${index + 1}`);
-            const cartVehicleInfo = c.vehicleNumber
-              ? vehicleInfoByNumber[c.vehicleNumber.trim().toUpperCase()]
-              : null;
-            const subText = c.vehicleNumber && cartVehicleInfo
-              ? [cartVehicleInfo.make, cartVehicleInfo.model].filter(Boolean).join(" ")
-              : "";
-
-            return (
-              <div
-                key={c.id}
-                onClick={() => setActiveCartId(c.id)}
-                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 transition-all duration-200 shrink-0 cursor-pointer select-none relative group ${isActive
-                    ? "bg-red-50 border-red-500 text-red-700 shadow-sm"
-                    : "bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100 hover:border-gray-300"
-                  }`}
-              >
-                <Car size={13} className={isActive ? "text-red-500" : "text-gray-400"} />
-                <div className="flex flex-col text-left">
-                  <span className="text-xs font-bold whitespace-nowrap leading-none">
-                    {displayName}
-                  </span>
-                  {subText && (
-                    <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap leading-none mt-1">
-                      {subText}
-                    </span>
-                  )}
-                </div>
-                {c.items.length > 0 && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-extrabold leading-none ${isActive ? "bg-red-200 text-red-800" : "bg-gray-200 text-gray-700"
-                    }`}>
-                    {c.items.length}
-                  </span>
-                )}
-                {/* Delete Cart button - show only if we have more than 1 cart */}
-                {carts.length > 1 && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteCart(c.id);
-                    }}
-                    className="text-gray-400 hover:text-red-600 p-0.5 rounded-full hover:bg-gray-200 transition-colors ml-1 shrink-0"
-                    title="Delete Cart"
-                  >
-                    <XCircle size={14} />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Add New Cart Button */}
-          <button
-            onClick={handleAddNewCart}
-            className="flex items-center justify-center p-2 rounded-xl border border-dashed border-gray-300 hover:border-gray-500 text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 active:scale-95 transition-all shrink-0 w-8 h-8"
-            title="Add New Cart/Repair"
-          >
-            <Plus size={16} />
-          </button>
-        </div>
-      </div>
+      {/* Mobile: products and cart are alternating views, so the repair tabs
+          sit above both and stay reachable from either. */}
+      <div className="md:hidden shrink-0">{activeRepairsBar}</div>
 
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         {/* LEFT SIDE: PRODUCT LIST */}
         <div
-          className={`w-full md:w-2/3 flex flex-col h-full bg-gray-50 transition-all duration-300 ${mobileView === "cart" ? "hidden md:flex" : "flex"
+          className={`w-full md:w-3/5 flex flex-col h-full bg-gray-50 transition-all duration-300 ${mobileView === "cart" ? "hidden md:flex" : "flex"
             }`}
         >
+          {/* Desktop: inside this column only, so the cart panel beside it
+              starts at the top of the screen. */}
+          <div className="hidden md:block shrink-0">{activeRepairsBar}</div>
+
           <div className="p-3 bg-white shadow-sm z-10">
             <div className="relative">
               <Search className="absolute left-3 top-3 text-gray-400" size={20} />
@@ -1868,13 +1899,13 @@ const POSPage = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 pb-24 md:pb-4">
-            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-2.5">
               {partsLoading ? (
                 /* Skeleton Loader Grid */
                 Array.from({ length: 12 }).map((_, i) => (
                   <div key={i} className="bg-white border border-gray-100 rounded-xl p-0 overflow-hidden shadow-sm animate-pulse">
-                    <div className="h-28 bg-gray-200"></div>
-                    <div className="p-3 space-y-2">
+                    <div className="h-20 md:h-24 bg-gray-200"></div>
+                    <div className="p-2 space-y-2">
                       <div className="h-4 bg-gray-200 rounded w-3/4"></div>
                       <div className="h-3 bg-gray-200 rounded w-1/2"></div>
                       <div className="flex justify-between pt-2">
@@ -1889,6 +1920,7 @@ const POSPage = () => {
                   <ProductItem
                     key={part.id}
                     part={part}
+                    cartQty={cartQtyByPartId[part.id] || 0}
                     onAddToCart={addToCart}
                     onShowDetails={setSelectedPart}
                   />
@@ -1919,7 +1951,7 @@ const POSPage = () => {
 
         {/* RIGHT SIDE: CART */}
         <div
-          className={`w-full md:w-1/3 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl z-20 
+          className={`w-full md:w-2/5 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl z-20 
           ${mobileView === "products" ? "hidden md:flex" : "flex"}
       `}
         >
@@ -1958,7 +1990,7 @@ const POSPage = () => {
             </button>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50/50">
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2 bg-gray-50/50">
             {cart.length === 0 ? (
               <div className="text-center text-gray-400 mt-20 flex flex-col items-center">
                 <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
@@ -1972,6 +2004,8 @@ const POSPage = () => {
                 const original = parseFloat(item.sell_price) || 0;
                 const discountVal = parseFloat(item.discountAmount) || 0;
                 const final = original - discountVal;
+                // Same arithmetic as totalAmount, so the lines add up to the total.
+                const lineTotal = final * item.quantity;
 
                 // Calculate remaining unit profitability based on buy_price
                 const buyPrice = parseFloat(item.buy_price || 0);
@@ -1980,14 +2014,19 @@ const POSPage = () => {
                 const currentMarkup = buyPrice > 0 ? ((currentProfit / buyPrice) * 100).toFixed(1) : "0.0";
 
                 let profitColorClass = "bg-green-50 text-green-700 border-green-100";
-                let profitText = `Margin: ${currentMargin}% (Markup: ${currentMarkup}%)`;
+                let profitText = `Margin: ${currentMargin}% • Markup: ${currentMarkup}%`;
+                // Abbreviated for the inline badge; the spelled-out figures stay
+                // in its tooltip. Colour carries the profit/loss signal.
+                let profitShort = `Mgn ${currentMargin}% · Mkp ${currentMarkup}%`;
 
                 if (currentProfit === 0) {
                   profitColorClass = "bg-amber-50 text-amber-700 border-amber-100";
                   profitText = "Break Even (0%)";
+                  profitShort = "Break Even";
                 } else if (currentProfit < 0) {
                   profitColorClass = "bg-red-50 text-red-700 border-red-200 animate-pulse font-bold";
-                  profitText = `Loss: Margin: ${currentMargin}%`;
+                  profitText = `Loss — Margin: ${currentMargin}% • Markup: ${currentMarkup}%`;
+                  profitShort = `Mgn ${currentMargin}% · Mkp ${currentMarkup}%`;
                 }
 
                 const percentValue = item.discountPercentInput !== undefined
@@ -1997,12 +2036,29 @@ const POSPage = () => {
                 return (
                   <div
                     key={item.id}
-                    className="flex flex-col bg-white p-3 rounded-xl shadow-sm border border-gray-200"
+                    className="flex flex-col bg-white p-2.5 rounded-xl shadow-sm border border-gray-200"
                   >
-                    {/* Row 1: Title, details and remove */}
-                    <div className="flex justify-between items-start mb-2.5">
-                      <div className="flex-1 pr-2">
-                        <h4 className="font-bold text-sm text-gray-800 line-clamp-2">
+                    {/* Row 1: thumbnail, title, remove */}
+                    <div className="flex items-start gap-2.5">
+                      {item.item_type === "LABOR" ? (
+                        <div className="w-11 h-11 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0 text-blue-500">
+                          <Wrench size={18} />
+                        </div>
+                      ) : item.image ? (
+                        <img
+                          src={item.image}
+                          alt=""
+                          loading="lazy"
+                          className="w-11 h-11 rounded-lg object-cover border border-gray-100 bg-gray-50 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-11 h-11 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0 text-gray-300">
+                          <Package size={18} />
+                        </div>
+                      )}
+
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-[13px] text-gray-800 leading-snug line-clamp-2">
                           {item.name}
                         </h4>
                         {item.item_type === "LABOR" ? (
@@ -2010,111 +2066,113 @@ const POSPage = () => {
                             <Wrench size={10} /> Repair / Labor
                           </p>
                         ) : (
-                          <p className="text-[10px] text-gray-500 font-mono">
+                          <p className="text-[10px] text-gray-500 font-mono truncate">
                             {item.part_number} • {item.brand}
                           </p>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+
+                      <div className="flex items-center gap-0.5 shrink-0">
                         {item.item_type === "LABOR" && (
                           <button
                             onClick={() => handleOpenEditLabor(item)}
-                            className="text-gray-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded-full transition-colors"
+                            className="text-gray-300 hover:text-blue-500 p-1 hover:bg-blue-50 rounded-full transition-colors"
                             title="Edit description/price"
                           >
-                            <Pencil size={16} />
+                            <Pencil size={14} />
                           </button>
                         )}
                         <button
                           onClick={() => setItemToRemove(item)}
-                          className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors"
+                          className="text-gray-300 hover:text-red-500 p-1 hover:bg-red-50 rounded-full transition-colors"
                         >
-                          <XCircle size={18} />
+                          <XCircle size={16} />
                         </button>
                       </div>
                     </div>
 
-                    {/* Row 2: Quantity controls & Final Price */}
-                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-gray-100 border-dashed">
-                      {/* Quantity Control */}
-                      <div className="flex items-center bg-gray-100 rounded-lg h-9">
+                    {/* Row 2: quantity, discount, profitability and line price on
+                        one line. Wraps on a narrow cart panel rather than
+                        overflowing. */}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-dashed border-gray-100">
+                      {/* Quantity */}
+                      <div className="flex items-center bg-gray-100 rounded-lg h-7 shrink-0">
                         <button
                           onClick={() => updateQuantity(item.id, -1)}
-                          className="w-9 h-full flex items-center justify-center hover:text-red-600 active:bg-gray-200 rounded-l-lg transition-colors"
+                          className="w-7 h-full flex items-center justify-center hover:text-red-600 active:bg-gray-200 rounded-l-lg transition-colors"
                         >
-                          <Minus size={14} />
+                          <Minus size={13} />
                         </button>
-                        <span className="w-8 text-center text-sm font-bold">
+                        <span className="w-6 text-center text-[13px] font-bold">
                           {item.quantity}
                         </span>
                         <button
                           onClick={() => updateQuantity(item.id, 1)}
-                          className="w-9 h-full flex items-center justify-center hover:text-green-600 active:bg-gray-200 rounded-r-lg transition-colors"
+                          className="w-7 h-full flex items-center justify-center hover:text-green-600 active:bg-gray-200 rounded-r-lg transition-colors"
                         >
-                          <Plus size={14} />
+                          <Plus size={13} />
                         </button>
                       </div>
 
-                      {/* Price Display */}
-                      <div className="text-right">
+                      <Tag size={11} className="text-gray-400 shrink-0" />
+
+                      {/* Discount — rupee */}
+                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-1 shrink-0 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                        <span className={`text-[9px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          title="Discount amount"
+                          value={item.discountAmount === 0 ? '' : item.discountAmount}
+                          onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
+                          className="w-11 text-center bg-transparent outline-none text-[11px] font-semibold text-gray-700 placeholder-gray-300"
+                        />
+                      </div>
+
+                      {/* Discount — percent */}
+                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-0.5 shrink-0 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          placeholder="0"
+                          title="Discount percent"
+                          value={percentValue}
+                          onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
+                          className="w-8 text-center bg-transparent outline-none text-[11px] font-semibold text-gray-700 placeholder-gray-300"
+                        />
+                        <span className={`text-[9px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
+                      </div>
+
+                      {/* Profitability — not meaningful for labor (no buy_price/cost) */}
+                      {item.item_type !== "LABOR" && (
+                        <span
+                          title={profitText}
+                          className={`px-1.5 py-0.5 rounded font-medium text-[9px] border tracking-tight whitespace-nowrap shrink-0 ${profitColorClass}`}
+                        >
+                          {profitShort}
+                        </span>
+                      )}
+
+                      {/* Line price: the bold figure is the line total (unit ×
+                          qty, matching the cart total), with the unit price
+                          spelled out above it whenever more than one is added. */}
+                      <div className="ml-auto text-right leading-tight shrink-0">
                         {item.discountAmount > 0 && (
                           <p className="text-[10px] text-gray-400 line-through">
-                            {original.toLocaleString()}
+                            {(original * item.quantity).toLocaleString()}
                           </p>
                         )}
-                        <p className={`font-bold text-sm ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
-                          LKR {final.toLocaleString()}
+                        {item.quantity > 1 && (
+                          <p className="text-[10px] text-gray-500 whitespace-nowrap">
+                            {item.quantity} × {final.toLocaleString()}
+                          </p>
+                        )}
+                        <p className={`font-bold text-[13px] ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
+                          LKR {lineTotal.toLocaleString()}
                         </p>
                       </div>
-                    </div>
-
-                    {/* Row 3: Discounts Inputs & Profitability badge */}
-                    <div className="mt-2.5 space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-1">
-                          <Tag size={12} className="text-gray-400" />
-                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Discount</span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {/* Rupee Input */}
-                          <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                            <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
-                            <input
-                              type="number"
-                              min="0"
-                              placeholder="0"
-                              value={item.discountAmount === 0 ? '' : item.discountAmount}
-                              onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
-                              className="w-14 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
-                            />
-                          </div>
-
-                          {/* Percentage Input */}
-                          <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              placeholder="0"
-                              value={percentValue}
-                              onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
-                              className="w-10 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
-                            />
-                            <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Profitability Badge — not meaningful for labor (no buy_price/cost) */}
-                      {item.item_type !== "LABOR" && (
-                        <div className="flex items-center justify-between text-[10px] pt-1">
-                          <span className="text-gray-400 font-medium">Remaining Profit:</span>
-                          <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
-                            {profitText}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
                 );

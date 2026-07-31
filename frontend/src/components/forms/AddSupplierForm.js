@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { Save, X, Truck, User, Phone, Mail, MapPin, Loader, Trash2, Plus } from "lucide-react";
+import AvatarBadge from "../AvatarBadge";
+
+// Small uppercase section heading, matching the muted meta line on the cards.
+const SectionLabel = ({ children, action }) => (
+  <div className="flex items-center justify-between gap-3 mb-3">
+    <span className="text-[11px] font-bold uppercase tracking-widest text-gray-400">{children}</span>
+    {action}
+  </div>
+);
 
 const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
   const [formData, setFormData] = useState({
@@ -7,6 +16,7 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
     email: "",
     address: "",
     contacts: [{ name: "", phones: [""] }],
+    primary_phone: "",
   });
 
   // Populate form if editing
@@ -22,6 +32,7 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
               phones: c.phones && c.phones.length > 0 ? [...c.phones] : [""]
             }))
           : [{ name: "", phones: [""] }],
+        primary_phone: editingSupplier.primary_phone || "",
       });
     } else {
       setFormData({
@@ -29,6 +40,7 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
         email: "",
         address: "",
         contacts: [{ name: "", phones: [""] }],
+        primary_phone: "",
       });
     }
   }, [editingSupplier]);
@@ -45,8 +57,15 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
 
   const handlePhoneChange = (contactIndex, phoneIndex, value) => {
     const updatedContacts = [...formData.contacts];
+    const previous = updatedContacts[contactIndex].phones[phoneIndex];
     updatedContacts[contactIndex].phones[phoneIndex] = value;
-    setFormData({ ...formData, contacts: updatedContacts });
+    // The default is stored as the number itself, so editing the chosen number
+    // has to carry the choice along with it.
+    const primary =
+      formData.primary_phone && formData.primary_phone === previous
+        ? value
+        : formData.primary_phone;
+    setFormData({ ...formData, contacts: updatedContacts, primary_phone: primary });
   };
 
   const addPhone = (contactIndex) => {
@@ -57,11 +76,15 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
 
   const removePhone = (contactIndex, phoneIndex) => {
     const updatedContacts = [...formData.contacts];
-    updatedContacts[contactIndex].phones.splice(phoneIndex, 1);
+    const [removed] = updatedContacts[contactIndex].phones.splice(phoneIndex, 1);
     if (updatedContacts[contactIndex].phones.length === 0) {
       updatedContacts[contactIndex].phones.push("");
     }
-    setFormData({ ...formData, contacts: updatedContacts });
+    setFormData({
+      ...formData,
+      contacts: updatedContacts,
+      primary_phone: formData.primary_phone === removed ? "" : formData.primary_phone,
+    });
   };
 
   const addContact = () => {
@@ -73,9 +96,24 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
 
   const removeContact = (index) => {
     const updatedContacts = [...formData.contacts];
-    updatedContacts.splice(index, 1);
-    setFormData({ ...formData, contacts: updatedContacts });
+    const [removed] = updatedContacts.splice(index, 1);
+    const lostPrimary = (removed.phones || []).includes(formData.primary_phone);
+    setFormData({
+      ...formData,
+      contacts: updatedContacts,
+      primary_phone: lostPrimary ? "" : formData.primary_phone,
+    });
   };
+
+  const enteredPhones = formData.contacts.flatMap((c) =>
+    (c.phones || []).map((p) => p.trim()).filter(Boolean)
+  );
+  const showDefaultPicker = enteredPhones.length > 1;
+  // Falls back to the first number, which is what the card does too.
+  const effectivePrimary =
+    formData.primary_phone && enteredPhones.includes(formData.primary_phone)
+      ? formData.primary_phone
+      : enteredPhones[0] || "";
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -87,218 +125,253 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
       }))
       .filter(c => c.name !== "");
 
+    const remainingPhones = cleanedContacts.flatMap((c) => c.phones);
     onSubmit({
       ...formData,
-      contacts: cleanedContacts
+      contacts: cleanedContacts,
+      primary_phone: remainingPhones.includes(formData.primary_phone)
+        ? formData.primary_phone
+        : "",
     });
   };
 
+  const inputClass =
+    "w-full pl-9 p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors";
+
   return (
-    <div className="bg-white p-6 rounded-lg shadow-md border-t-4 border-red-600 relative">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          {editingSupplier ? (
-            <Truck className="text-blue-600" />
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 md:p-6">
+      {/* Header — mirrors a supplier card: avatar, muted meta line, bold title */}
+      <div className="flex items-start justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3 min-w-0">
+          {formData.name.trim() ? (
+            <AvatarBadge name={formData.name} />
           ) : (
-            <Truck className="text-red-600" />
+            <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center shrink-0">
+              <Truck size={20} />
+            </div>
           )}
-          {editingSupplier ? "Edit Supplier" : "Add New Supplier"}
-        </h2>
+          <div className="min-w-0">
+            <p className="text-xs text-gray-400 font-medium">
+              {editingSupplier ? "Editing supplier" : "New supplier"}
+            </p>
+            <h2 className="text-lg font-bold text-gray-900 truncate">
+              {formData.name.trim() || (editingSupplier ? "Edit Supplier" : "Add New Supplier")}
+            </h2>
+          </div>
+        </div>
+
         <button
+          type="button"
           onClick={onCancel}
-          className="text-gray-400 hover:text-gray-600"
+          className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors shrink-0"
+          title="Close"
         >
-          <X size={24} />
+          <X size={18} />
         </button>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="grid grid-cols-1 md:grid-cols-2 gap-6"
-      >
-        {/* Supplier Name (Required) */}
-        <div className="col-span-1 md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Company / Supplier Name *
-          </label>
-          <div className="relative">
-            <Truck className="absolute left-3 top-3 text-gray-400" size={18} />
+      <form onSubmit={handleSubmit}>
+        {/* ── Company ─────────────────────────────────────────────────── */}
+        <SectionLabel>Company</SectionLabel>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="md:col-span-2 relative">
+            <Truck className="absolute left-3 top-3 text-gray-400" size={16} />
             <input
               type="text"
               name="name"
               required
               value={formData.name}
               onChange={handleChange}
-              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
-              placeholder="e.g. Toyota Lanka (Pvt) Ltd"
+              className={inputClass}
+              placeholder="Company / supplier name *"
+            />
+          </div>
+
+          <div className="relative">
+            <Mail className="absolute left-3 top-3 text-gray-400" size={16} />
+            <input
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              className={inputClass}
+              placeholder="Email address (optional)"
+            />
+          </div>
+
+          <div className="relative">
+            <MapPin className="absolute left-3 top-3 text-gray-400" size={16} />
+            <input
+              type="text"
+              name="address"
+              value={formData.address}
+              onChange={handleChange}
+              className={inputClass}
+              placeholder="Address (optional)"
             />
           </div>
         </div>
 
-        {/* Contacts Section */}
-        <div className="col-span-1 md:col-span-2 border-t border-gray-100 pt-6">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-              <User size={18} className="text-red-600" />
-              Contact Persons
-            </h3>
-            <button
-              type="button"
-              onClick={addContact}
-              className="text-xs font-bold text-red-600 hover:text-red-800 border border-red-200 hover:border-red-400 bg-red-50 px-3 py-1.5 rounded-lg transition flex items-center gap-1"
-            >
-              <Plus size={14} /> Add Contact Person
-            </button>
-          </div>
+        {/* ── Contacts ────────────────────────────────────────────────── */}
+        <div className="mt-6">
+          <SectionLabel
+            action={
+              <button
+                type="button"
+                onClick={addContact}
+                className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors"
+              >
+                <Plus size={13} /> Add contact
+              </button>
+            }
+          >
+            Contact Persons
+            {showDefaultPicker && (
+              <span className="normal-case tracking-normal font-medium text-gray-400">
+                {" "}— pick the default number
+              </span>
+            )}
+          </SectionLabel>
 
-          <div className="space-y-4">
+          <div className="space-y-3">
             {formData.contacts.map((contact, contactIdx) => (
-              <div key={contactIdx} className="bg-gray-50 p-4 rounded-xl border border-gray-200 relative">
-                {formData.contacts.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeContact(contactIdx)}
-                    className="absolute top-4 right-4 text-gray-400 hover:text-red-600 transition"
-                    title="Remove Contact"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                )}
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Contact Name */}
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">
-                      Contact Name *
-                    </label>
-                    <div className="relative">
-                      <User className="absolute left-3 top-2.5 text-gray-400" size={16} />
+              <div key={contactIdx} className="bg-gray-50 rounded-2xl border border-gray-100 p-4">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <AvatarBadge
+                      name={contact.name || "?"}
+                      size="w-9 h-9 text-[11px]"
+                      className={contact.name.trim() ? "" : "bg-gray-200 text-gray-400"}
+                    />
+                    <div className="relative flex-1 min-w-0">
+                      <User className="absolute left-3 top-2.5 text-gray-400" size={15} />
                       <input
                         type="text"
                         required
                         value={contact.name}
                         onChange={(e) => handleContactNameChange(contactIdx, e.target.value)}
-                        className="w-full pl-9 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:outline-none bg-white"
-                        placeholder="e.g. Mr. Perera"
+                        className="w-full pl-9 p-2 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-800 focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
+                        placeholder="Contact name *"
                       />
                     </div>
                   </div>
 
-                  {/* Phone Numbers */}
-                  <div>
-                    <label className="block text-xs font-semibold text-gray-600 mb-1">
-                      Phone Numbers *
-                    </label>
-                    <div className="space-y-2">
-                      {contact.phones.map((phone, phoneIdx) => (
-                        <div key={phoneIdx} className="flex gap-2 items-center">
-                          <div className="relative flex-1">
-                            <Phone className="absolute left-3 top-2.5 text-gray-400" size={16} />
+                  {formData.contacts.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeContact(contactIdx)}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors shrink-0"
+                      title="Remove contact"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Phone numbers — indented to line up under the contact name */}
+                <div className="space-y-2 sm:pl-[46px]">
+                  {contact.phones.map((phone, phoneIdx) => {
+                    const isDefault = phone.trim() !== "" && effectivePrimary === phone.trim();
+                    return (
+                      <div key={phoneIdx} className="flex gap-2 items-center">
+                        {showDefaultPicker && (
+                          <label
+                            className="shrink-0 flex items-center cursor-pointer p-1"
+                            title="Use this number as the default for calls"
+                          >
                             <input
-                              type="text"
-                              required
-                              value={phone}
-                              onChange={(e) => handlePhoneChange(contactIdx, phoneIdx, e.target.value)}
-                              className="w-full pl-9 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:outline-none bg-white"
-                              placeholder="e.g. 0771234567"
+                              type="radio"
+                              name="primaryPhone"
+                              className="w-4 h-4 text-gray-900 focus:ring-gray-900 border-gray-300 cursor-pointer"
+                              checked={isDefault}
+                              onChange={() =>
+                                setFormData({ ...formData, primary_phone: phone.trim() })
+                              }
+                              disabled={phone.trim() === ""}
                             />
-                          </div>
-                          {contact.phones.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => removePhone(contactIdx, phoneIdx)}
-                              className="text-gray-400 hover:text-red-600 p-1.5 rounded-lg hover:bg-red-50 transition shrink-0"
-                              title="Remove Number"
-                            >
-                              <X size={16} />
-                            </button>
+                          </label>
+                        )}
+
+                        <div className="relative flex-1">
+                          <Phone className="absolute left-3 top-2.5 text-gray-400" size={15} />
+                          <input
+                            type="text"
+                            required
+                            value={phone}
+                            onChange={(e) => handlePhoneChange(contactIdx, phoneIdx, e.target.value)}
+                            className={`w-full pl-9 pr-16 p-2 bg-white border rounded-xl text-sm focus:ring-0 focus:outline-none transition-colors ${isDefault && showDefaultPicker
+                                ? "border-gray-900"
+                                : "border-gray-200 focus:border-gray-900"
+                              }`}
+                            placeholder="e.g. 0771234567"
+                          />
+                          {isDefault && showDefaultPicker && (
+                            <span className="absolute right-3 top-2.5 text-[9px] font-bold uppercase tracking-wide text-gray-400">
+                              Default
+                            </span>
                           )}
                         </div>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => addPhone(contactIdx)}
-                        className="text-xs font-semibold text-red-600 hover:text-red-800 transition flex items-center gap-1 mt-1 pl-1"
-                      >
-                        <Plus size={12} /> Add Phone Number
-                      </button>
-                    </div>
-                  </div>
+
+                        {contact.phones.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removePhone(contactIdx, phoneIdx)}
+                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors shrink-0"
+                            title="Remove number"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  <button
+                    type="button"
+                    onClick={() => addPhone(contactIdx)}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-gray-900 transition-colors pt-0.5"
+                  >
+                    <Plus size={12} /> Add phone number
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Email */}
-        <div className="col-span-1 md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Email Address
-          </label>
-          <div className="relative">
-            <Mail className="absolute left-3 top-3 text-gray-400" size={18} />
-            <input
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
-              placeholder="e.g. sales@toyota.lk (Leave empty if none)"
-            />
-          </div>
-          <p className="text-xs text-gray-500 mt-1 ml-1">
-            Leave empty if unknown. Do not type "null".
+        {/* ── Footer — count on the left, actions on the right ────────── */}
+        <div className="border-t border-gray-100 mt-6 pt-4 flex items-center justify-between gap-3">
+          <p className="text-[11px] text-gray-400">
+            {formData.contacts.length} contact{formData.contacts.length > 1 ? "s" : ""}
+            {enteredPhones.length > 0 &&
+              ` · ${enteredPhones.length} number${enteredPhones.length > 1 ? "s" : ""}`}
           </p>
-        </div>
 
-        {/* Address */}
-        <div className="col-span-1 md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Address
-          </label>
-          <div className="relative">
-            <MapPin className="absolute left-3 top-3 text-gray-400" size={18} />
-            <textarea
-              name="address"
-              rows="2"
-              value={formData.address}
-              onChange={handleChange}
-              className="w-full pl-10 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none"
-              placeholder="e.g. No 123, High Level Road, Colombo"
-            />
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-2.5 rounded-full transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="flex items-center gap-1.5 bg-gray-900 hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold px-5 py-2.5 rounded-full transition-colors"
+            >
+              {isSaving ? (
+                <>
+                  <Loader size={13} className="animate-spin" /> Saving...
+                </>
+              ) : (
+                <>
+                  <Save size={13} /> {editingSupplier ? "Update supplier" : "Save supplier"}
+                </>
+              )}
+            </button>
           </div>
-        </div>
-
-        {/* Buttons */}
-        <div className="col-span-1 md:col-span-2 flex justify-end gap-3 mt-4">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-5 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition font-medium"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isSaving}
-            className={`px-6 py-2 text-white rounded-lg transition font-bold flex items-center gap-2 ${
-              isSaving
-                ? "bg-red-400 cursor-not-allowed"
-                : "bg-red-600 hover:bg-red-700"
-            }`}
-          >
-            {isSaving ? (
-              <>
-                <Loader size={18} className="animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save size={18} />
-                {editingSupplier ? "Update Supplier" : "Save Supplier"}
-              </>
-            )}
-          </button>
         </div>
       </form>
     </div>

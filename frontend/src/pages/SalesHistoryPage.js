@@ -1060,9 +1060,9 @@ const SalesHistoryPage = () => {
                           colSpan="6"
                           className="p-4 border-t border-gray-200 shadow-inner"
                         >
-                          <div className="ml-4 pl-4 border-l-2 border-red-300">
+                          <div className="ml-4 pl-4 pr-4 border-l-2 border-red-300">
                             {/* Desktop Row Actions */}
-                            <div className="flex flex-wrap gap-3 mb-6 bg-white border border-gray-200 rounded-2xl p-4 shadow-sm max-w-4xl">
+                            <div className="flex flex-wrap gap-3 mb-6 bg-white border border-gray-200 rounded-2xl p-4 shadow-sm w-full">
                               <button
                                 onClick={(e) => printReceipt(sale, e)}
                                 disabled={sale.status === 'CANCELLED'}
@@ -1131,13 +1131,13 @@ const SalesHistoryPage = () => {
                               )}
                             </div>
                              {sale.status === 'CANCELLED' && (
-                               <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-4 mb-4 text-sm max-w-xl">
+                               <div className="bg-red-50 text-red-800 border border-red-100 rounded-xl p-4 mb-4 text-sm w-full">
                                  <span className="font-bold block uppercase tracking-wider text-xs text-red-700 mb-1">Reason for Cancellation</span>
                                  <p className="italic font-medium">"{sale.cancel_reason || "Not specified"}"</p>
                                </div>
                              )}
                              {sale.payment_status === 'PARTIAL' && (
-                               <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-4 mb-4 text-sm max-w-xl flex justify-between">
+                               <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-4 mb-4 text-sm w-full flex justify-between">
                                  <span>
                                    <span className="font-bold block uppercase tracking-wider text-xs text-blue-700 mb-1">Paid Now</span>
                                    {formatLKR(sale.amount_paid)}
@@ -1149,7 +1149,7 @@ const SalesHistoryPage = () => {
                                </div>
                              )}
                              {sale.credit_note && (
-                               <div className="bg-amber-50 text-amber-800 border border-amber-100 rounded-xl p-4 mb-4 text-sm max-w-xl">
+                               <div className="bg-amber-50 text-amber-800 border border-amber-100 rounded-xl p-4 mb-4 text-sm w-full">
                                  <span className="font-bold block uppercase tracking-wider text-xs text-amber-700 mb-1">
                                    Credit Note {sale.payment_status === 'PAID' && '(Settled)'}
                                  </span>
@@ -1157,7 +1157,7 @@ const SalesHistoryPage = () => {
                                </div>
                              )}
                              {(sale.mileage != null || sale.notes) && (
-                               <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-4 mb-4 text-sm max-w-xl space-y-1">
+                               <div className="bg-blue-50 text-blue-800 border border-blue-100 rounded-xl p-4 mb-4 text-sm w-full space-y-1">
                                  {sale.mileage != null && (
                                    <p><span className="font-bold uppercase tracking-wider text-xs text-blue-700">Mileage:</span> {sale.mileage.toLocaleString()} km</p>
                                  )}
@@ -1169,7 +1169,7 @@ const SalesHistoryPage = () => {
                             <h4 className="text-xs font-bold text-gray-500 uppercase mb-2">
                               Purchased Items
                             </h4>
-                            <table className="w-full max-w-4xl text-sm">
+                            <table className="w-full text-sm">
                               <thead>
                                 <tr className="text-gray-400 border-b border-gray-200">
                                   <th className="pb-2 text-left w-[35%]">

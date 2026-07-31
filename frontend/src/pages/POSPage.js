@@ -1958,7 +1958,7 @@ const POSPage = () => {
             </button>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50/50">
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2 bg-gray-50/50">
             {cart.length === 0 ? (
               <div className="text-center text-gray-400 mt-20 flex flex-col items-center">
                 <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
@@ -1980,14 +1980,19 @@ const POSPage = () => {
                 const currentMarkup = buyPrice > 0 ? ((currentProfit / buyPrice) * 100).toFixed(1) : "0.0";
 
                 let profitColorClass = "bg-green-50 text-green-700 border-green-100";
-                let profitText = `Margin: ${currentMargin}% (Markup: ${currentMarkup}%)`;
+                let profitText = `Margin: ${currentMargin}% • Markup: ${currentMarkup}%`;
+                // Abbreviated for the inline badge; the spelled-out figures stay
+                // in its tooltip. Colour carries the profit/loss signal.
+                let profitShort = `Mgn ${currentMargin}% · Mkp ${currentMarkup}%`;
 
                 if (currentProfit === 0) {
                   profitColorClass = "bg-amber-50 text-amber-700 border-amber-100";
                   profitText = "Break Even (0%)";
+                  profitShort = "Break Even";
                 } else if (currentProfit < 0) {
                   profitColorClass = "bg-red-50 text-red-700 border-red-200 animate-pulse font-bold";
-                  profitText = `Loss: Margin: ${currentMargin}%`;
+                  profitText = `Loss — Margin: ${currentMargin}% • Markup: ${currentMarkup}%`;
+                  profitShort = `Mgn ${currentMargin}% · Mkp ${currentMarkup}%`;
                 }
 
                 const percentValue = item.discountPercentInput !== undefined
@@ -1997,12 +2002,29 @@ const POSPage = () => {
                 return (
                   <div
                     key={item.id}
-                    className="flex flex-col bg-white p-3 rounded-xl shadow-sm border border-gray-200"
+                    className="flex flex-col bg-white p-2.5 rounded-xl shadow-sm border border-gray-200"
                   >
-                    {/* Row 1: Title, details and remove */}
-                    <div className="flex justify-between items-start mb-2.5">
-                      <div className="flex-1 pr-2">
-                        <h4 className="font-bold text-sm text-gray-800 line-clamp-2">
+                    {/* Row 1: thumbnail, title, remove */}
+                    <div className="flex items-start gap-2.5">
+                      {item.item_type === "LABOR" ? (
+                        <div className="w-11 h-11 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0 text-blue-500">
+                          <Wrench size={18} />
+                        </div>
+                      ) : item.image ? (
+                        <img
+                          src={item.image}
+                          alt=""
+                          loading="lazy"
+                          className="w-11 h-11 rounded-lg object-cover border border-gray-100 bg-gray-50 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-11 h-11 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0 text-gray-300">
+                          <Package size={18} />
+                        </div>
+                      )}
+
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-[13px] text-gray-800 leading-snug line-clamp-2">
                           {item.name}
                         </h4>
                         {item.item_type === "LABOR" ? (
@@ -2010,111 +2032,106 @@ const POSPage = () => {
                             <Wrench size={10} /> Repair / Labor
                           </p>
                         ) : (
-                          <p className="text-[10px] text-gray-500 font-mono">
+                          <p className="text-[10px] text-gray-500 font-mono truncate">
                             {item.part_number} • {item.brand}
                           </p>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+
+                      <div className="flex items-center gap-0.5 shrink-0">
                         {item.item_type === "LABOR" && (
                           <button
                             onClick={() => handleOpenEditLabor(item)}
-                            className="text-gray-300 hover:text-blue-500 p-1.5 hover:bg-blue-50 rounded-full transition-colors"
+                            className="text-gray-300 hover:text-blue-500 p-1 hover:bg-blue-50 rounded-full transition-colors"
                             title="Edit description/price"
                           >
-                            <Pencil size={16} />
+                            <Pencil size={14} />
                           </button>
                         )}
                         <button
                           onClick={() => setItemToRemove(item)}
-                          className="text-gray-300 hover:text-red-500 p-1.5 hover:bg-red-50 rounded-full transition-colors"
+                          className="text-gray-300 hover:text-red-500 p-1 hover:bg-red-50 rounded-full transition-colors"
                         >
-                          <XCircle size={18} />
+                          <XCircle size={16} />
                         </button>
                       </div>
                     </div>
 
-                    {/* Row 2: Quantity controls & Final Price */}
-                    <div className="flex items-center justify-between gap-2 pb-2.5 border-b border-gray-100 border-dashed">
-                      {/* Quantity Control */}
-                      <div className="flex items-center bg-gray-100 rounded-lg h-9">
+                    {/* Row 2: quantity, discount, profitability and line price on
+                        one line. Wraps on a narrow cart panel rather than
+                        overflowing. */}
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2 pt-2 border-t border-dashed border-gray-100">
+                      {/* Quantity */}
+                      <div className="flex items-center bg-gray-100 rounded-lg h-7 shrink-0">
                         <button
                           onClick={() => updateQuantity(item.id, -1)}
-                          className="w-9 h-full flex items-center justify-center hover:text-red-600 active:bg-gray-200 rounded-l-lg transition-colors"
+                          className="w-7 h-full flex items-center justify-center hover:text-red-600 active:bg-gray-200 rounded-l-lg transition-colors"
                         >
-                          <Minus size={14} />
+                          <Minus size={13} />
                         </button>
-                        <span className="w-8 text-center text-sm font-bold">
+                        <span className="w-6 text-center text-[13px] font-bold">
                           {item.quantity}
                         </span>
                         <button
                           onClick={() => updateQuantity(item.id, 1)}
-                          className="w-9 h-full flex items-center justify-center hover:text-green-600 active:bg-gray-200 rounded-r-lg transition-colors"
+                          className="w-7 h-full flex items-center justify-center hover:text-green-600 active:bg-gray-200 rounded-r-lg transition-colors"
                         >
-                          <Plus size={14} />
+                          <Plus size={13} />
                         </button>
                       </div>
 
-                      {/* Price Display */}
-                      <div className="text-right">
+                      <Tag size={11} className="text-gray-400 shrink-0" />
+
+                      {/* Discount — rupee */}
+                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-1 shrink-0 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                        <span className={`text-[9px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="0"
+                          title="Discount amount"
+                          value={item.discountAmount === 0 ? '' : item.discountAmount}
+                          onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
+                          className="w-11 text-center bg-transparent outline-none text-[11px] font-semibold text-gray-700 placeholder-gray-300"
+                        />
+                      </div>
+
+                      {/* Discount — percent */}
+                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-0.5 shrink-0 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          placeholder="0"
+                          title="Discount percent"
+                          value={percentValue}
+                          onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
+                          className="w-8 text-center bg-transparent outline-none text-[11px] font-semibold text-gray-700 placeholder-gray-300"
+                        />
+                        <span className={`text-[9px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
+                      </div>
+
+                      {/* Profitability — not meaningful for labor (no buy_price/cost) */}
+                      {item.item_type !== "LABOR" && (
+                        <span
+                          title={profitText}
+                          className={`px-1.5 py-0.5 rounded font-medium text-[9px] border tracking-tight whitespace-nowrap shrink-0 ${profitColorClass}`}
+                        >
+                          {profitShort}
+                        </span>
+                      )}
+
+                      {/* Line price */}
+                      <div className="ml-auto text-right leading-tight shrink-0">
                         {item.discountAmount > 0 && (
                           <p className="text-[10px] text-gray-400 line-through">
                             {original.toLocaleString()}
                           </p>
                         )}
-                        <p className={`font-bold text-sm ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
+                        <p className={`font-bold text-[13px] ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
                           LKR {final.toLocaleString()}
                         </p>
                       </div>
-                    </div>
-
-                    {/* Row 3: Discounts Inputs & Profitability badge */}
-                    <div className="mt-2.5 space-y-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-1">
-                          <Tag size={12} className="text-gray-400" />
-                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Discount</span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {/* Rupee Input */}
-                          <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                            <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
-                            <input
-                              type="number"
-                              min="0"
-                              placeholder="0"
-                              value={item.discountAmount === 0 ? '' : item.discountAmount}
-                              onChange={(e) => updateDiscountAmount(item.id, e.target.value)}
-                              className="w-14 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
-                            />
-                          </div>
-
-                          {/* Percentage Input */}
-                          <div className={`flex items-center border rounded-lg h-8 px-2 gap-1 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              placeholder="0"
-                              value={percentValue}
-                              onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
-                              className="w-10 text-center bg-transparent outline-none text-xs font-semibold text-gray-700 placeholder-gray-300"
-                            />
-                            <span className={`text-[10px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Profitability Badge — not meaningful for labor (no buy_price/cost) */}
-                      {item.item_type !== "LABOR" && (
-                        <div className="flex items-center justify-between text-[10px] pt-1">
-                          <span className="text-gray-400 font-medium">Remaining Profit:</span>
-                          <span className={`px-2 py-0.5 rounded-md font-medium text-[10px] border tracking-tight ${profitColorClass}`}>
-                            {profitText}
-                          </span>
-                        </div>
-                      )}
                     </div>
                   </div>
                 );

@@ -52,9 +52,13 @@ const Navbar = () => {
   return (
     <nav className="bg-slate-950 border-b border-white/10 sticky top-0 z-50 print:hidden">
       <div className="px-3 sm:px-5">
-        <div className="flex items-center justify-between h-16 gap-4">
+        {/* The side groups share the leftover space equally (flex-1) so the tab
+            group lands on the true centre of the bar — justify-between alone
+            would push it right, the brand block being far wider than the
+            single power button opposite it. */}
+        <div className="flex items-center h-16 gap-4">
           {/* Brand + clock */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
             <Link to="/" className="flex items-center gap-2.5 group">
               <span className="w-9 h-9 rounded-full bg-white flex items-center justify-center shrink-0 overflow-hidden">
                 <img src={logoImg} alt="NSS" className="w-7 h-auto" />
@@ -71,7 +75,7 @@ const Navbar = () => {
           </div>
 
           {/* Tabs */}
-          <div className="hidden lg:flex items-center gap-1">
+          <div className="hidden lg:flex items-center gap-1 shrink-0">
             {NAV_ITEMS.map((item) => {
               const active = location.pathname === item.path;
               return (
@@ -92,7 +96,7 @@ const Navbar = () => {
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 flex-1 justify-end">
             <button
               onClick={logoutUser}
               title="Logout"

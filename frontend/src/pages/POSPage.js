@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
-const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
+const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
   const pressTimer = useRef(null);
   const isLongPress = useRef(false);
@@ -74,9 +74,18 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
       onTouchStart={startPress}
       onTouchEnd={endPress}
       onTouchMove={endPress}
-      className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation"
+      className={`bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation border ${cartQty > 0 ? "border-red-300" : "border-gray-200"
+        }`}
     >
-      <div className="h-20 md:h-24 bg-gray-100 relative">
+      {/* Notification-style count of how many are already in the cart. Sits
+          outside the image well's overflow clipping so it can overhang. */}
+      {cartQty > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 z-20 min-w-[20px] h-5 px-1.5 rounded-full bg-red-600 text-white text-[11px] font-extrabold flex items-center justify-center shadow-md ring-2 ring-white pointer-events-none">
+          {cartQty}
+        </span>
+      )}
+
+      <div className="h-20 md:h-24 bg-gray-100 relative rounded-t-xl overflow-hidden">
         {part.image ? (
           <>
             {!imgLoaded && (
@@ -1349,6 +1358,16 @@ const POSPage = () => {
   };
 
   // 6. Calculate Totals (Visual Only) - Memoized
+  // How many of each part are already in the active cart, so every product
+  // card can show its own count badge without scanning the cart per card.
+  const cartQtyByPartId = useMemo(() => {
+    const map = {};
+    cart.forEach((item) => {
+      map[item.id] = (map[item.id] || 0) + item.quantity;
+    });
+    return map;
+  }, [cart]);
+
   const totalAmount = useMemo(() => {
     return cart.reduce((sum, item) => {
       const originalPrice = parseFloat(item.sell_price) || 0;
@@ -1901,6 +1920,7 @@ const POSPage = () => {
                   <ProductItem
                     key={part.id}
                     part={part}
+                    cartQty={cartQtyByPartId[part.id] || 0}
                     onAddToCart={addToCart}
                     onShowDetails={setSelectedPart}
                   />
@@ -1984,6 +2004,8 @@ const POSPage = () => {
                 const original = parseFloat(item.sell_price) || 0;
                 const discountVal = parseFloat(item.discountAmount) || 0;
                 const final = original - discountVal;
+                // Same arithmetic as totalAmount, so the lines add up to the total.
+                const lineTotal = final * item.quantity;
 
                 // Calculate remaining unit profitability based on buy_price
                 const buyPrice = parseFloat(item.buy_price || 0);
@@ -2133,15 +2155,22 @@ const POSPage = () => {
                         </span>
                       )}
 
-                      {/* Line price */}
+                      {/* Line price: the bold figure is the line total (unit ×
+                          qty, matching the cart total), with the unit price
+                          spelled out above it whenever more than one is added. */}
                       <div className="ml-auto text-right leading-tight shrink-0">
                         {item.discountAmount > 0 && (
                           <p className="text-[10px] text-gray-400 line-through">
-                            {original.toLocaleString()}
+                            {(original * item.quantity).toLocaleString()}
+                          </p>
+                        )}
+                        {item.quantity > 1 && (
+                          <p className="text-[10px] text-gray-500 whitespace-nowrap">
+                            {item.quantity} × {final.toLocaleString()}
                           </p>
                         )}
                         <p className={`font-bold text-[13px] ${item.discountAmount > 0 ? "text-amber-600" : "text-gray-800"}`}>
-                          LKR {final.toLocaleString()}
+                          LKR {lineTotal.toLocaleString()}
                         </p>
                       </div>
                     </div>

@@ -76,7 +76,7 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
       onTouchMove={endPress}
       className="bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 overflow-hidden flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation"
     >
-      <div className="h-28 md:h-32 bg-gray-100 relative">
+      <div className="h-20 md:h-24 bg-gray-100 relative">
         {part.image ? (
           <>
             {!imgLoaded && (
@@ -98,7 +98,7 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
           </>
         ) : (
           <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
-            <Package size={32} />
+            <Package size={24} />
           </div>
         )}
         <div className="absolute bottom-1.5 left-1.5">
@@ -113,18 +113,18 @@ const ProductItem = memo(({ part, onAddToCart, onShowDetails }) => {
           )}
         </div>
       </div>
-      <div className="p-3 flex-1 flex flex-col justify-between">
+      <div className="p-2 flex-1 flex flex-col justify-between">
         <div>
-          <h3 className="font-bold text-gray-800 text-xs md:text-sm leading-snug line-clamp-2">
+          <h3 className="font-bold text-gray-800 text-[11px] md:text-xs leading-snug line-clamp-2">
             {part.name}
           </h3>
           <p className="text-[10px] text-gray-400 font-mono mt-0.5">
             {part.part_number}
           </p>
         </div>
-        <div className="mt-2 pt-2 border-t border-gray-50 flex items-center justify-between">
-          <p className="text-xs text-gray-500">{part.brand}</p>
-          <p className="text-sm font-bold text-red-600">
+        <div className="mt-1.5 pt-1.5 border-t border-gray-50 flex items-center justify-between">
+          <p className="text-[10px] text-gray-500 truncate">{part.brand}</p>
+          <p className="text-xs font-bold text-red-600 shrink-0">
             {parseFloat(part.sell_price).toLocaleString()}
           </p>
         </div>
@@ -1851,7 +1851,7 @@ const POSPage = () => {
       <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         {/* LEFT SIDE: PRODUCT LIST */}
         <div
-          className={`w-full md:w-2/3 flex flex-col h-full bg-gray-50 transition-all duration-300 ${mobileView === "cart" ? "hidden md:flex" : "flex"
+          className={`w-full md:w-3/5 flex flex-col h-full bg-gray-50 transition-all duration-300 ${mobileView === "cart" ? "hidden md:flex" : "flex"
             }`}
         >
           <div className="p-3 bg-white shadow-sm z-10">
@@ -1868,13 +1868,13 @@ const POSPage = () => {
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 pb-24 md:pb-4">
-            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-2.5">
               {partsLoading ? (
                 /* Skeleton Loader Grid */
                 Array.from({ length: 12 }).map((_, i) => (
                   <div key={i} className="bg-white border border-gray-100 rounded-xl p-0 overflow-hidden shadow-sm animate-pulse">
-                    <div className="h-28 bg-gray-200"></div>
-                    <div className="p-3 space-y-2">
+                    <div className="h-20 md:h-24 bg-gray-200"></div>
+                    <div className="p-2 space-y-2">
                       <div className="h-4 bg-gray-200 rounded w-3/4"></div>
                       <div className="h-3 bg-gray-200 rounded w-1/2"></div>
                       <div className="flex justify-between pt-2">
@@ -1919,7 +1919,7 @@ const POSPage = () => {
 
         {/* RIGHT SIDE: CART */}
         <div
-          className={`w-full md:w-1/3 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl z-20 
+          className={`w-full md:w-2/5 bg-white border-l border-gray-200 flex flex-col h-full shadow-xl z-20 
           ${mobileView === "products" ? "hidden md:flex" : "flex"}
       `}
         >

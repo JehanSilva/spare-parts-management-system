@@ -1,14 +1,28 @@
 import React, { forwardRef } from "react";
 import logo from "../assets/logo.png";
 
-// Full A4 tax-invoice style document — the alternative to the 80mm thermal
-// Receipt. Takes exactly the same props so the two are interchangeable
-// wherever a sale needs to be documented (see BillingDocument).
+// Small uppercase label above a value — used across the info strip.
+const InfoBlock = ({ label, children, align = "left" }) => (
+  <div className={align === "right" ? "text-right" : ""}>
+    <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-gray-500 mb-1">
+      {label}
+    </div>
+    <div className="text-gray-900">{children}</div>
+  </div>
+);
+
+// Full A4 invoice — the alternative to the 80mm thermal Receipt. Takes exactly
+// the same props so the two are interchangeable wherever a sale needs to be
+// documented (see BillingDocument).
+//
+// Everything here has to survive two very different renderers: window.print()
+// and html2canvas (for the WhatsApp share image). That rules out CSS filters,
+// object-fit and box-shadows, which html2canvas silently drops — hence the
+// white logo tile rather than an inverted logo, and flat fills rather than
+// gradients.
 const Invoice = forwardRef(({ sale, cartItems }, ref) => {
-  const formatLKR = (amount) =>
+  const formatAmount = (amount) =>
     new Intl.NumberFormat("en-LK", {
-      style: "currency",
-      currency: "LKR",
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(amount || 0);
@@ -42,13 +56,13 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       part_number: item.part_number,
       qty,
       originalPrice,
-      finalPrice,
       discountAmount,
       lineTotal,
     };
   });
 
   const issuedAt = sale ? new Date(sale.created_at) : new Date();
+  const issuedDate = issuedAt.toLocaleDateString("en-GB");
   const invoiceId = sale ? sale.id.substring(0, 8).toUpperCase() : "DRAFT";
   const customer = sale ? sale.customer_name : "Walk-in";
   const customerPhone = sale ? sale.customer_phone : "";
@@ -57,32 +71,39 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
   const paymentStatus = sale ? sale.payment_status : "PAID";
   const amountPaid =
     paymentStatus === "PAID" ? grandTotal : parseFloat(sale?.amount_paid || 0);
-  const balanceDue = Math.max(grandTotal - amountPaid, 0);
+  const amountDue = Math.max(grandTotal - amountPaid, 0);
 
   const statusLabel =
     paymentStatus === "CREDIT"
-      ? "CREDIT — PAY LATER"
+      ? "Credit — pay later"
       : paymentStatus === "PARTIAL"
-      ? "PARTIALLY PAID"
-      : "PAID";
+      ? "Partially paid"
+      : "Paid in full";
 
   return (
     <div
       ref={ref}
-      className="billing-invoice bg-white text-black p-10 mx-auto"
-      style={{ width: "210mm", minHeight: "297mm", fontFamily: "Helvetica, Arial, sans-serif" }}
+      className="billing-invoice bg-white text-black mx-auto text-[11px] leading-relaxed flex flex-col"
+      style={{
+        width: "210mm",
+        minHeight: "297mm",
+        fontFamily: "Helvetica, Arial, sans-serif",
+      }}
     >
-      {/* HEADER — company identity left, document identity right */}
-      <div className="flex justify-between items-start pb-6 border-b-4 border-red-700">
-        <div className="flex flex-col gap-3">
-          {/* Width-only sizing: html2canvas ignores object-fit, so a box that
-              doesn't match the logo's ~2.4:1 aspect ratio comes out stretched. */}
-          <img src={logo} alt="NSS Auto Spares" className="w-40 h-auto" />
+      {/* ── HEADER BAND ─────────────────────────────────────────────────── */}
+      <div className="bg-red-700 text-white px-10 py-7 flex justify-between items-center">
+        <div className="flex items-center gap-4">
+          {/* White tile: the logo artwork is red, so it needs a light ground.
+              Width-only sizing — html2canvas ignores object-fit and would
+              stretch the ~2.4:1 mark to fill a fixed box. */}
+          <div className="bg-white rounded-lg px-3 py-2 flex items-center">
+            <img src={logo} alt="NSS Auto Spares" className="w-24 h-auto" />
+          </div>
           <div>
-            <h1 className="text-2xl font-black uppercase tracking-wide text-gray-900">
+            <div className="text-lg font-black uppercase tracking-wide leading-tight">
               NSS Auto Spares
-            </h1>
-            <div className="mt-1 text-xs text-gray-600 leading-relaxed">
+            </div>
+            <div className="text-[10px] text-red-100 leading-snug mt-1">
               <div>No. 272 Thudella, Ja-ela</div>
               <div>+94 71 618 8187</div>
             </div>
@@ -90,170 +111,161 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
         </div>
 
         <div className="text-right">
-          <h2 className="text-4xl font-black uppercase tracking-tight text-red-700">Invoice</h2>
-          <table className="mt-4 text-xs ml-auto">
-            <tbody>
-              <tr>
-                <td className="pr-4 py-0.5 text-gray-500 text-left">Invoice No.</td>
-                <td className="py-0.5 font-bold text-right">#{invoiceId}</td>
-              </tr>
-              <tr>
-                <td className="pr-4 py-0.5 text-gray-500 text-left">Date</td>
-                <td className="py-0.5 font-bold text-right">
-                  {issuedAt.toLocaleDateString("en-GB")}
-                </td>
-              </tr>
-              <tr>
-                <td className="pr-4 py-0.5 text-gray-500 text-left">Time</td>
-                <td className="py-0.5 font-bold text-right">
-                  {issuedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="text-3xl font-black uppercase tracking-tight leading-none">Invoice</div>
+          <div className="text-[10px] text-red-100 mt-2 tracking-wide">#{invoiceId}</div>
         </div>
       </div>
 
-      {/* BILL TO / VEHICLE */}
-      <div className="flex justify-between gap-8 mt-6">
-        <div className="flex-1">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">
-            Bill To
-          </div>
-          <div className="text-base font-bold text-gray-900">{customer || "Walk-in Customer"}</div>
-          {customerPhone && <div className="text-xs text-gray-600 mt-0.5">{customerPhone}</div>}
-        </div>
+      {/* ── INFO STRIP ──────────────────────────────────────────────────── */}
+      <div className="px-10 pt-7 pb-6 flex justify-between gap-6 border-b border-gray-200">
+        <InfoBlock label="Bill To">
+          <div className="font-bold text-[12px]">{customer || "Walk-in customer"}</div>
+          {customerPhone && <div className="text-gray-600">{customerPhone}</div>}
+        </InfoBlock>
 
         {vehicle && (
-          <div className="flex-1">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">
-              Vehicle
-            </div>
-            <div className="text-base font-bold text-gray-900">{vehicle}</div>
-          </div>
+          <InfoBlock label="Vehicle">
+            <div className="font-bold text-[12px]">{vehicle}</div>
+          </InfoBlock>
         )}
 
-        <div className="text-right">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">
-            Status
-          </div>
+        <InfoBlock label="Invoice Date" align="right">
+          <div className="font-bold text-[12px]">{issuedDate}</div>
+        </InfoBlock>
+
+        <InfoBlock label="Payment" align="right">
           <span
-            className={`inline-block px-3 py-1 rounded text-[11px] font-black uppercase tracking-wide border-2 ${
+            className={`inline-block px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wide ${
               paymentStatus === "PAID"
-                ? "border-green-700 text-green-700"
-                : "border-amber-600 text-amber-700"
+                ? "bg-green-100 text-green-800"
+                : "bg-amber-100 text-amber-800"
             }`}
           >
             {statusLabel}
           </span>
-        </div>
+        </InfoBlock>
       </div>
 
-      {/* LINE ITEMS */}
-      <table className="w-full mt-8 text-xs border-collapse">
-        <thead>
-          <tr className="bg-gray-900 text-white text-[10px] uppercase tracking-wider">
-            <th className="py-2.5 px-3 text-left w-[6%]">#</th>
-            <th className="py-2.5 px-3 text-left w-[42%]">Description</th>
-            <th className="py-2.5 px-3 text-center w-[8%]">Qty</th>
-            <th className="py-2.5 px-3 text-right w-[15%]">Unit Price</th>
-            <th className="py-2.5 px-3 text-right w-[14%]">Discount</th>
-            <th className="py-2.5 px-3 text-right w-[15%]">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item, index) => (
-            <tr key={index} className="border-b border-gray-200 align-top">
-              <td className="py-2.5 px-3 text-gray-500">{index + 1}</td>
-              <td className="py-2.5 px-3">
-                <div className="font-bold text-gray-900">{item.name}</div>
-                {item.part_number && (
-                  <div className="text-[10px] text-gray-500 font-mono mt-0.5">
-                    {item.part_number}
-                  </div>
-                )}
-              </td>
-              <td className="py-2.5 px-3 text-center">{item.qty}</td>
-              <td className="py-2.5 px-3 text-right">{item.originalPrice.toFixed(2)}</td>
-              <td className="py-2.5 px-3 text-right">
-                {item.discountAmount > 0 ? `- ${(item.discountAmount * item.qty).toFixed(2)}` : "—"}
-              </td>
-              <td className="py-2.5 px-3 text-right font-bold">{item.lineTotal.toFixed(2)}</td>
+      {/* ── LINE ITEMS ──────────────────────────────────────────────────── */}
+      <div className="px-10 pt-8">
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="bg-red-700 text-white text-[9px] uppercase tracking-[0.1em]">
+              <th className="py-2.5 pl-3 pr-2 text-left font-bold w-[6%]">#</th>
+              <th className="py-2.5 px-2 text-left font-bold w-[40%]">Description</th>
+              <th className="py-2.5 px-2 text-center font-bold w-[8%]">Qty</th>
+              <th className="py-2.5 px-2 text-right font-bold w-[16%]">Unit Price</th>
+              <th className="py-2.5 px-2 text-right font-bold w-[14%]">Discount</th>
+              <th className="py-2.5 pl-2 pr-3 text-right font-bold w-[16%]">Amount</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-
-      {/* TOTALS */}
-      <div className="flex justify-end mt-6">
-        <table className="text-sm w-[45%]">
+          </thead>
           <tbody>
-            {totalSavings > 0 && (
-              <>
-                <tr>
-                  <td className="py-1.5 text-gray-600">Subtotal</td>
-                  <td className="py-1.5 text-right">{formatLKR(grandTotal + totalSavings)}</td>
-                </tr>
-                <tr>
-                  <td className="py-1.5 text-gray-600">Discount</td>
-                  <td className="py-1.5 text-right">- {formatLKR(totalSavings)}</td>
-                </tr>
-              </>
-            )}
-            <tr className="border-t-2 border-gray-900">
-              <td className="py-2.5 text-base font-black uppercase">Total</td>
-              <td className="py-2.5 text-right text-base font-black">{formatLKR(grandTotal)}</td>
-            </tr>
-            {paymentStatus !== "PAID" && (
-              <>
-                <tr>
-                  <td className="py-1.5 text-gray-600">Amount Paid</td>
-                  <td className="py-1.5 text-right">{formatLKR(amountPaid)}</td>
-                </tr>
-                <tr className="border-t border-gray-300">
-                  <td className="py-2 font-black uppercase text-red-700">Balance Due</td>
-                  <td className="py-2 text-right font-black text-red-700">
-                    {formatLKR(balanceDue)}
-                  </td>
-                </tr>
-              </>
-            )}
+            {items.map((item, index) => (
+              <tr key={index} className={index % 2 ? "bg-gray-50" : "bg-white"}>
+                <td className="py-2.5 pl-3 pr-2 align-top text-gray-400">{index + 1}</td>
+                <td className="py-2.5 px-2 align-top">
+                  <div className="font-bold text-gray-900">{item.name}</div>
+                  {item.part_number && (
+                    <div className="text-[9px] text-gray-500 mt-0.5">{item.part_number}</div>
+                  )}
+                </td>
+                <td className="py-2.5 px-2 align-top text-center">{item.qty}</td>
+                <td className="py-2.5 px-2 align-top text-right">
+                  {formatAmount(item.originalPrice)}
+                </td>
+                <td className="py-2.5 px-2 align-top text-right text-gray-600">
+                  {item.discountAmount > 0 ? `- ${formatAmount(item.discountAmount * item.qty)}` : "—"}
+                </td>
+                <td className="py-2.5 pl-2 pr-3 align-top text-right font-bold">
+                  {formatAmount(item.lineTotal)}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
+      {/* ── TOTALS ──────────────────────────────────────────────────────── */}
+      <div className="px-10 pt-6 flex justify-end">
+        <div className="w-[52%]">
+          {/* px-3 throughout so every figure here lands on the same right
+              edge as the table's Amount column above. */}
+          {totalSavings > 0 && (
+            <>
+              <div className="flex justify-between px-3 py-1.5 text-gray-600">
+                <span>Subtotal</span>
+                <span>LKR {formatAmount(grandTotal + totalSavings)}</span>
+              </div>
+              <div className="flex justify-between px-3 py-1.5 text-gray-600 border-b border-gray-200">
+                <span>Discount</span>
+                <span>- LKR {formatAmount(totalSavings)}</span>
+              </div>
+            </>
+          )}
+
+          <div className="bg-red-700 text-white flex justify-between items-center px-3 py-3 mt-2 rounded">
+            <span className="font-bold uppercase tracking-wide text-[11px]">Total</span>
+            <span className="font-black text-base">LKR {formatAmount(grandTotal)}</span>
+          </div>
+
+          {paymentStatus !== "PAID" && (
+            <>
+              <div className="flex justify-between px-3 py-1.5 mt-1 text-gray-600">
+                <span>Amount paid</span>
+                <span>LKR {formatAmount(amountPaid)}</span>
+              </div>
+              <div className="flex justify-between px-3 py-2 border-t-2 border-gray-900 font-black">
+                <span className="uppercase tracking-wide text-[11px]">Balance due</span>
+                <span>LKR {formatAmount(amountDue)}</span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── NOTES ───────────────────────────────────────────────────────── */}
       {sale?.credit_note && paymentStatus !== "PAID" && (
-        <div className="mt-4 text-xs text-gray-700 border border-gray-300 rounded p-3">
-          <span className="font-bold uppercase text-[10px] tracking-wider text-gray-500">
-            Credit Note:{" "}
-          </span>
-          {sale.credit_note}
+        <div className="px-10 pt-6">
+          <div className="border-l-4 border-amber-400 bg-amber-50 px-4 py-2.5">
+            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-amber-800">
+              Note
+            </span>
+            <div className="text-gray-800">{sale.credit_note}</div>
+          </div>
         </div>
       )}
 
-      {/* TERMS & SIGNATURES */}
-      <div className="mt-12 pt-6 border-t border-gray-300">
-        <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">
-          Terms &amp; Conditions
-        </div>
-        <p className="text-[11px] text-gray-600 leading-relaxed max-w-[60%]">
-          Please retain this invoice for warranty claims. No refunds or returns on electrical
-          parts. Goods remain the property of NSS Auto Spares until paid in full.
-        </p>
-
-        <div className="flex justify-between items-end mt-16">
-          <div className="w-[35%] border-t border-gray-500 pt-2 text-[11px] text-gray-600 text-center">
-            Customer Signature
+      {/* ── FOOTER ──────────────────────────────────────────────────────── */}
+      <div className="px-10 pt-8 mt-auto">
+        <div className="border-t border-gray-200 pt-5 flex justify-between gap-10 items-end">
+          <div className="text-[10px] text-gray-600 leading-relaxed max-w-[62%]">
+            <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-gray-500 mb-1.5">
+              Terms
+            </div>
+            {amountDue > 0 ? (
+              <p className="mb-1">
+                Please settle the outstanding balance within 14 days, quoting the invoice number
+                above.
+              </p>
+            ) : (
+              <p className="mb-1">Paid in full — no further payment is due.</p>
+            )}
+            <p>
+              Please retain this invoice for warranty claims. No refunds or returns on electrical
+              parts.
+            </p>
           </div>
-          <div className="w-[35%] border-t border-gray-500 pt-2 text-[11px] text-gray-600 text-center">
-            For NSS Auto Spares
+
+          <div className="text-center shrink-0">
+            <div className="w-44 border-t border-gray-400 pt-1.5 text-[10px] text-gray-600">
+              For NSS Auto Spares
+            </div>
           </div>
         </div>
-
-        <p className="text-center text-xs font-bold text-gray-700 mt-10">
-          Thank you for your business!
-        </p>
       </div>
+
+      {/* Base rule closing the page, echoing the header band. */}
+      <div className="bg-red-700 h-2 mt-8" />
     </div>
   );
 });

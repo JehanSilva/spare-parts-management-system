@@ -63,6 +63,16 @@
     margin: 0 !important;
   }
 
+  /* Long sales run past one sheet — keep line items whole and repeat the
+     column headers on each page. */
+  .billing-invoice tr {
+    page-break-inside: avoid !important;
+  }
+
+  .billing-invoice thead {
+    display: table-header-group !important;
+  }
+
   /* Daily report container — fill page width, no extra spacing */
   .print-report-container {
     max-width: 100% !important;

@@ -796,3 +796,113 @@ class SaleMileageSyncAPITest(TestCase):
         self.vehicle.refresh_from_db()
         self.assertEqual(self.vehicle.current_mileage, 40000)
 
+
+
+class RestockPrimarySupplierTest(TestCase):
+    """The part's supplier should track whoever it was most recently bought from."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="restockuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.old_supplier = Supplier.objects.create(name="Old Supplier")
+        self.new_supplier = Supplier.objects.create(name="New Supplier")
+        self.part = Part.objects.create(
+            name="Radiator Cap",
+            part_number="DN-RC004",
+            brand="Denso",
+            buy_price=750.00,
+            sell_price=1100.00,
+            stock_qty=10,
+            supplier=self.old_supplier,
+        )
+        self.url = reverse('restock_part', args=[self.part.id])
+
+    def test_restock_updates_primary_supplier(self):
+        response = self.client.post(self.url, {
+            "entries": [{"supplier_id": self.new_supplier.id, "quantity": 5, "buy_price": "800.00"}],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.supplier, self.new_supplier)
+
+    def test_last_entry_with_a_supplier_wins(self):
+        response = self.client.post(self.url, {
+            "entries": [
+                {"supplier_id": self.old_supplier.id, "quantity": 3, "buy_price": "790.00"},
+                {"supplier_id": self.new_supplier.id, "quantity": 2, "buy_price": "810.00"},
+            ],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.supplier, self.new_supplier)
+
+    def test_unknown_supplier_leaves_existing_one_intact(self):
+        response = self.client.post(self.url, {
+            "entries": [{"quantity": 5, "buy_price": "800.00"}],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.supplier, self.old_supplier)
+
+    def test_restock_still_updates_stock_and_average_cost(self):
+        response = self.client.post(self.url, {
+            "entries": [{"supplier_id": self.new_supplier.id, "quantity": 10, "buy_price": "850.00"}],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 20)
+        # (10 × 750 + 10 × 850) / 20 = 800
+        self.assertEqual(float(self.part.buy_price), 800.00)
+
+
+class SupplierPrimaryPhoneTest(TestCase):
+    """The default call number is stored on the supplier and survives edits."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="supplieruser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.contacts = [
+            {"name": "Nimal Perera", "phones": ["0771234567", "0112233445"]},
+            {"name": "Sunil Fernando", "phones": ["0719987766"]},
+        ]
+
+    def test_primary_phone_saved_on_create(self):
+        response = self.client.post(reverse('add_supplier'), {
+            "name": "AutoParts LK",
+            "contacts": self.contacts,
+            "primary_phone": "0719987766",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        supplier = Supplier.objects.get(name="AutoParts LK")
+        self.assertEqual(supplier.primary_phone, "0719987766")
+
+    def test_primary_phone_updated_on_edit(self):
+        supplier = Supplier.objects.create(
+            name="AutoParts LK", contacts=self.contacts, primary_phone="0771234567"
+        )
+        response = self.client.put(reverse('update_supplier', args=[supplier.id]), {
+            "name": "AutoParts LK",
+            "contacts": self.contacts,
+            "primary_phone": "0112233445",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        supplier.refresh_from_db()
+        self.assertEqual(supplier.primary_phone, "0112233445")
+
+    def test_primary_phone_is_exposed_by_the_list_endpoint(self):
+        Supplier.objects.create(
+            name="AutoParts LK", contacts=self.contacts, primary_phone="0719987766"
+        )
+        response = self.client.get(reverse('get_suppliers'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]["primary_phone"], "0719987766")
+
+    def test_defaults_to_blank_when_not_supplied(self):
+        response = self.client.post(reverse('add_supplier'), {
+            "name": "No Default Supplier",
+            "contacts": self.contacts,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Supplier.objects.get(name="No Default Supplier").primary_phone, "")

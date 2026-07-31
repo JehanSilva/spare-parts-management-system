@@ -21,6 +21,196 @@ import {
   XCircle,
 } from "lucide-react";
 
+// Deterministic avatar tint per supplier, so a given supplier always shows the
+// same colour rather than shuffling between renders.
+const AVATAR_TINTS = [
+  "bg-red-100 text-red-700",
+  "bg-blue-100 text-blue-700",
+  "bg-emerald-100 text-emerald-700",
+  "bg-amber-100 text-amber-700",
+  "bg-purple-100 text-purple-700",
+  "bg-cyan-100 text-cyan-700",
+];
+
+const initialsOf = (name = "") =>
+  name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase() || "?";
+
+const tintFor = (name = "") => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) hash = (hash + name.charCodeAt(i)) % AVATAR_TINTS.length;
+  return AVATAR_TINTS[hash];
+};
+
+// --- Supplier card ---
+const SupplierCard = ({ supplier, onEdit, onDelete }) => {
+  const contacts = supplier.contacts || [];
+  const phoneCount = contacts.reduce((n, c) => n + (c.phones ? c.phones.length : 0), 0);
+
+  // The Call button uses the number marked as default in the edit form, falling
+  // back to the first one on file if none is set (or if it was since removed).
+  const chosen = supplier.primary_phone;
+  const defaultOwner = chosen
+    ? contacts.find((c) => (c.phones || []).includes(chosen))
+    : null;
+  const primaryContact = defaultOwner
+    || contacts.find((c) => c.phones && c.phones.length > 0)
+    || contacts[0];
+  const primaryPhone = defaultOwner ? chosen : primaryContact?.phones?.[0] || "";
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl transition-shadow duration-300 p-5 flex flex-col">
+      {/* Header: avatar + actions */}
+      <div className="flex items-start justify-between gap-3">
+        <div
+          className={`w-12 h-12 rounded-full flex items-center justify-center font-extrabold text-sm shrink-0 ${tintFor(
+            supplier.name
+          )}`}
+        >
+          {initialsOf(supplier.name)}
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => onEdit(supplier)}
+            className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors"
+            title="Edit Details"
+          >
+            Edit <Edit2 size={12} />
+          </button>
+          <button
+            onClick={() => onDelete(supplier.id)}
+            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+            title="Delete Supplier"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Identity */}
+      <p className="text-xs text-gray-400 font-medium mt-4">
+        {contacts.length > 0
+          ? `${contacts.length} contact${contacts.length > 1 ? "s" : ""}`
+          : "No contacts"}
+        {phoneCount > 0 && ` · ${phoneCount} number${phoneCount > 1 ? "s" : ""}`}
+      </p>
+      <h2 className="text-lg font-bold text-gray-900 leading-snug mt-0.5 line-clamp-2">
+        {supplier.name}
+      </h2>
+
+      {/* Chips */}
+      <div className="flex flex-wrap gap-2 mt-3">
+        {supplier.email ? (
+          <a
+            href={`mailto:${supplier.email}`}
+            title={supplier.email}
+            className="inline-flex items-center gap-1.5 max-w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg transition-colors"
+          >
+            <Mail size={12} className="shrink-0 text-gray-400" />
+            <span className="truncate">{supplier.email}</span>
+          </a>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 bg-gray-50 text-gray-400 text-xs font-medium px-2.5 py-1 rounded-lg italic">
+            <Mail size={12} className="shrink-0" /> No email
+          </span>
+        )}
+
+        {supplier.address && (
+          <span
+            title={supplier.address}
+            className="inline-flex items-center gap-1.5 max-w-full bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg"
+          >
+            <MapPin size={12} className="shrink-0 text-gray-400" />
+            <span className="truncate">{supplier.address}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Contacts */}
+      <div className="mt-4 space-y-2 flex-1">
+        {contacts.length > 0 ? (
+          contacts.map((contact, cIdx) => (
+            <div key={cIdx} className="bg-gray-50 rounded-xl px-3 py-2">
+              <div className="flex items-center gap-2">
+                <User size={13} className="text-gray-400 shrink-0" />
+                <span className="text-sm font-semibold text-gray-800 truncate">
+                  {contact.name || "Unnamed Contact"}
+                </span>
+              </div>
+              {contact.phones && contact.phones.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-5 mt-1">
+                  {contact.phones.map((ph, pIdx) => (
+                    <a
+                      key={pIdx}
+                      href={`tel:${ph}`}
+                      className={`text-xs hover:text-red-600 hover:underline ${ph === primaryPhone ? "text-gray-800 font-semibold" : "text-gray-500"
+                        }`}
+                    >
+                      {ph}
+                      {ph === primaryPhone && phoneCount > 1 && (
+                        <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-gray-400 no-underline">
+                          Default
+                        </span>
+                      )}
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <div className="pl-5 mt-1 text-xs text-gray-400 italic">No phone numbers</div>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="bg-gray-50 rounded-xl px-3 py-2 text-sm text-gray-400 italic">
+            No contact persons
+          </div>
+        )}
+      </div>
+
+      {/* Footer: primary number + call action */}
+      <div className="border-t border-gray-100 mt-4 pt-4 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          {primaryPhone ? (
+            <>
+              <p className="text-lg font-bold text-gray-900 leading-none truncate">{primaryPhone}</p>
+              <p className="text-[11px] text-gray-400 mt-1 truncate">
+                {primaryContact?.name || "Primary contact"}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-semibold text-gray-400 leading-none">No number on file</p>
+              <p className="text-[11px] text-gray-400 mt-1">Add one via Edit</p>
+            </>
+          )}
+        </div>
+
+        {primaryPhone ? (
+          <a
+            href={`tel:${primaryPhone}`}
+            className="flex items-center gap-1.5 bg-gray-900 hover:bg-black text-white text-xs font-bold px-4 py-2.5 rounded-full transition-colors shrink-0"
+          >
+            <Phone size={13} /> Call
+          </a>
+        ) : (
+          <button
+            onClick={() => onEdit(supplier)}
+            className="flex items-center gap-1.5 bg-gray-900 hover:bg-black text-white text-xs font-bold px-4 py-2.5 rounded-full transition-colors shrink-0"
+          >
+            <Plus size={13} /> Contact
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const SupplierPage = () => {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -235,96 +425,12 @@ const SupplierPage = () => {
             </div>
           ) : (
             filteredSuppliers.map((supplier) => (
-              <div
+              <SupplierCard
                 key={supplier.id}
-                className="bg-white rounded-lg shadow-sm hover:shadow-xl transition-all duration-300 border-t-4 border-red-600 p-5 relative group"
-              >
-                <div className="absolute top-4 right-4 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => handleEdit(supplier)}
-                    className="p-2 bg-gray-100 text-blue-600 rounded-full hover:bg-blue-100 hover:text-blue-800 transition"
-                    title="Edit Details"
-                  >
-                    <Edit2 size={16} />
-                  </button>
-                  {/* UPDATE: Change handleDelete to confirmDelete */}
-                  <button
-                    onClick={() => confirmDelete(supplier.id)}
-                    className="p-2 bg-gray-100 text-red-500 rounded-full hover:bg-red-100 hover:text-red-700 transition"
-                    title="Delete Supplier"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-
-                {/* Name & Contact */}
-                <h2 className="text-lg md:text-xl font-bold text-gray-800 mb-1 pr-20 md:pr-14 truncate">
-                  {supplier.name}
-                </h2>
-
-                <div className="w-full h-px bg-gray-100 my-3"></div>
-
-                <div className="space-y-3 text-sm text-gray-600">
-                  {/* Contacts Section */}
-                  {supplier.contacts && supplier.contacts.length > 0 ? (
-                    <div className="space-y-2.5">
-                      {supplier.contacts.map((contact, cIdx) => (
-                        <div key={cIdx} className="bg-red-50/55 hover:bg-red-50 transition-colors rounded-lg p-2.5 border border-red-100/50 space-y-1">
-                          <div className="flex items-center gap-2">
-                            <User className="text-red-600 shrink-0 font-bold" size={16} />
-                            <span className="font-semibold text-gray-800">{contact.name || "Unnamed Contact"}</span>
-                          </div>
-                          {contact.phones && contact.phones.length > 0 ? (
-                            <div className="pl-6 space-y-1">
-                              {contact.phones.map((ph, pIdx) => (
-                                <div key={pIdx} className="flex items-center gap-1.5 text-xs text-gray-600">
-                                  <Phone className="text-gray-400 shrink-0" size={12} />
-                                  <a href={`tel:${ph}`} className="hover:text-red-600 hover:underline">
-                                    {ph}
-                                  </a>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="pl-6 text-xs text-gray-400 italic">No phone numbers</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-2.5 border border-gray-100">
-                      <User className="text-gray-400 shrink-0" size={16} />
-                      <span className="text-gray-400 italic">No Contact Persons</span>
-                    </div>
-                  )}
-
-                  <div className="w-full h-px bg-gray-100 my-2"></div>
-
-                  <div className="flex items-center gap-3">
-                    <Mail className="text-red-500 shrink-0" size={18} />
-                    <a
-                      href={`mailto:${supplier.email}`}
-                      className="hover:text-red-700 hover:underline truncate block"
-                    >
-                      {supplier.email || (
-                        <span className="text-gray-400 italic">No Email</span>
-                      )}
-                    </a>
-                  </div>
-
-                  <div className="flex items-start gap-3">
-                    <MapPin
-                      className="text-red-500 shrink-0 mt-0.5"
-                      size={18}
-                    />
-                    <span className="leading-snug line-clamp-2">
-                      {supplier.address || (
-                        <span className="text-gray-400 italic">No Address</span>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
+                supplier={supplier}
+                onEdit={handleEdit}
+                onDelete={confirmDelete}
+              />
             ))
           )}
         </div>

@@ -7,6 +7,7 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
     email: "",
     address: "",
     contacts: [{ name: "", phones: [""] }],
+    primary_phone: "",
   });
 
   // Populate form if editing
@@ -22,6 +23,7 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
               phones: c.phones && c.phones.length > 0 ? [...c.phones] : [""]
             }))
           : [{ name: "", phones: [""] }],
+        primary_phone: editingSupplier.primary_phone || "",
       });
     } else {
       setFormData({
@@ -29,6 +31,7 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
         email: "",
         address: "",
         contacts: [{ name: "", phones: [""] }],
+        primary_phone: "",
       });
     }
   }, [editingSupplier]);
@@ -45,8 +48,15 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
 
   const handlePhoneChange = (contactIndex, phoneIndex, value) => {
     const updatedContacts = [...formData.contacts];
+    const previous = updatedContacts[contactIndex].phones[phoneIndex];
     updatedContacts[contactIndex].phones[phoneIndex] = value;
-    setFormData({ ...formData, contacts: updatedContacts });
+    // The default is stored as the number itself, so editing the chosen number
+    // has to carry the choice along with it.
+    const primary =
+      formData.primary_phone && formData.primary_phone === previous
+        ? value
+        : formData.primary_phone;
+    setFormData({ ...formData, contacts: updatedContacts, primary_phone: primary });
   };
 
   const addPhone = (contactIndex) => {
@@ -57,11 +67,15 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
 
   const removePhone = (contactIndex, phoneIndex) => {
     const updatedContacts = [...formData.contacts];
-    updatedContacts[contactIndex].phones.splice(phoneIndex, 1);
+    const [removed] = updatedContacts[contactIndex].phones.splice(phoneIndex, 1);
     if (updatedContacts[contactIndex].phones.length === 0) {
       updatedContacts[contactIndex].phones.push("");
     }
-    setFormData({ ...formData, contacts: updatedContacts });
+    setFormData({
+      ...formData,
+      contacts: updatedContacts,
+      primary_phone: formData.primary_phone === removed ? "" : formData.primary_phone,
+    });
   };
 
   const addContact = () => {
@@ -73,9 +87,24 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
 
   const removeContact = (index) => {
     const updatedContacts = [...formData.contacts];
-    updatedContacts.splice(index, 1);
-    setFormData({ ...formData, contacts: updatedContacts });
+    const [removed] = updatedContacts.splice(index, 1);
+    const lostPrimary = (removed.phones || []).includes(formData.primary_phone);
+    setFormData({
+      ...formData,
+      contacts: updatedContacts,
+      primary_phone: lostPrimary ? "" : formData.primary_phone,
+    });
   };
+
+  const enteredPhones = formData.contacts.flatMap((c) =>
+    (c.phones || []).map((p) => p.trim()).filter(Boolean)
+  );
+  const showDefaultPicker = enteredPhones.length > 1;
+  // Falls back to the first number, which is what the card does too.
+  const effectivePrimary =
+    formData.primary_phone && enteredPhones.includes(formData.primary_phone)
+      ? formData.primary_phone
+      : enteredPhones[0] || "";
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -87,9 +116,13 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
       }))
       .filter(c => c.name !== "");
 
+    const remainingPhones = cleanedContacts.flatMap((c) => c.phones);
     onSubmit({
       ...formData,
-      contacts: cleanedContacts
+      contacts: cleanedContacts,
+      primary_phone: remainingPhones.includes(formData.primary_phone)
+        ? formData.primary_phone
+        : "",
     });
   };
 
@@ -188,10 +221,30 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 mb-1">
                       Phone Numbers *
+                      {showDefaultPicker && (
+                        <span className="font-normal text-gray-400"> — select the default</span>
+                      )}
                     </label>
                     <div className="space-y-2">
                       {contact.phones.map((phone, phoneIdx) => (
                         <div key={phoneIdx} className="flex gap-2 items-center">
+                          {showDefaultPicker && (
+                            <label
+                              className="shrink-0 flex items-center cursor-pointer p-1"
+                              title="Use this number as the default for calls"
+                            >
+                              <input
+                                type="radio"
+                                name="primaryPhone"
+                                className="w-4 h-4 text-red-600 focus:ring-red-500 border-gray-300 cursor-pointer"
+                                checked={phone.trim() !== "" && effectivePrimary === phone.trim()}
+                                onChange={() =>
+                                  setFormData({ ...formData, primary_phone: phone.trim() })
+                                }
+                                disabled={phone.trim() === ""}
+                              />
+                            </label>
+                          )}
                           <div className="relative flex-1">
                             <Phone className="absolute left-3 top-2.5 text-gray-400" size={16} />
                             <input

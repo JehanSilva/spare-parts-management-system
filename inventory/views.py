@@ -496,6 +496,7 @@ def restock_part(request, pk):
     total_added_qty = 0
 
     records_to_create = []
+    latest_supplier = None  # the part's primary supplier follows the newest restock
     for entry in validated_entries:
         supplier_id = entry.get('supplier_id')
         qty = entry['quantity']
@@ -512,6 +513,7 @@ def restock_part(request, pk):
                     {"error": f"Supplier with id {supplier_id} does not exist."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            latest_supplier = supplier_obj
 
         running_value += qty * price
         total_added_qty += qty
@@ -535,6 +537,11 @@ def restock_part(request, pk):
     part.buy_price = new_avg_price
     if sell_price is not None:
         part.sell_price = sell_price
+    # Point the part at whoever it was most recently bought from, so the next
+    # restock defaults to that supplier. Entries left as "Unknown / No Supplier"
+    # leave the existing one alone rather than clearing it.
+    if latest_supplier is not None:
+        part.supplier = latest_supplier
     part.save()
 
     return Response({

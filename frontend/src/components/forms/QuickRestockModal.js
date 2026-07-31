@@ -28,6 +28,16 @@ const emptyEntry = () => ({
   notes: "",
 });
 
+// The first entry for a part is prefilled with the supplier that part is
+// normally bought from, since that's the usual restock source. Extra entries
+// added afterwards stay blank — those exist to record a *different* supplier.
+// `supplier` is the FK id on the part; the <select> compares strings.
+const entryForPart = (part) => ({
+  ...emptyEntry(),
+  supplier_id: part?.supplier ? String(part.supplier) : "",
+  buy_price: part?.buy_price || "",
+});
+
 // ─── Weighted Average Preview ────────────────────────────────────────────────
 const computePreview = (currentQty, currentBuyPrice, entries) => {
   const oldVal = (currentQty || 0) * parseFloat(currentBuyPrice || 0);
@@ -132,7 +142,7 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
   const [suppliers, setSuppliers] = useState([]);
 
   const [entries, setEntries] = useState(
-    initialPart ? [{ ...emptyEntry(), buy_price: initialPart.buy_price || "" }] : [emptyEntry()]
+    initialPart ? [entryForPart(initialPart)] : [emptyEntry()]
   );
   const [sellPrice, setSellPrice] = useState(initialPart ? initialPart.sell_price || "" : "");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -171,7 +181,7 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
     setSelectedPart(part);
     setSearchTerm(part.name);
     setSearchResults([]);
-    setEntries([{ ...emptyEntry(), buy_price: part.buy_price || "" }]);
+    setEntries([entryForPart(part)]);
     setSellPrice(part.sell_price || "");
     setError("");
     setFieldErrors({});

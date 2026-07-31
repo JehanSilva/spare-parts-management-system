@@ -20,6 +20,7 @@ import {
   User,
   History,
   Settings,
+  ClipboardList,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -183,7 +184,38 @@ const HomePage = () => {
           />
         </div>
 
-        {/* --- SECTION 2: Options (settings live on their own page) --- */}
+        {/* --- SECTION 2: Vehicle Repair Estimates --- */}
+        <div className="mb-12">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-amber-100 rounded-lg text-amber-700">
+              <ClipboardList size={24} />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">Vehicle Repair Estimates</h2>
+          </div>
+
+          <Link
+            to="/estimates"
+            className="group bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow flex items-center justify-between gap-4"
+          >
+            <div>
+              <h3 className="text-lg font-bold text-gray-800 group-hover:text-red-700 transition-colors">
+                Create an Estimate
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Build an insurance claim estimate — removing &amp; refitting, repair, paint and
+                replacing items — on the NSS Auto Engineers letterhead.
+              </p>
+              <p className="text-xs text-gray-400 mt-2">
+                Signed automatically and ready to print or send to the claims department.
+              </p>
+            </div>
+            <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-red-50 group-hover:text-red-600 transition-colors shadow-sm border border-gray-100 shrink-0">
+              <ArrowRight size={20} />
+            </div>
+          </Link>
+        </div>
+
+        {/* --- SECTION 3: Options (settings live on their own page) --- */}
         <div className="mb-12">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-gray-200 rounded-lg text-gray-700">
@@ -214,7 +246,7 @@ const HomePage = () => {
           </Link>
         </div>
 
-        {/* --- SECTION 3: Financial Stats Dashboard --- */}
+        {/* --- SECTION 4: Financial Stats Dashboard --- */}
         <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-red-100 rounded-lg text-red-700">

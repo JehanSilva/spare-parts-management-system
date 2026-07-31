@@ -28,19 +28,20 @@ import {
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import CustomerLinkPicker from "../components/CustomerLinkPicker";
+import AvatarBadge from "../components/AvatarBadge";
 
 const formatLKR = (amount) =>
   new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 
 const Field = ({ label, id, ...props }) => (
   <div>
-    <label htmlFor={id} className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">
+    <label htmlFor={id} className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">
       {label}
     </label>
     <input
       id={id}
       {...props}
-      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all"
+      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-0 focus:border-gray-900 focus:bg-white transition-colors disabled:text-gray-400"
     />
   </div>
 );
@@ -88,11 +89,33 @@ const VehicleModal = ({ vehicle, onClose, onSaved }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-900 text-white">
-          <h2 className="font-bold text-lg flex items-center gap-2"><Car size={18} /> {isEdit ? "Edit Vehicle" : "Add Vehicle"}</h2>
-          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X size={18} /></button>
+        {/* Header — mirrors a vehicle card: avatar, muted meta line, bold title */}
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4">
+          <div className="flex items-center gap-3 min-w-0">
+            {form.vehicle_number.trim() ? (
+              <AvatarBadge name={form.vehicle_number} icon={Car} />
+            ) : (
+              <div className="w-12 h-12 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center shrink-0">
+                <Car size={20} />
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-xs text-gray-400 font-medium">
+                {isEdit ? "Editing vehicle" : "New vehicle"}
+              </p>
+              <h2 className="text-lg font-bold text-gray-900 tracking-wide truncate">
+                {form.vehicle_number.trim() || (isEdit ? "Edit Vehicle" : "Add Vehicle")}
+              </h2>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors shrink-0"
+          >
+            <X size={18} />
+          </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="px-6 pb-6 space-y-4 max-h-[80vh] overflow-y-auto">
           {error && <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">{error}</p>}
 
           <Field
@@ -116,20 +139,30 @@ const VehicleModal = ({ vehicle, onClose, onSaved }) => {
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Notes</label>
+            <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">Notes</label>
             <textarea
               value={form.notes}
               onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}
               rows={2}
               placeholder="Optional notes about this vehicle"
-              className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500 focus:bg-white transition-all resize-none"
+              className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-0 focus:border-gray-900 focus:bg-white transition-colors resize-none"
             />
           </div>
 
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50 transition-colors text-sm">Cancel</button>
-            <button type="submit" disabled={loading} className="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 transition-colors text-sm disabled:opacity-60">
-              {loading ? (isEdit ? "Saving..." : "Adding...") : isEdit ? "Save Changes" : "Add Vehicle"}
+          <div className="border-t border-gray-100 mt-2 pt-4 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-4 py-2.5 rounded-full transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex items-center gap-1.5 bg-gray-900 hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold px-5 py-2.5 rounded-full transition-colors"
+            >
+              {loading ? (isEdit ? "Saving..." : "Adding...") : isEdit ? "Save changes" : "Add vehicle"}
             </button>
           </div>
         </form>
@@ -288,60 +321,118 @@ const VehicleHistoryModal = ({ vehicle, onClose }) => {
 };
 
 const VehicleCard = ({ vehicle, onEdit, onDelete, onLink, onHistory }) => (
-  <div className="bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow p-5">
-    <div className="flex items-start gap-4">
-      <div className="w-11 h-11 rounded-full bg-red-50 flex items-center justify-center shrink-0 mt-0.5">
-        <Car size={20} className="text-red-500" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <h3 className="font-bold text-gray-900 text-base tracking-wide truncate">{vehicle.vehicle_number}</h3>
-        {(vehicle.make || vehicle.model || vehicle.year) && (
-          <p className="text-sm text-gray-500 font-medium">{[vehicle.make, vehicle.model, vehicle.year].filter(Boolean).join(" ")}</p>
-        )}
-        <div className="mt-1.5 flex flex-wrap gap-2">
-          {vehicle.color && (
-            <span className="inline-flex items-center gap-1 text-[11px] bg-gray-50 border border-gray-200 text-gray-600 px-2 py-0.5 rounded-full">
-              <Palette size={9} className="text-gray-400" /> {vehicle.color}
-            </span>
-          )}
-          {vehicle.current_mileage != null && (
-            <span className="inline-flex items-center gap-1 text-[11px] bg-blue-50 border border-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
-              <Gauge size={9} /> {vehicle.current_mileage.toLocaleString()} km
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <button onClick={() => onHistory(vehicle)} title="Service history" className="p-2 rounded-xl hover:bg-amber-50 text-gray-400 hover:text-amber-600 transition-colors"><History size={15} /></button>
-        <button onClick={() => onEdit(vehicle)} title="Edit vehicle" className="p-2 rounded-xl hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"><Pencil size={15} /></button>
-        <button onClick={() => onDelete(vehicle)} title="Delete vehicle" className="p-2 rounded-xl hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"><Trash2 size={15} /></button>
+  <div className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl transition-shadow duration-300 p-5 flex flex-col">
+    {/* Header: avatar + actions */}
+    <div className="flex items-start justify-between gap-3">
+      {/* Tinted from the plate so each vehicle keeps a distinct colour; a plate
+          makes poor initials, so the badge carries the car icon instead. */}
+      <AvatarBadge name={vehicle.vehicle_number} icon={Car} />
+
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          onClick={() => onHistory(vehicle)}
+          title="Service history"
+          className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-full transition-colors"
+        >
+          <History size={14} />
+        </button>
+        <button
+          onClick={() => onEdit(vehicle)}
+          className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors"
+          title="Edit vehicle"
+        >
+          Edit <Pencil size={12} />
+        </button>
+        <button
+          onClick={() => onDelete(vehicle)}
+          title="Delete vehicle"
+          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
     </div>
 
-    <div className="mt-3 pt-3 border-t border-gray-100">
-      {vehicle.customer_details ? (
-        <button
-          onClick={() => onLink(vehicle)}
-          className="w-full flex items-center justify-between gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2 hover:bg-green-100 transition-colors text-left"
-        >
-          <div className="min-w-0">
-            <p className="text-xs font-bold text-green-800 truncate">{vehicle.customer_details.name}</p>
-            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-              {vehicle.customer_details.phone && <span className="flex items-center gap-1 text-[11px] text-green-600"><Phone size={10} /> {vehicle.customer_details.phone}</span>}
-              {vehicle.customer_details.email && <span className="flex items-center gap-1 text-[11px] text-green-600"><Mail size={10} /> {vehicle.customer_details.email}</span>}
-              {vehicle.customer_details.address && <span className="flex items-center gap-1 text-[11px] text-green-600 truncate"><MapPin size={10} className="shrink-0" /> {vehicle.customer_details.address}</span>}
-            </div>
-          </div>
-          <span className="text-[10px] font-bold text-green-700 bg-green-100 px-2 py-0.5 rounded-full shrink-0">Change</span>
-        </button>
-      ) : (
-        <button
-          onClick={() => onLink(vehicle)}
-          className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-gray-500 hover:text-red-600 bg-gray-50 hover:bg-red-50 border border-dashed border-gray-300 hover:border-red-300 rounded-xl py-2 transition-colors"
-        >
-          <UserPlus size={13} /> Link Customer (optional)
-        </button>
+    {/* Identity */}
+    <p className="text-xs text-gray-400 font-medium mt-4">
+      {[vehicle.make, vehicle.model, vehicle.year].filter(Boolean).join(" ") || "Details not set"}
+    </p>
+    <h3 className="text-lg font-bold text-gray-900 tracking-wide leading-snug mt-0.5 truncate">
+      {vehicle.vehicle_number}
+    </h3>
+
+    {/* Chips */}
+    <div className="flex flex-wrap gap-2 mt-3">
+      {vehicle.color && (
+        <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg">
+          <Palette size={12} className="shrink-0 text-gray-400" /> {vehicle.color}
+        </span>
       )}
+      {vehicle.current_mileage != null && (
+        <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg">
+          <Gauge size={12} className="shrink-0 text-gray-400" />
+          {vehicle.current_mileage.toLocaleString()} km
+        </span>
+      )}
+      {vehicle.notes && (
+        <span
+          title={vehicle.notes}
+          className="inline-flex items-center gap-1.5 max-w-full bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg"
+        >
+          <StickyNote size={12} className="shrink-0 text-gray-400" />
+          <span className="truncate">{vehicle.notes}</span>
+        </span>
+      )}
+    </div>
+
+    {/* Footer: owner + link action */}
+    <div className="border-t border-gray-100 mt-4 pt-4 flex items-end justify-between gap-3 flex-1">
+      <div className="min-w-0">
+        {vehicle.customer_details ? (
+          <>
+            <p className="text-base font-bold text-gray-900 leading-none truncate">
+              {vehicle.customer_details.name}
+            </p>
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
+              {vehicle.customer_details.phone && (
+                <span className="flex items-center gap-1 text-[11px] text-gray-500">
+                  <Phone size={10} /> {vehicle.customer_details.phone}
+                </span>
+              )}
+              {vehicle.customer_details.email && (
+                <span className="flex items-center gap-1 text-[11px] text-gray-500 truncate">
+                  <Mail size={10} className="shrink-0" /> {vehicle.customer_details.email}
+                </span>
+              )}
+              {vehicle.customer_details.address && (
+                <span className="flex items-center gap-1 text-[11px] text-gray-500 truncate">
+                  <MapPin size={10} className="shrink-0" /> {vehicle.customer_details.address}
+                </span>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm font-semibold text-gray-400 leading-none">No owner linked</p>
+            <p className="text-[11px] text-gray-400 mt-1">Optional</p>
+          </>
+        )}
+      </div>
+
+      <button
+        onClick={() => onLink(vehicle)}
+        className="flex items-center gap-1.5 bg-gray-900 hover:bg-black text-white text-xs font-bold px-4 py-2.5 rounded-full transition-colors shrink-0"
+      >
+        {vehicle.customer_details ? (
+          <>
+            <UserCheck size={13} /> Change
+          </>
+        ) : (
+          <>
+            <UserPlus size={13} /> Link
+          </>
+        )}
+      </button>
     </div>
   </div>
 );

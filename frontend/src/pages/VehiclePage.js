@@ -8,7 +8,8 @@ import {
 import AddVehicleForm from "../components/forms/AddVehicleForm";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
-import { Car, Search, Plus, Edit2, Trash2, XCircle } from "lucide-react";
+import { Car, Search, Plus, Edit2, Trash2, XCircle, Calendar } from "lucide-react";
+import AvatarBadge from "../components/AvatarBadge";
 
 const VehiclePage = () => {
   const [vehicles, setVehicles] = useState([]);
@@ -222,40 +223,42 @@ const VehiclePage = () => {
             filteredVehicles.map((vehicle) => (
               <div
                 key={vehicle.id}
-                className="bg-white p-5 rounded-lg shadow-sm hover:shadow-xl border-l-4 border-red-500 transition-all duration-300 group relative"
+                className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl transition-shadow duration-300 p-5 flex flex-col"
               >
-                {/* Content */}
-                <div>
-                  <h3 className="text-lg font-bold text-gray-800 pr-16 truncate">
-                    {vehicle.make}
-                  </h3>
-                  <p className="text-gray-600 font-medium truncate">
-                    {vehicle.model}
-                  </p>
+                {/* Header: avatar + actions */}
+                <div className="flex items-start justify-between gap-3">
+                  <AvatarBadge name={vehicle.make} />
 
-                  <div className="mt-3">
-                    <span className="bg-red-50 text-red-800 text-xs font-bold px-2.5 py-1 rounded border border-red-100">
-                      Year: {vehicle.year || "N/A"}
-                    </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => handleEdit(vehicle)}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors"
+                      title="Edit"
+                    >
+                      Edit <Edit2 size={12} />
+                    </button>
+                    <button
+                      onClick={() => confirmDelete(vehicle.id)}
+                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
 
-                {/* Mobile-Friendly Actions */}
-                <div className="absolute top-4 right-4 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => handleEdit(vehicle)}
-                    className="p-2 bg-gray-100 text-blue-600 rounded-full hover:bg-blue-100 hover:text-blue-800 transition"
-                    title="Edit"
-                  >
-                    <Edit2 size={16} />
-                  </button>
-                  <button
-                    onClick={() => confirmDelete(vehicle.id)}
-                    className="p-2 bg-gray-100 text-red-500 rounded-full hover:bg-red-100 hover:text-red-700 transition"
-                    title="Delete"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                {/* Identity */}
+                <p className="text-xs text-gray-400 font-medium mt-4">{vehicle.make}</p>
+                <h3 className="text-lg font-bold text-gray-900 leading-snug mt-0.5 line-clamp-2">
+                  {vehicle.model}
+                </h3>
+
+                {/* Chips */}
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-700 text-xs font-medium px-2.5 py-1 rounded-lg">
+                    <Calendar size={12} className="shrink-0 text-gray-400" />
+                    {vehicle.year || "Year not set"}
+                  </span>
                 </div>
               </div>
             ))

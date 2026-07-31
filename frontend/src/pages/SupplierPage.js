@@ -8,6 +8,7 @@ import {
 import AddSupplierForm from "../components/forms/AddSupplierForm";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal"; // <--- 1. Import Modal
+import AvatarBadge from "../components/AvatarBadge";
 import {
   Truck,
   Plus,
@@ -20,32 +21,6 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-
-// Deterministic avatar tint per supplier, so a given supplier always shows the
-// same colour rather than shuffling between renders.
-const AVATAR_TINTS = [
-  "bg-red-100 text-red-700",
-  "bg-blue-100 text-blue-700",
-  "bg-emerald-100 text-emerald-700",
-  "bg-amber-100 text-amber-700",
-  "bg-purple-100 text-purple-700",
-  "bg-cyan-100 text-cyan-700",
-];
-
-const initialsOf = (name = "") =>
-  name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase() || "?";
-
-const tintFor = (name = "") => {
-  let hash = 0;
-  for (let i = 0; i < name.length; i += 1) hash = (hash + name.charCodeAt(i)) % AVATAR_TINTS.length;
-  return AVATAR_TINTS[hash];
-};
 
 // --- Supplier card ---
 const SupplierCard = ({ supplier, onEdit, onDelete }) => {
@@ -67,13 +42,7 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl transition-shadow duration-300 p-5 flex flex-col">
       {/* Header: avatar + actions */}
       <div className="flex items-start justify-between gap-3">
-        <div
-          className={`w-12 h-12 rounded-full flex items-center justify-center font-extrabold text-sm shrink-0 ${tintFor(
-            supplier.name
-          )}`}
-        >
-          {initialsOf(supplier.name)}
-        </div>
+        <AvatarBadge name={supplier.name} />
 
         <div className="flex items-center gap-1.5 shrink-0">
           <button

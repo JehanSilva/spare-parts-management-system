@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord
+from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -176,6 +176,23 @@ class SaleSerializer(serializers.ModelSerializer):
         sale.save()
 
         return sale
+
+# --- 5b. ESTIMATE (insurance claim repair estimate) ---
+class EstimateSerializer(serializers.ModelSerializer):
+    vehicle_details = CustomerVehicleSerializer(source='vehicle', read_only=True)
+
+    class Meta:
+        model = Estimate
+        fields = [
+            'id', 'estimate_number', 'vehicle', 'vehicle_details', 'vehicle_number',
+            'make_model', 'insurance_company', 'date', 'validity_days', 'sections',
+            'total_amount', 'created_at', 'updated_at',
+        ]
+        # All three are derived server-side: the reference number is allocated on
+        # create, the vehicle link is resolved from the plate, and the total is
+        # recomputed from the lines in Estimate.save().
+        read_only_fields = ['estimate_number', 'vehicle', 'total_amount']
+
 
 class ActiveCartSerializer(serializers.ModelSerializer):
     customer_details = CustomerBasicSerializer(source='customer', read_only=True)

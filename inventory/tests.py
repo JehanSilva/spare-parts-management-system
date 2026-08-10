@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, CustomerVehicle
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, CustomerVehicle, Estimate
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -906,3 +906,137 @@ class SupplierPrimaryPhoneTest(TestCase):
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Supplier.objects.get(name="No Default Supplier").primary_phone, "")
+
+
+class EstimateAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.existing_vehicle = CustomerVehicle.objects.create(
+            vehicle_number="CAB-1122", make="Toyota", model="Corolla"
+        )
+        self.list_url = reverse('get_estimates')
+        self.create_url = reverse('create_estimate')
+
+    def _payload(self, **overrides):
+        payload = {
+            "date": "2026-08-10",
+            "insurance_company": "Amana Takaful",
+            "vehicle_number": "dea-0778",
+            "make_model": "TATA Ace",
+            "validity_days": 30,
+            "sections": {
+                # 2 x 1500 = 3000
+                "removing": [{"description": "Remove bumper", "hours": "2", "rate": "1500"}],
+                # blank hours => flat 5000
+                "repair": [{"description": "Panel beating", "hours": "", "rate": "5000"}],
+                "paint": [],
+                "replacing": [{"description": "Headlamp", "hours": "2", "rate": "8000"}],
+            },
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_registers_unknown_plate_and_links_it(self):
+        response = self.client.post(self.create_url, self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        estimate = Estimate.objects.get(pk=response.data['id'])
+        # Plate is normalized to upper case and auto-registered.
+        self.assertEqual(estimate.vehicle_number, "DEA-0778")
+        vehicle = CustomerVehicle.objects.get(vehicle_number="DEA-0778")
+        self.assertEqual(estimate.vehicle, vehicle)
+        self.assertEqual(vehicle.make, "TATA")
+        self.assertEqual(vehicle.model, "Ace")
+        self.assertEqual(estimate.estimate_number, "EST-0001")
+
+    def test_total_is_computed_from_the_lines(self):
+        response = self.client.post(self.create_url, self._payload(), format='json')
+        # 3000 (2 x 1500) + 5000 (flat) + 16000 (2 x 8000)
+        self.assertEqual(Estimate.objects.get(pk=response.data['id']).total_amount, 24000)
+
+    def test_existing_plate_is_reused_not_duplicated(self):
+        response = self.client.post(
+            self.create_url, self._payload(vehicle_number="cab-1122"), format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(CustomerVehicle.objects.filter(vehicle_number="CAB-1122").count(), 1)
+        self.assertEqual(Estimate.objects.get(pk=response.data['id']).vehicle, self.existing_vehicle)
+
+    def test_estimate_numbers_are_sequential(self):
+        self.client.post(self.create_url, self._payload(), format='json')
+        second = self.client.post(
+            self.create_url, self._payload(vehicle_number="CAB-1122"), format='json'
+        )
+        self.assertEqual(second.data['estimate_number'], "EST-0002")
+
+    def test_list_and_search(self):
+        self.client.post(self.create_url, self._payload(), format='json')
+        self.client.post(
+            self.create_url,
+            self._payload(vehicle_number="CAB-1122", insurance_company="SLIC"),
+            format='json',
+        )
+
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+
+        response = self.client.get(self.list_url, {'search': 'slic'})
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['insurance_company'], "SLIC")
+
+    def test_retrieve_returns_the_sections(self):
+        created = self.client.post(self.create_url, self._payload(), format='json')
+        response = self.client.get(reverse('get_estimate', kwargs={'pk': created.data['id']}))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['sections']['removing']), 1)
+        self.assertEqual(response.data['vehicle_details']['vehicle_number'], "DEA-0778")
+
+    def test_update_recomputes_total_and_repoints_the_vehicle(self):
+        created = self.client.post(self.create_url, self._payload(), format='json')
+        url = reverse('update_estimate', kwargs={'pk': created.data['id']})
+
+        response = self.client.patch(url, {
+            "vehicle_number": "cab-1122",
+            "sections": {"removing": [{"description": "Remove bumper", "hours": "2", "rate": "2000"}]},
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        estimate = Estimate.objects.get(pk=created.data['id'])
+        self.assertEqual(estimate.vehicle, self.existing_vehicle)
+        self.assertEqual(estimate.vehicle_number, "CAB-1122")
+        self.assertEqual(estimate.total_amount, 4000)
+        # Untouched fields survive the partial update, and the reference is stable.
+        self.assertEqual(estimate.insurance_company, "Amana Takaful")
+        self.assertEqual(estimate.estimate_number, "EST-0001")
+
+    def test_delete(self):
+        created = self.client.post(self.create_url, self._payload(), format='json')
+        response = self.client.delete(
+            reverse('delete_estimate', kwargs={'pk': created.data['id']})
+        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(Estimate.objects.count(), 0)
+
+    def test_vehicle_estimates_endpoint_is_scoped_to_that_vehicle(self):
+        self.client.post(self.create_url, self._payload(), format='json')
+        self.client.post(self.create_url, self._payload(vehicle_number="CAB-1122"), format='json')
+
+        response = self.client.get(
+            reverse('get_vehicle_estimates', kwargs={'pk': self.existing_vehicle.pk})
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['vehicle_number'], "CAB-1122")
+
+    def test_deleting_a_vehicle_keeps_its_estimates(self):
+        created = self.client.post(
+            self.create_url, self._payload(vehicle_number="CAB-1122"), format='json'
+        )
+        self.existing_vehicle.delete()
+
+        estimate = Estimate.objects.get(pk=created.data['id'])
+        self.assertIsNone(estimate.vehicle)
+        self.assertEqual(estimate.vehicle_number, "CAB-1122")

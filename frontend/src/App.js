@@ -19,6 +19,7 @@ import EmployeePage from "./pages/EmployeePage";
 import DailyReportPage from "./pages/DailyReportPage";
 import OptionsPage from "./pages/OptionsPage";
 import EstimatePage from "./pages/EstimatePage";
+import EstimateListPage from "./pages/EstimateListPage";
 import PrivateRoute from "./components/PrivateRoute";
 import useAutoLogout from "./hooks/useAutoLogout";
 import { PartsProvider } from "./context/PartsContext";
@@ -141,6 +142,22 @@ function App() {
           />
           <Route
             path="/estimates"
+            element={
+              <PrivateRoute>
+                <EstimateListPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/estimates/new"
+            element={
+              <PrivateRoute>
+                <EstimatePage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/estimates/:id"
             element={
               <PrivateRoute>
                 <EstimatePage />

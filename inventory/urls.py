@@ -40,6 +40,13 @@ urlpatterns = [
     path('sales/<uuid:pk>/reverse/', views.reverse_sale, name='reverse_sale'),
     path('sales/<uuid:pk>/mark-paid/', views.mark_sale_paid, name='mark_sale_paid'),
 
+    # Estimates (insurance claim repair estimates)
+    path('estimates/', views.get_estimates, name='get_estimates'),
+    path('estimates/create/', views.create_estimate, name='create_estimate'),
+    path('estimates/<uuid:pk>/', views.get_estimate, name='get_estimate'),
+    path('estimates/<uuid:pk>/update/', views.update_estimate, name='update_estimate'),
+    path('estimates/<uuid:pk>/delete/', views.delete_estimate, name='delete_estimate'),
+
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),
 
@@ -54,6 +61,7 @@ urlpatterns = [
     path('vehicles/registry/add/', views.add_customer_vehicle, name='add_customer_vehicle'),
     path('vehicles/registry/lookup/', views.lookup_vehicle, name='lookup_vehicle'),
     path('vehicles/registry/<int:pk>/history/', views.get_vehicle_history, name='get_vehicle_history'),
+    path('vehicles/registry/<int:pk>/estimates/', views.get_vehicle_estimates, name='get_vehicle_estimates'),
 
     # Dashboard Stats
     path('dashboard/stats/', views.get_dashboard_stats, name='dashboard_stats'),

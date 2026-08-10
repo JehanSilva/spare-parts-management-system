@@ -30,6 +30,33 @@ const formatAmount = (amount) =>
     amount || 0
   );
 
+// --- API <-> builder mapping -------------------------------------------------
+// The builder works in camelCase; the API is snake_case. Both the builder and
+// the saved-estimates list go through these, so the shape is defined once.
+
+export const toEstimatePayload = (estimate) => ({
+  date: estimate.date,
+  insurance_company: estimate.insuranceCompany,
+  vehicle_number: estimate.vehicleNumber,
+  make_model: estimate.makeModel,
+  validity_days: parseInt(estimate.validityDays, 10) || 30,
+  sections: estimate.sections,
+});
+
+export const fromEstimateRecord = (record) => ({
+  date: record.date,
+  insuranceCompany: record.insurance_company || "",
+  vehicleNumber: record.vehicle_number || "",
+  makeModel: record.make_model || "",
+  validityDays: record.validity_days ?? 30,
+  // A section the estimate never used comes back missing or empty; the editor
+  // always needs at least one row to render, so backfill a blank one.
+  sections: ESTIMATE_SECTIONS.reduce((acc, s) => {
+    const rows = record.sections?.[s.key];
+    return { ...acc, [s.key]: rows?.length ? rows : [{ description: "", hours: "", rate: "" }] };
+  }, {}),
+});
+
 // One task group: centred title, the task table, and its own total line.
 const TaskSection = ({ title, totalLabel, unitLabel = "Hours", rows }) => {
   if (!rows || rows.length === 0) return null;

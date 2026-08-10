@@ -174,5 +174,15 @@ export const lookupVehicle = async (vehicleNumber) =>
   (await API.get("/vehicles/registry/lookup/", { params: { vehicle_number: vehicleNumber } })).data;
 export const fetchVehicleHistory = async (vehicleId) =>
   (await API.get(`/vehicles/registry/${vehicleId}/history/`)).data;
+export const fetchVehicleEstimates = async (vehicleId) =>
+  (await API.get(`/vehicles/registry/${vehicleId}/estimates/`)).data;
+
+// --- ESTIMATE SERVICES (insurance claim repair estimates) ---
+export const fetchEstimates = async (search = '') =>
+  (await API.get("/estimates/", { params: search ? { search } : {} })).data;
+export const fetchEstimate = async (id) => (await API.get(`/estimates/${id}/`)).data;
+export const createEstimate = async (data) => (await API.post("/estimates/create/", data)).data;
+export const updateEstimate = async (id, data) => (await API.patch(`/estimates/${id}/update/`, data)).data;
+export const deleteEstimate = async (id) => await API.delete(`/estimates/${id}/delete/`);
 
 export default API;

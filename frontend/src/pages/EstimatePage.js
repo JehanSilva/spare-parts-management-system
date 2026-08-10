@@ -1,12 +1,15 @@
-import React, { useState, useRef } from "react";
-import { Link } from "react-router-dom";
+import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import EstimateDocument, {
   ESTIMATE_SECTIONS,
   rowTotal,
   sectionTotal,
   estimateTotal,
+  toEstimatePayload,
+  fromEstimateRecord,
 } from "../components/EstimateDocument";
 import AlertComponent from "../components/AlertComponent";
+import { fetchEstimate, createEstimate, updateEstimate, lookupVehicle } from "../services/api";
 import {
   ArrowLeft,
   Plus,
@@ -18,6 +21,11 @@ import {
   Eye,
   EyeOff,
   ClipboardList,
+  Save,
+  Loader2,
+  Link2,
+  UserCheck,
+  PlusCircle,
 } from "lucide-react";
 
 const formatAmount = (amount) =>
@@ -145,21 +153,175 @@ const SectionEditor = ({ section, rows, onChange }) => {
   );
 };
 
+// Tells the user, while they type the plate, whether this estimate will attach
+// to a vehicle already on file or register a new one when saved.
+const VehicleLookupStatus = ({ lookup }) => {
+  if (lookup.status === "idle") return null;
+
+  if (lookup.status === "searching") {
+    return (
+      <p className="mt-1.5 text-xs text-gray-400 flex items-center gap-1.5">
+        <Loader2 size={12} className="animate-spin" /> Checking the vehicle registry...
+      </p>
+    );
+  }
+
+  if (lookup.status === "not_found") {
+    return (
+      <p className="mt-1.5 text-xs text-amber-600 flex items-center gap-1.5">
+        <PlusCircle size={12} className="shrink-0" />
+        New vehicle — it'll be added to the registry when you save.
+      </p>
+    );
+  }
+
+  const owner = lookup.vehicle?.customer_details;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      <span className="inline-flex items-center gap-1.5 font-semibold text-green-700">
+        <Link2 size={12} className="shrink-0" /> Linked to a registered vehicle
+      </span>
+      {owner && (
+        <span className="inline-flex items-center gap-1.5 text-gray-500">
+          <UserCheck size={12} className="shrink-0 text-gray-400" /> {owner.name}
+        </span>
+      )}
+    </div>
+  );
+};
+
 const EstimatePage = () => {
+  // Present on /estimates/:id (editing a saved estimate), absent on
+  // /estimates/new (building a fresh one).
+  const { id } = useParams();
+  const navigate = useNavigate();
+
   const today = new Date().toISOString().split("T")[0];
-  const [estimate, setEstimate] = useState({
-    date: today,
-    insuranceCompany: "",
-    vehicleNumber: "",
-    makeModel: "",
-    validityDays: 30,
-    sections: blankSections(),
-  });
+  const blankEstimate = useCallback(
+    () => ({
+      date: today,
+      insuranceCompany: "",
+      vehicleNumber: "",
+      makeModel: "",
+      validityDays: 30,
+      sections: blankSections(),
+    }),
+    [today]
+  );
+
+  const [estimate, setEstimate] = useState(blankEstimate);
+  // The id of the record this form is bound to. Set once a new estimate has
+  // been saved, so a second Save updates it instead of creating a duplicate.
+  const [savedId, setSavedId] = useState(id || null);
+  const [estimateNumber, setEstimateNumber] = useState("");
+  const [loading, setLoading] = useState(Boolean(id));
+  const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const documentRef = useRef(null);
+  // Which record the form currently holds (null = a blank, unsaved one).
+  const loadedIdRef = useRef(null);
+
+  // Registry lookup for the plate being typed, mirroring POSPage.
+  const [vehicleLookup, setVehicleLookup] = useState({ status: "idle", vehicle: null });
+  const lookupRequestRef = useRef(0);
+  // The plate the user typed, and whose registry make/model we may therefore
+  // pull in. Loading a saved estimate leaves this null, so a stored Make &
+  // Model is never overwritten behind the user's back.
+  const autoFillPlateRef = useRef(null);
+
+  useEffect(() => {
+    const current = id || null;
+    if (current === loadedIdRef.current) {
+      // The form already holds this record — this fires after saving a new
+      // estimate redirects to its own URL. Refetching would swap the form out
+      // for a loading skeleton, which would also blank the print copy.
+      setLoading(false);
+      return;
+    }
+    if (!current) {
+      // Navigating from an existing estimate back to /estimates/new.
+      loadedIdRef.current = null;
+      setEstimate(blankEstimate());
+      setSavedId(null);
+      setEstimateNumber("");
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    fetchEstimate(current)
+      .then((record) => {
+        if (cancelled) return;
+        loadedIdRef.current = record.id;
+        setEstimate(fromEstimateRecord(record));
+        setEstimateNumber(record.estimate_number || "");
+        setSavedId(record.id);
+      })
+      .catch(() => {
+        if (!cancelled) navigate("/estimates", { replace: true });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, navigate, blankEstimate]);
 
   const setField = (field, value) => setEstimate((prev) => ({ ...prev, [field]: value }));
+
+  // Look the plate up in the vehicle registry as it's typed, so the form can
+  // say whether this estimate will attach to a vehicle already on file and
+  // fill in its make & model.
+  const vehicleNumber = estimate.vehicleNumber;
+  useEffect(() => {
+    const plate = vehicleNumber.trim();
+    // Invalidate any request already in flight: cancelling the timer below only
+    // stops ones that haven't fired, and a slow response for an older plate
+    // must not clobber the current state.
+    const requestId = ++lookupRequestRef.current;
+
+    if (plate.length < 3) {
+      setVehicleLookup({ status: "idle", vehicle: null });
+      return;
+    }
+
+    setVehicleLookup({ status: "searching", vehicle: null });
+    const timer = setTimeout(async () => {
+      try {
+        const result = await lookupVehicle(plate);
+        if (lookupRequestRef.current !== requestId) return; // superseded by a newer edit
+        if (!result.found) {
+          setVehicleLookup({ status: "not_found", vehicle: null });
+          return;
+        }
+        setVehicleLookup({ status: "found", vehicle: result.vehicle });
+
+        const registryMakeModel = [result.vehicle.make, result.vehicle.model]
+          .filter(Boolean)
+          .join(" ");
+        // Only for a plate the user just typed — see autoFillPlateRef.
+        if (registryMakeModel && autoFillPlateRef.current === plate) {
+          setEstimate((prev) => ({ ...prev, makeModel: registryMakeModel }));
+        }
+      } catch {
+        if (lookupRequestRef.current === requestId) {
+          setVehicleLookup({ status: "idle", vehicle: null });
+        }
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [vehicleNumber]);
+
+  const handleVehicleNumberChange = (value) => {
+    const plate = value.toUpperCase();
+    // The user is choosing this plate, so its registry details are welcome.
+    autoFillPlateRef.current = plate.trim();
+    setField("vehicleNumber", plate);
+  };
   const setSection = (key, rows) =>
     setEstimate((prev) => ({ ...prev, sections: { ...prev.sections, [key]: rows } }));
 
@@ -176,35 +338,89 @@ const EstimatePage = () => {
 
   const hasAnyTask = ESTIMATE_SECTIONS.some((s) => printableEstimate.sections[s.key].length > 0);
 
-  const handlePrint = () => {
-    if (!estimate.vehicleNumber.trim()) {
-      setAlertInfo({ type: "error", message: "Enter the vehicle number before generating." });
-      return;
+  const validate = () => {
+    if (!estimate.vehicleNumber.trim()) return "Enter the vehicle number first.";
+    if (!estimate.insuranceCompany.trim()) return "Enter the insurance company first.";
+    if (!hasAnyTask) return "Add at least one task first.";
+    return null;
+  };
+
+  /**
+   * Persist the estimate, creating it on first save and updating it after.
+   * Only the filtered rows are stored — blank placeholder rows are editor
+   * scaffolding and must not reach the database. Returns the saved record, or
+   * null if validation or the request failed.
+   */
+  const handleSave = async () => {
+    const error = validate();
+    if (error) {
+      setAlertInfo({ type: "error", message: error });
+      return null;
     }
-    if (!estimate.insuranceCompany.trim()) {
-      setAlertInfo({ type: "error", message: "Enter the insurance company before generating." });
-      return;
+
+    setSaving(true);
+    try {
+      const payload = toEstimatePayload(printableEstimate);
+      const record = savedId
+        ? await updateEstimate(savedId, payload)
+        : await createEstimate(payload);
+
+      setEstimateNumber(record.estimate_number || "");
+      if (!savedId) {
+        setSavedId(record.id);
+        // Bind the form to the new record so the next save updates it. The ref
+        // is set first so the URL change doesn't trigger a pointless refetch.
+        loadedIdRef.current = record.id;
+        navigate(`/estimates/${record.id}`, { replace: true });
+      }
+      setAlertInfo({
+        type: "success",
+        message: `Estimate ${record.estimate_number || ""} saved.`.replace("  ", " "),
+      });
+      return record;
+    } catch (err) {
+      setAlertInfo({
+        type: "error",
+        message: err.response?.data?.error || "Could not save the estimate. Please try again.",
+      });
+      return null;
+    } finally {
+      setSaving(false);
     }
-    if (!hasAnyTask) {
-      setAlertInfo({ type: "error", message: "Add at least one task before generating." });
-      return;
-    }
+  };
+
+  // Generating always saves first, so nothing printed is ever left unrecorded.
+  const handlePrint = async () => {
+    const record = await handleSave();
+    if (!record) return;
     // Plain window.print() + print:/print:hidden classes, matching how the POS
     // and Sales History pages print their documents.
     window.print();
   };
 
   const handleReset = () => {
-    setEstimate({
-      date: today,
-      insuranceCompany: "",
-      vehicleNumber: "",
-      makeModel: "",
-      validityDays: 30,
-      sections: blankSections(),
-    });
+    // Clearing a saved estimate must not blank the stored record — start a new
+    // one instead, which the /estimates/new effect resets the form for.
+    if (savedId) {
+      navigate("/estimates/new");
+      return;
+    }
+    setEstimate(blankEstimate());
     setAlertInfo({ type: "success", message: "Estimate cleared." });
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-4 md:p-8">
+        <div className="max-w-6xl mx-auto w-full space-y-5">
+          <div className="h-8 w-64 bg-gray-200 rounded-lg animate-pulse" />
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-40 bg-gray-100 rounded-2xl animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -219,10 +435,10 @@ const EstimatePage = () => {
           )}
 
           <Link
-            to="/"
+            to="/estimates"
             className="inline-flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-red-700 transition-colors mb-6"
           >
-            <ArrowLeft size={16} /> Back to Dashboard
+            <ArrowLeft size={16} /> Back to Estimates
           </Link>
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
@@ -232,7 +448,12 @@ const EstimatePage = () => {
               </div>
               <div>
                 <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">
-                  Vehicle Repair Estimate
+                  {savedId ? "Edit Estimate" : "New Estimate"}
+                  {estimateNumber && (
+                    <span className="ml-3 align-middle text-sm font-bold text-gray-400 tracking-normal">
+                      {estimateNumber}
+                    </span>
+                  )}
                 </h1>
                 <p className="text-gray-500 mt-0.5">
                   Build an insurance claim estimate on the NSS Auto Engineers letterhead.
@@ -249,8 +470,17 @@ const EstimatePage = () => {
                 <span>{showPreview ? "Hide" : "Show"} preview</span>
               </button>
               <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition flex items-center gap-2 disabled:opacity-60"
+              >
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                <span>Save</span>
+              </button>
+              <button
                 onClick={handlePrint}
-                className="flex-1 sm:flex-none justify-center px-5 py-2.5 bg-red-700 text-white rounded-xl font-bold text-sm hover:bg-red-800 transition shadow-lg shadow-red-200 flex items-center gap-2"
+                disabled={saving}
+                className="flex-1 sm:flex-none justify-center px-5 py-2.5 bg-red-700 text-white rounded-xl font-bold text-sm hover:bg-red-800 transition shadow-lg shadow-red-200 flex items-center gap-2 disabled:opacity-60"
               >
                 <Printer size={16} /> <span>Generate Estimate</span>
               </button>
@@ -296,10 +526,11 @@ const EstimatePage = () => {
                 </label>
                 <input
                   value={estimate.vehicleNumber}
-                  onChange={(e) => setField("vehicleNumber", e.target.value.toUpperCase())}
+                  onChange={(e) => handleVehicleNumberChange(e.target.value)}
                   placeholder="e.g. DEA-0778"
                   className="w-full p-2.5 border border-gray-300 rounded-lg font-mono focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
                 />
+                <VehicleLookupStatus lookup={vehicleLookup} />
               </div>
 
               <div>
@@ -310,6 +541,9 @@ const EstimatePage = () => {
                   placeholder="e.g. TATA Ace"
                   className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
                 />
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Filled in from the vehicle registry — edit it for this estimate if it's wrong.
+                </p>
               </div>
 
               <div>
@@ -346,8 +580,17 @@ const EstimatePage = () => {
 
           <div className="flex flex-col sm:flex-row gap-3 mb-10">
             <button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-full sm:w-auto justify-center px-5 py-3 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-black transition flex items-center gap-2 disabled:opacity-60"
+            >
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+              <span>{savedId ? "Save Changes" : "Save Estimate"}</span>
+            </button>
+            <button
               onClick={handlePrint}
-              className="w-full sm:w-auto justify-center px-5 py-3 bg-red-700 text-white rounded-xl font-bold text-sm hover:bg-red-800 transition shadow-lg shadow-red-200 flex items-center gap-2"
+              disabled={saving}
+              className="w-full sm:w-auto justify-center px-5 py-3 bg-red-700 text-white rounded-xl font-bold text-sm hover:bg-red-800 transition shadow-lg shadow-red-200 flex items-center gap-2 disabled:opacity-60"
             >
               <Printer size={16} /> <span>Generate Estimate</span>
             </button>
@@ -355,7 +598,7 @@ const EstimatePage = () => {
               onClick={handleReset}
               className="w-full sm:w-auto justify-center px-5 py-3 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition"
             >
-              Clear Form
+              {savedId ? "Start a New Estimate" : "Clear Form"}
             </button>
           </div>
 

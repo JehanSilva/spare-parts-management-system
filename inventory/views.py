@@ -7,8 +7,8 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle
 from .serializers import VehicleSerializer
@@ -966,6 +966,125 @@ def mark_sale_paid(request, pk):
     sale.save()
 
     return Response(SaleSerializer(sale).data)
+
+
+# --- ESTIMATE VIEWS ---
+def _resolve_estimate_vehicle(vehicle_number, make_model):
+    """
+    Normalize the plate the same way lookup_vehicle does, find it in the
+    registry, and register it if it's new — so an estimate's vehicle FK always
+    holds and the vehicle page can list it. Returns (vehicle, normalized_plate).
+    """
+    plate = (vehicle_number or '').strip().upper()
+    if not plate:
+        return None, ''
+
+    vehicle = CustomerVehicle.objects.filter(vehicle_number__iexact=plate).first()
+    if vehicle is None:
+        # "TATA Ace" -> make "TATA", model "Ace"; a single word is all make.
+        make, _, model = (make_model or '').strip().partition(' ')
+        vehicle = CustomerVehicle.objects.create(
+            vehicle_number=plate,
+            make=make[:50],
+            model=model.strip()[:50],
+        )
+    return vehicle, plate
+
+
+def _next_estimate_number():
+    """Sequential EST-0001, EST-0002, ... derived from the current maximum."""
+    highest = 0
+    for number in Estimate.objects.exclude(estimate_number='').values_list('estimate_number', flat=True):
+        digits = number.rsplit('-', 1)[-1]
+        if digits.isdigit():
+            highest = max(highest, int(digits))
+    return f"EST-{highest + 1:04d}"
+
+
+@api_view(['GET'])
+def get_estimates(request):
+    """List saved estimates, optionally searching by reference, plate or insurer."""
+    search = request.query_params.get('search', '').strip()
+    qs = Estimate.objects.select_related('vehicle__customer')
+    if search:
+        qs = qs.filter(
+            Q(estimate_number__icontains=search) |
+            Q(vehicle_number__icontains=search) |
+            Q(insurance_company__icontains=search) |
+            Q(make_model__icontains=search)
+        )
+    return Response(EstimateSerializer(qs, many=True).data)
+
+
+@api_view(['GET'])
+def get_estimate(request, pk):
+    """A single estimate, for loading it back into the builder."""
+    estimate = get_object_or_404(Estimate.objects.select_related('vehicle__customer'), pk=pk)
+    return Response(EstimateSerializer(estimate).data)
+
+
+@api_view(['POST'])
+@transaction.atomic
+def create_estimate(request):
+    """
+    Save a new estimate. The plate is auto-registered in the vehicle registry if
+    it isn't there yet, so the estimate is always linked to a real vehicle.
+    """
+    serializer = EstimateSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    vehicle, plate = _resolve_estimate_vehicle(
+        serializer.validated_data.get('vehicle_number'),
+        serializer.validated_data.get('make_model'),
+    )
+    estimate = serializer.save(
+        vehicle=vehicle,
+        vehicle_number=plate,
+        estimate_number=_next_estimate_number(),
+    )
+    return Response(EstimateSerializer(estimate).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['PATCH'])
+@transaction.atomic
+def update_estimate(request, pk):
+    """Edit a saved estimate. Changing the plate re-points the vehicle link."""
+    estimate = get_object_or_404(Estimate, pk=pk)
+    serializer = EstimateSerializer(estimate, data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    extra = {}
+    if 'vehicle_number' in serializer.validated_data:
+        vehicle, plate = _resolve_estimate_vehicle(
+            serializer.validated_data.get('vehicle_number'),
+            serializer.validated_data.get('make_model', estimate.make_model),
+        )
+        extra = {'vehicle': vehicle, 'vehicle_number': plate}
+
+    estimate = serializer.save(**extra)
+    return Response(EstimateSerializer(estimate).data)
+
+
+@api_view(['DELETE'])
+def delete_estimate(request, pk):
+    estimate = get_object_or_404(Estimate, pk=pk)
+    estimate.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+def get_vehicle_estimates(request, pk):
+    """
+    GET /vehicles/registry/<pk>/estimates/
+    Every estimate quoted against this vehicle, newest first. Unlike
+    get_vehicle_history (which string-matches Sale.vehicle_number), estimates
+    carry a real FK, so this traverses the relation.
+    """
+    vehicle = get_object_or_404(CustomerVehicle, pk=pk)
+    return Response(EstimateSerializer(vehicle.estimates.all(), many=True).data)
+
 
 # --- REPORTING VIEW ---
 @api_view(['GET'])

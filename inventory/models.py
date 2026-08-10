@@ -152,6 +152,71 @@ class SaleItem(models.Model):
     def __str__(self):
         return f"{self.part.name if self.part else self.description} (x{self.quantity})"
 
+# The four task groups an estimate is built from — mirrors ESTIMATE_SECTIONS in
+# frontend/src/components/EstimateDocument.js.
+ESTIMATE_SECTION_KEYS = ['removing', 'repair', 'paint', 'replacing']
+
+
+def estimate_total(sections):
+    """
+    Grand total of an estimate's section dict. Mirrors rowTotal/estimateTotal in
+    EstimateDocument.js: a line's total is its rate multiplied by hours (or
+    quantity), and a blank/zero hours figure prices the line as a flat amount.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    def to_decimal(value):
+        try:
+            return Decimal(str(value).strip() or '0')
+        except (InvalidOperation, AttributeError, TypeError):
+            return Decimal('0')
+
+    total = Decimal('0')
+    for key in ESTIMATE_SECTION_KEYS:
+        for row in (sections or {}).get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            rate = to_decimal(row.get('rate'))
+            units = to_decimal(row.get('hours'))
+            total += rate * units if units > 0 else rate
+    return total
+
+
+class Estimate(models.Model):
+    """
+    A saved insurance-claim repair estimate, printed on the NSS Auto Engineers
+    letterhead. Line items live in a JSON `sections` dict keyed by
+    ESTIMATE_SECTION_KEYS, the same shape the estimate builder edits — the
+    sections are fixed and nothing reports on individual lines, so there is no
+    child table (see ActiveCart.items for the same trade-off).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    estimate_number = models.CharField(max_length=20, unique=True, blank=True, help_text="Sequential reference, e.g. EST-0001")
+    # SET_NULL, like CustomerVehicle.customer: removing a vehicle from the
+    # registry must not destroy the estimates quoted against it.
+    vehicle = models.ForeignKey(CustomerVehicle, on_delete=models.SET_NULL, null=True, blank=True, related_name='estimates')
+    vehicle_number = models.CharField(max_length=20, help_text="Plate as printed; kept in sync with the linked vehicle")
+    make_model = models.CharField(max_length=100, blank=True)
+    insurance_company = models.CharField(max_length=150)
+    date = models.DateField()
+    validity_days = models.PositiveIntegerField(default=30)
+    sections = models.JSONField(default=dict, blank=True)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def save(self, *args, **kwargs):
+        # Always derived from the lines, never accepted from the client.
+        self.total_amount = estimate_total(self.sections)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.estimate_number or 'Estimate'} - {self.vehicle_number} ({self.insurance_company})"
+
+
 class ActiveCart(models.Model):
     id = models.CharField(max_length=50, primary_key=True) # Matches the frontend cart.id
     customer_name = models.CharField(max_length=100, blank=True, default='')

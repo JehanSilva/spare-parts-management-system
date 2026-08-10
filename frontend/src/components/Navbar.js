@@ -4,26 +4,36 @@ import {
   ShoppingCart,
   Package,
   Truck,
+  Users,
   Car,
-  Layers,
   Home,
   Menu,
   X,
   FileText,
+  ClipboardList,
   Power,
 } from "lucide-react";
 import logoImg from "../assets/logo.png";
 import { logoutUser } from "../services/api";
 
+// The vehicle make/model catalog (/vehicle-models) is deliberately not here —
+// it's reference data that's set up rarely, so it lives on the dashboard.
 const NAV_ITEMS = [
   { path: "/", label: "Home", icon: Home },
   { path: "/pos", label: "POS", icon: ShoppingCart },
   { path: "/inventory", label: "Inventory", icon: Package },
   { path: "/suppliers", label: "Suppliers", icon: Truck },
+  { path: "/customers", label: "Customers", icon: Users },
   { path: "/vehicles", label: "Vehicles", icon: Car },
-  { path: "/vehicle-models", label: "Models", icon: Layers },
   { path: "/sales-history", label: "Sales", icon: FileText },
+  { path: "/estimates", label: "Estimates", icon: ClipboardList },
 ];
+
+// A tab stays lit on its section's sub-routes too — /estimates/new and
+// /estimates/:id belong to the Estimates tab. No nav path is a path-segment
+// prefix of another, so this can't light two tabs at once.
+const isActivePath = (pathname, path) =>
+  pathname === path || pathname.startsWith(`${path}/`);
 
 // Terminal-style chrome: dark bar, live clock and compact icon-over-label
 // tabs. Kept at h-16 — POSPage sizes its panels with calc(100vh-64px).
@@ -77,7 +87,7 @@ const Navbar = () => {
           {/* Tabs */}
           <div className="hidden lg:flex items-center gap-1 shrink-0">
             {NAV_ITEMS.map((item) => {
-              const active = location.pathname === item.path;
+              const active = isActivePath(location.pathname, item.path);
               return (
                 <Link
                   key={item.path}
@@ -123,7 +133,7 @@ const Navbar = () => {
       >
         <div className="grid grid-cols-4 gap-1 p-3">
           {NAV_ITEMS.map((item) => {
-            const active = location.pathname === item.path;
+            const active = isActivePath(location.pathname, item.path);
             return (
               <Link
                 key={item.path}

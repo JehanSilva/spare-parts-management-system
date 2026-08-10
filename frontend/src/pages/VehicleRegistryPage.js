@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   fetchCustomerVehicles,
   createCustomerVehicle,
   updateCustomerVehicle,
   deleteCustomerVehicle,
   fetchVehicleHistory,
+  fetchVehicleEstimates,
 } from "../services/api";
 import {
   Car,
@@ -24,6 +26,9 @@ import {
   History,
   Wrench,
   StickyNote,
+  ClipboardList,
+  Building2,
+  ChevronRight,
 } from "lucide-react";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
@@ -237,18 +242,26 @@ const LinkCustomerModal = ({ vehicle, onClose, onSaved }) => {
   );
 };
 
-// Service History Modal — every job (Sale) recorded against this vehicle's
-// plate number: parts used, repairs/labor performed, dates, mileage, notes.
+// Vehicle History Modal — two views of the same plate: the jobs (Sales)
+// recorded against it, and the insurance estimates quoted for it.
 const VehicleHistoryModal = ({ vehicle, onClose }) => {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState("jobs");
   const [jobs, setJobs] = useState([]);
+  const [estimates, setEstimates] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!vehicle) return;
     setLoading(true);
-    fetchVehicleHistory(vehicle.id)
-      .then(setJobs)
-      .catch(() => setJobs([]))
+    Promise.all([
+      fetchVehicleHistory(vehicle.id).catch(() => []),
+      fetchVehicleEstimates(vehicle.id).catch(() => []),
+    ])
+      .then(([jobsData, estimatesData]) => {
+        setJobs(jobsData);
+        setEstimates(estimatesData);
+      })
       .finally(() => setLoading(false));
   }, [vehicle]);
 
@@ -257,18 +270,76 @@ const VehicleHistoryModal = ({ vehicle, onClose }) => {
   const formatDate = (d) =>
     new Date(d).toLocaleString("en-LK", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
+  const formatDay = (d) =>
+    d ? new Date(d).toLocaleDateString("en-LK", { year: "numeric", month: "short", day: "numeric" }) : "—";
+
+  const TabButton = ({ id, label, count }) => (
+    <button
+      onClick={() => setTab(id)}
+      className={`px-4 py-2.5 text-sm font-bold border-b-2 transition-colors ${
+        tab === id
+          ? "border-gray-900 text-gray-900"
+          : "border-transparent text-gray-400 hover:text-gray-600"
+      }`}
+    >
+      {label} <span className="text-xs font-semibold">({count})</span>
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-900 text-white shrink-0">
-          <h2 className="font-bold text-lg flex items-center gap-2"><History size={18} /> {vehicle.vehicle_number} — Service History</h2>
+          <h2 className="font-bold text-lg flex items-center gap-2"><History size={18} /> {vehicle.vehicle_number} — History</h2>
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X size={18} /></button>
         </div>
+
+        <div className="flex gap-1 px-6 border-b border-gray-100 shrink-0">
+          <TabButton id="jobs" label="Jobs" count={jobs.length} />
+          <TabButton id="estimates" label="Estimates" count={estimates.length} />
+        </div>
+
         <div className="p-6 overflow-y-auto space-y-4">
           {loading ? (
             <div className="space-y-3">
               {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />)}
             </div>
+          ) : tab === "estimates" ? (
+            estimates.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <ClipboardList size={28} className="mx-auto mb-3 opacity-40" />
+                <p className="font-semibold text-gray-500">No estimates yet</p>
+                <p className="text-sm mt-1">Estimates saved for this vehicle will show up here.</p>
+              </div>
+            ) : (
+              estimates.map((estimate) => (
+                <button
+                  key={estimate.id}
+                  onClick={() => {
+                    onClose();
+                    navigate(`/estimates/${estimate.id}`);
+                  }}
+                  className="w-full text-left border border-gray-200 rounded-xl px-4 py-3 hover:border-gray-900 hover:bg-gray-50 transition-colors flex items-center gap-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-gray-700">{formatDay(estimate.date)}</span>
+                      <span className="text-[10px] font-bold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                        {estimate.estimate_number}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600 mt-1 flex items-center gap-1.5 min-w-0">
+                      <Building2 size={11} className="text-gray-400 shrink-0" />
+                      <span className="truncate">{estimate.insurance_company}</span>
+                    </p>
+                  </div>
+                  <span className="text-sm font-bold text-gray-900 shrink-0">
+                    {formatLKR(estimate.total_amount)}
+                  </span>
+                  <ChevronRight size={16} className="text-gray-300 shrink-0" />
+                </button>
+              ))
+            )
           ) : jobs.length === 0 ? (
             <div className="text-center py-12 text-gray-400">
               <Wrench size={28} className="mx-auto mb-3 opacity-40" />

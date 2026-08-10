@@ -21,6 +21,7 @@ import {
   History,
   Settings,
   ClipboardList,
+  Layers,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -156,7 +157,15 @@ const HomePage = () => {
             icon={Car}
             colorClass="text-orange-600 bg-orange-100"
             gradient="from-orange-400 to-orange-600"
-            desc="Configure supported car models."
+            desc="Registered plate numbers, their owners and service history."
+          />
+          <QuickActionCard
+            to="/vehicle-models"
+            title="Vehicle Models"
+            icon={Layers}
+            colorClass="text-amber-600 bg-amber-100"
+            gradient="from-amber-400 to-amber-600"
+            desc="Configure the make, model & year catalog parts are matched against."
           />
           <QuickActionCard
             to="/daily-report"
@@ -199,14 +208,15 @@ const HomePage = () => {
           >
             <div>
               <h3 className="text-lg font-bold text-gray-800 group-hover:text-red-700 transition-colors">
-                Create an Estimate
+                Estimates
               </h3>
               <p className="text-sm text-gray-500 mt-1">
                 Build an insurance claim estimate — removing &amp; refitting, repair, paint and
-                replacing items — on the NSS Auto Engineers letterhead.
+                replacing items — on the NSS Auto Engineers letterhead, or reopen a saved one.
               </p>
               <p className="text-xs text-gray-400 mt-2">
-                Signed automatically and ready to print or send to the claims department.
+                Every estimate is saved against its vehicle, signed automatically and ready to
+                print or send to the claims department.
               </p>
             </div>
             <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-red-50 group-hover:text-red-600 transition-colors shadow-sm border border-gray-100 shrink-0">

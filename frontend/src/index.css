@@ -48,6 +48,19 @@
     padding: 0 !important;
   }
 
+  /* The app shell (App.js Layout) wraps the printed document rather than being
+     hidden by it — the pages hide their own content, not this wrapper — and it
+     carries `min-h-screen bg-gray-50`. With print-color-adjust:exact above,
+     that grey is laid down as real ink across the whole sheet, below wherever
+     the document's content ends. Force every page-level surface back to white,
+     and drop the 100vh floor so it can't reserve a blank sheet of its own. */
+  html,
+  #root,
+  #root > div {
+    background: #fff !important;
+    min-height: 0 !important;
+  }
+
   /* Hide navigation, date picker, buttons, scrollbars */
   nav, .print\\:hidden, button, input[type="date"], a[href] {
     display: none !important;

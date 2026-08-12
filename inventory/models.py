@@ -80,9 +80,31 @@ class CustomerVehicle(models.Model):
     year = models.PositiveIntegerField(null=True, blank=True)
     color = models.CharField(max_length=50, blank=True, help_text="e.g., Pearl White")
     current_mileage = models.PositiveIntegerField(null=True, blank=True, help_text="Current odometer reading in km")
+    # When current_mileage was last actually read, which is NOT updated_at —
+    # that moves whenever any field changes (colour, notes, customer link).
+    # Bills quote the last known reading, so they have to be able to say how
+    # old it is.
+    mileage_updated_at = models.DateTimeField(null=True, blank=True, help_text="When current_mileage was last recorded")
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Remember what was loaded so save() can tell a real mileage change
+        # from a save that merely touched other fields.
+        self._loaded_mileage = self.current_mileage
+
+    def save(self, *args, **kwargs):
+        from django.utils import timezone
+        # Stamp the reading whenever it actually changes — including the first
+        # one, set when the vehicle is registered — but never on a save that
+        # only touched other fields.
+        mileage_changed = self._state.adding or self.current_mileage != self._loaded_mileage
+        if self.current_mileage is not None and mileage_changed:
+            self.mileage_updated_at = timezone.now()
+        super().save(*args, **kwargs)
+        self._loaded_mileage = self.current_mileage
 
     def __str__(self):
         return f"{self.vehicle_number} ({self.customer.name if self.customer else 'Unlinked'})"

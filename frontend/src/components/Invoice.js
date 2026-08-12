@@ -1,5 +1,6 @@
 import React, { forwardRef } from "react";
 import logo from "../assets/logo.png";
+import { getVehicleInfo } from "./billingVehicle";
 
 // Right-aligned "Label : value" row used in the invoice meta column.
 const MetaRow = ({ label, value }) => (
@@ -61,9 +62,8 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
   const issuedDate = issuedAt.toLocaleDateString("en-GB");
   const invoiceId = sale ? sale.id.substring(0, 8).toUpperCase() : "DRAFT";
   const customer = sale ? sale.customer_name : "Walk-in";
-  const customerPhone = sale ? sale.customer_phone : "";
-  const vehicle = sale ? sale.vehicle_number : "";
-  const mileage = sale ? sale.mileage : null;
+  // Plate, make/model and the last known odometer reading with its date.
+  const vehicleInfo = getVehicleInfo(sale);
 
   const paymentStatus = sale ? sale.payment_status : "PAID";
   const amountPaid =
@@ -120,19 +120,26 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
 
       {/* ── BILL TO + META ──────────────────────────────────────────────── */}
       <div className="flex justify-between items-start mt-10">
+        {/* Name only — the customer's phone number is deliberately kept off the
+            printed bill; it's still on the sale record for the WhatsApp share. */}
         <div>
           <div className="font-bold text-gray-900 mb-1">Bill To</div>
           <div className="font-bold text-gray-900">{customer || "Walk-in Customer"}</div>
-          {customerPhone && <div className="text-gray-700">{customerPhone}</div>}
         </div>
 
         <div className="space-y-1.5">
           <MetaRow label="Invoice Date" value={issuedDate} />
           <MetaRow label="Terms" value={termsLabel} />
-          {vehicle && <MetaRow label="Vehicle" value={vehicle} />}
-          {mileage ? (
-            <MetaRow label="Mileage" value={`${Number(mileage).toLocaleString()} km`} />
-          ) : null}
+          {vehicleInfo.plate && <MetaRow label="Vehicle" value={vehicleInfo.plate} />}
+          {vehicleInfo.makeModel && (
+            <MetaRow label="Make & Model" value={vehicleInfo.makeModel} />
+          )}
+          {vehicleInfo.mileageLabel && (
+            <MetaRow label="Mileage" value={vehicleInfo.mileageLabel} />
+          )}
+          {vehicleInfo.mileageDate && (
+            <MetaRow label="Recorded On" value={vehicleInfo.mileageDate} />
+          )}
         </div>
       </div>
 

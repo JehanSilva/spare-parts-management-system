@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db.models.functions import Upper
 from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate
 
 # --- 1. SUPPLIER ---
@@ -119,21 +120,68 @@ class SaleItemSerializer(serializers.ModelSerializer):
         return obj.part.part_number if obj.part else ""
 
 # --- 5. SALE (THE HEADER) ---
+def build_vehicle_registry_context(sales):
+    """
+    Serializer context for a *list* of sales: a PLATE -> CustomerVehicle map
+    built in one query, so SaleSerializer.vehicle_details doesn't turn into a
+    lookup per sale. Matching is by upper-cased plate because Sale.vehicle_number
+    is free text with no FK to the registry.
+    """
+    plates = {s.vehicle_number.strip().upper() for s in sales if s.vehicle_number}
+    if not plates:
+        return {'vehicle_registry': {}}
+    vehicles = CustomerVehicle.objects.annotate(
+        plate=Upper('vehicle_number')
+    ).filter(plate__in=plates)
+    return {'vehicle_registry': {v.plate: v for v in vehicles}}
+
+
 class SaleSerializer(serializers.ModelSerializer):
     # We allow writing items here now so we can send the whole cart in one JSON
     items = SaleItemSerializer(many=True)
     # Read-only convenience field so the frontend can offer "share receipt to
     # the registered number" without a second lookup per sale.
     customer_phone = serializers.CharField(source='customer.phone', read_only=True, default=None)
+    vehicle_details = serializers.SerializerMethodField()
 
     class Meta:
         model = Sale
         fields = [
-            'id', 'customer', 'customer_name', 'customer_phone', 'vehicle_number', 'created_at',
+            'id', 'customer', 'customer_name', 'customer_phone', 'vehicle_number',
+            'vehicle_details', 'created_at',
             'total_amount', 'items', 'status', 'cancel_reason', 'payment_status', 'amount_paid',
             'credit_note', 'credit_settled_at', 'mileage', 'notes',
         ]
         read_only_fields = ['credit_settled_at']
+
+    def get_vehicle_details(self, obj):
+        """
+        Registry facts about the plate on this sale — make/model for the printed
+        bill, plus the last known odometer reading and when it was taken (a job
+        often doesn't record a new one, so the bill has to quote an older).
+        Resolved from the context map when one was supplied; see
+        build_vehicle_registry_context.
+        """
+        if not obj.vehicle_number:
+            return None
+
+        plate = obj.vehicle_number.strip().upper()
+        registry = self.context.get('vehicle_registry')
+        if registry is not None:
+            vehicle = registry.get(plate)
+        else:
+            vehicle = CustomerVehicle.objects.filter(vehicle_number__iexact=plate).first()
+
+        if vehicle is None:
+            return None
+        return {
+            'id': vehicle.id,
+            'make': vehicle.make,
+            'model': vehicle.model,
+            'year': vehicle.year,
+            'current_mileage': vehicle.current_mileage,
+            'mileage_updated_at': vehicle.mileage_updated_at,
+        }
 
     def create(self, validated_data):
         """

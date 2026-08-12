@@ -1,5 +1,6 @@
 import React, { forwardRef } from "react";
 import logo from "../assets/logo.png";
+import { getVehicleInfo } from "./billingVehicle";
 
 const Receipt = forwardRef(({ sale, cartItems }, ref) => {
   // Helper for currency
@@ -57,7 +58,8 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
     : new Date().toLocaleString();
   const invoiceId = sale ? sale.id.substring(0, 8).toUpperCase() : "NEW";
   const customer = sale ? sale.customer_name : "Walk-in";
-  const vehicle = sale ? sale.vehicle_number : "";
+  // Shared with the A4 invoice so the two documents can't disagree.
+  const vehicleInfo = getVehicleInfo(sale);
 
   return (
     <div
@@ -101,10 +103,27 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
           <span>Customer:</span>
           <span className="text-right">{customer}</span>
         </div>
-        {vehicle && (
+        {vehicleInfo.plate && (
           <div className="flex justify-between">
             <span>Vehicle:</span>
-            <span className="font-bold">{vehicle}</span>
+            <span className="text-right font-bold">
+              {vehicleInfo.plate}
+              {vehicleInfo.makeModel && (
+                <span className="block font-normal">{vehicleInfo.makeModel}</span>
+              )}
+            </span>
+          </div>
+        )}
+        {vehicleInfo.mileageLabel && (
+          <div className="flex justify-between">
+            <span>Mileage:</span>
+            <span className="text-right">
+              {vehicleInfo.mileageLabel}
+              {/* The reading often predates this job — say when it was taken. */}
+              {vehicleInfo.mileageDate && (
+                <span className="block text-[10px]">rec. {vehicleInfo.mileageDate}</span>
+              )}
+            </span>
           </div>
         )}
       </div>

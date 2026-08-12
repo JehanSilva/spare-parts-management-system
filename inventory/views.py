@@ -8,7 +8,7 @@ from django.db.models.functions import TruncDate
 from rest_framework import status
 from django.db.models import Sum, F
 from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, build_vehicle_registry_context
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle
 from .serializers import VehicleSerializer
@@ -127,7 +127,9 @@ def get_vehicle_history(request, pk):
     """
     vehicle = get_object_or_404(CustomerVehicle, pk=pk)
     sales = Sale.objects.filter(vehicle_number__iexact=vehicle.vehicle_number).order_by('-created_at')
-    return Response(SaleSerializer(sales, many=True).data)
+    # Every sale here is this one vehicle, so the map is free.
+    context = {'vehicle_registry': {vehicle.vehicle_number.upper(): vehicle}}
+    return Response(SaleSerializer(sales, many=True, context=context).data)
 
 
 @api_view(['GET'])
@@ -138,8 +140,10 @@ def get_customer_history(request, pk):
     each sale had a vehicle attached, newest first.
     """
     customer = get_object_or_404(Customer, pk=pk)
-    sales = customer.sales.order_by('-created_at')
-    return Response(SaleSerializer(sales, many=True).data)
+    sales = list(customer.sales.order_by('-created_at'))
+    return Response(
+        SaleSerializer(sales, many=True, context=build_vehicle_registry_context(sales)).data
+    )
 
 
 @api_view(['POST'])
@@ -769,13 +773,18 @@ def create_sale(request):
     # latest known reading — only advance it forward, never regress it from
     # an out-of-order or mistyped lower value, unless the frontend confirms
     # the user explicitly chose to override a lower reading anyway.
+    # These are queryset .update()s, so CustomerVehicle.save() never runs and
+    # the reading's timestamp has to be stamped here alongside it.
     if mileage and vehicle_number:
+        recorded_at = timezone.now()
         if force_mileage_update:
-            CustomerVehicle.objects.filter(vehicle_number__iexact=vehicle_number).update(current_mileage=mileage)
+            CustomerVehicle.objects.filter(vehicle_number__iexact=vehicle_number).update(
+                current_mileage=mileage, mileage_updated_at=recorded_at
+            )
         else:
             CustomerVehicle.objects.filter(vehicle_number__iexact=vehicle_number).filter(
                 Q(current_mileage__isnull=True) | Q(current_mileage__lt=mileage)
-            ).update(current_mileage=mileage)
+            ).update(current_mileage=mileage, mileage_updated_at=recorded_at)
 
     # 4. Process Items (Now safe to deduct)
     for item in items_data:
@@ -818,8 +827,9 @@ def create_sale(request):
 def get_all_sales(request):
     # Order by creation date descending (newest first). select_related on the
     # customer keeps SaleSerializer.customer_phone from firing a query per sale.
-    sales = Sale.objects.select_related('customer').all().order_by('-created_at')
-    serializer = SaleSerializer(sales, many=True)
+    sales = list(Sale.objects.select_related('customer').all().order_by('-created_at'))
+    # Same idea for the vehicle registry, which has no FK to join on.
+    serializer = SaleSerializer(sales, many=True, context=build_vehicle_registry_context(sales))
     return Response(serializer.data)
 
 @api_view(['PATCH'])

@@ -21,11 +21,25 @@ export const getVehicleInfo = (sale) => {
     recordedAt = details.mileage_updated_at || null;
   }
 
+  const plate = sale?.vehicle_number || "";
+  const makeModel = details ? [details.make, details.model].filter(Boolean).join(" ") : "";
+  const mileageLabel = mileage != null ? `${Number(mileage).toLocaleString()} km` : "";
+  const mileageDate = recordedAt ? new Date(recordedAt).toLocaleDateString("en-GB") : "";
+
   return {
-    plate: sale?.vehicle_number || "",
-    makeModel: details ? [details.make, details.model].filter(Boolean).join(" ") : "",
-    mileageLabel: mileage != null ? `${Number(mileage).toLocaleString()} km` : "",
-    mileageDate: recordedAt ? new Date(recordedAt).toLocaleDateString("en-GB") : "",
+    plate,
+    makeModel,
+    mileageLabel,
+    mileageDate,
+    // Single-line forms, for the A4 invoice where vertical space is what
+    // decides how many sheets a long sale costs. Empty when there's nothing
+    // to say, so the caller can drop the line entirely.
+    vehicleLine: [plate, makeModel].filter(Boolean).join(" · "),
+    mileageLine: mileageLabel
+      ? mileageDate
+        ? `${mileageLabel} (rec. ${mileageDate})`
+        : mileageLabel
+      : "",
   };
 };
 

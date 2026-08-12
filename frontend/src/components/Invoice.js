@@ -77,6 +77,20 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       ? "Balance On Credit"
       : "Paid In Full";
 
+  // Joined rather than inlined so the settlement sentence, which only applies
+  // to an unpaid invoice, can drop out without leaving a double space behind.
+  const footerNotes = [
+    "Thanks for your business.",
+    balanceDue > 0
+      ? "Please settle the outstanding balance within 14 days, quoting the invoice number above."
+      : "",
+    "Please retain this invoice for warranty claims.",
+    "No refunds or returns on electrical parts.",
+    "Goods remain the property of NSS Auto Spares until paid in full.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div
       ref={ref}
@@ -211,24 +225,22 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
         </div>
       </div>
 
-      {/* ── NOTES ───────────────────────────────────────────────────────── */}
-      <div className="mt-5">
-        <div className="font-bold text-gray-900 mb-1">Notes</div>
-        <p className="text-gray-700">Thanks for your business.</p>
+      {/* ── FOOTER ──────────────────────────────────────────────────────── */}
+      {/* One fine-print run rather than two headed blocks: the old footer spent
+          ~33mm on four sentences, which was enough to tip an otherwise
+          one-page invoice onto a second sheet. */}
+      <div className="mt-5 break-inside-avoid">
+        {/* The credit note is a promise specific to this customer ("balance due
+            Friday"), so it stays above the rule at body size rather than being
+            buried in the fine print. Only unpaid sales pay for this line. */}
         {sale?.credit_note && paymentStatus !== "PAID" && (
-          <p className="text-gray-700 mt-1">{sale.credit_note}</p>
+          <p className="text-gray-800 mb-2">
+            <span className="font-bold text-gray-900">Note: </span>
+            {sale.credit_note}
+          </p>
         )}
-      </div>
-
-      {/* ── TERMS ───────────────────────────────────────────────────────── */}
-      <div className="mt-4">
-        <div className="font-bold text-gray-900 mb-1">Terms &amp; Conditions</div>
-        <p className="text-gray-600 leading-relaxed">
-          {balanceDue > 0
-            ? "Please settle the outstanding balance within 14 days, quoting the invoice number above. "
-            : ""}
-          Please retain this invoice for warranty claims. No refunds or returns on electrical parts.
-          Goods remain the property of NSS Auto Spares until paid in full.
+        <p className="text-center text-[9px] leading-snug text-gray-600">
+          {footerNotes}
         </p>
       </div>
     </div>

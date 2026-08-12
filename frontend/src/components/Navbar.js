@@ -25,8 +25,8 @@ const NAV_ITEMS = [
   { path: "/suppliers", label: "Suppliers", icon: Truck },
   { path: "/customers", label: "Customers", icon: Users },
   { path: "/vehicles", label: "Vehicles", icon: Car },
-  { path: "/sales-history", label: "Sales", icon: FileText },
   { path: "/estimates", label: "Estimates", icon: ClipboardList },
+  { path: "/sales-history", label: "Sales", icon: FileText },
 ];
 
 // A tab stays lit on its section's sub-routes too — /estimates/new and
@@ -92,11 +92,10 @@ const Navbar = () => {
                 <Link
                   key={item.path}
                   to={item.path}
-                  className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-lg min-w-[62px] transition-colors ${
-                    active
+                  className={`flex flex-col items-center justify-center gap-0.5 px-3 py-1.5 rounded-lg min-w-[62px] transition-colors ${active
                       ? "bg-red-500/15 text-red-400"
                       : "text-slate-400 hover:text-white hover:bg-white/5"
-                  }`}
+                    }`}
                 >
                   <item.icon size={17} />
                   <span className="text-[10px] font-semibold tracking-wide">{item.label}</span>
@@ -127,9 +126,8 @@ const Navbar = () => {
 
       {/* Mobile tabs */}
       <div
-        className={`lg:hidden overflow-hidden transition-all duration-300 ${
-          isOpen ? "max-h-96 border-t border-white/10" : "max-h-0"
-        }`}
+        className={`lg:hidden overflow-hidden transition-all duration-300 ${isOpen ? "max-h-96 border-t border-white/10" : "max-h-0"
+          }`}
       >
         <div className="grid grid-cols-4 gap-1 p-3">
           {NAV_ITEMS.map((item) => {
@@ -139,9 +137,8 @@ const Navbar = () => {
                 key={item.path}
                 to={item.path}
                 onClick={() => setIsOpen(false)}
-                className={`flex flex-col items-center gap-1 py-2.5 rounded-lg ${
-                  active ? "bg-red-500/15 text-red-400" : "text-slate-400 hover:bg-white/5"
-                }`}
+                className={`flex flex-col items-center gap-1 py-2.5 rounded-lg ${active ? "bg-red-500/15 text-red-400" : "text-slate-400 hover:bg-white/5"
+                  }`}
               >
                 <item.icon size={18} />
                 <span className="text-[10px] font-semibold">{item.label}</span>

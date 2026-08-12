@@ -1,5 +1,6 @@
 import React, { forwardRef } from "react";
 import logo from "../assets/logo.png";
+import { getVehicleInfo } from "./billingVehicle";
 
 // Right-aligned "Label : value" row used in the invoice meta column.
 const MetaRow = ({ label, value }) => (
@@ -61,9 +62,8 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
   const issuedDate = issuedAt.toLocaleDateString("en-GB");
   const invoiceId = sale ? sale.id.substring(0, 8).toUpperCase() : "DRAFT";
   const customer = sale ? sale.customer_name : "Walk-in";
-  const customerPhone = sale ? sale.customer_phone : "";
-  const vehicle = sale ? sale.vehicle_number : "";
-  const mileage = sale ? sale.mileage : null;
+  // Plate, make/model and the last known odometer reading with its date.
+  const vehicleInfo = getVehicleInfo(sale);
 
   const paymentStatus = sale ? sale.payment_status : "PAID";
   const amountPaid =
@@ -119,58 +119,70 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       </div>
 
       {/* ── BILL TO + META ──────────────────────────────────────────────── */}
-      <div className="flex justify-between items-start mt-10">
-        <div>
-          <div className="font-bold text-gray-900 mb-1">Bill To</div>
+      {/* This block is as tall as its taller column, so the vehicle facts live
+          on the left under the customer rather than as four more labelled rows
+          on the right — the left column would otherwise sit empty, and every
+          line here is a line stolen from the items table on a long sale. */}
+      <div className="flex justify-between items-start gap-6 mt-5">
+        {/* Name only — the customer's phone number is deliberately kept off the
+            printed bill; it's still on the sale record for the WhatsApp share. */}
+        <div className="min-w-0">
+          <div className="font-bold text-gray-900 mb-0.5">Bill To</div>
           <div className="font-bold text-gray-900">{customer || "Walk-in Customer"}</div>
-          {customerPhone && <div className="text-gray-700">{customerPhone}</div>}
+          {vehicleInfo.vehicleLine && (
+            <div className="text-gray-700 mt-0.5">{vehicleInfo.vehicleLine}</div>
+          )}
+          {vehicleInfo.mileageLine && (
+            <div className="text-gray-700">{vehicleInfo.mileageLine}</div>
+          )}
         </div>
 
-        <div className="space-y-1.5">
+        <div className="space-y-1 shrink-0">
           <MetaRow label="Invoice Date" value={issuedDate} />
           <MetaRow label="Terms" value={termsLabel} />
-          {vehicle && <MetaRow label="Vehicle" value={vehicle} />}
-          {mileage ? (
-            <MetaRow label="Mileage" value={`${Number(mileage).toLocaleString()} km`} />
-          ) : null}
         </div>
       </div>
 
       {/* ── LINE ITEMS ──────────────────────────────────────────────────── */}
-      <table className="w-full border-collapse mt-10">
+      {/* Row padding is the single biggest driver of page count on a long
+          sale — 24px per row adds up to most of a sheet over 30 items. The
+          rule separators carry the row rhythm instead. */}
+      <table className="w-full border-collapse mt-4">
         <thead>
           <tr className="bg-black text-white text-[9px] uppercase tracking-wide">
-            <th className="py-2 pl-3 pr-2 text-left font-normal w-[5%]">#</th>
-            <th className="py-2 px-2 text-left font-normal w-[45%]">Item &amp; Description</th>
-            <th className="py-2 px-2 text-right font-normal w-[10%]">Qty</th>
-            <th className="py-2 px-2 text-right font-normal w-[14%]">Rate</th>
-            <th className="py-2 px-2 text-right font-normal w-[12%]">Discount</th>
-            <th className="py-2 pl-2 pr-3 text-right font-normal w-[14%]">Amount</th>
+            <th className="py-1.5 pl-3 pr-2 text-left font-normal w-[5%]">#</th>
+            <th className="py-1.5 px-2 text-left font-normal w-[45%]">Item &amp; Description</th>
+            <th className="py-1.5 px-2 text-right font-normal w-[10%]">Qty</th>
+            <th className="py-1.5 px-2 text-right font-normal w-[14%]">Rate</th>
+            <th className="py-1.5 px-2 text-right font-normal w-[12%]">Discount</th>
+            <th className="py-1.5 pl-2 pr-3 text-right font-normal w-[14%]">Amount</th>
           </tr>
         </thead>
         <tbody>
           {items.map((item, index) => (
             <tr key={index} className="border-b border-gray-200 align-top">
-              <td className="py-3 pl-3 pr-2 text-gray-600">{index + 1}</td>
-              <td className="py-3 px-2">
+              <td className="py-1.5 pl-3 pr-2 text-gray-600">{index + 1}</td>
+              <td className="py-1.5 px-2">
                 <div className="font-bold text-gray-900">{item.name}</div>
                 {item.part_number && (
-                  <div className="text-[9px] text-gray-500 mt-0.5">{item.part_number}</div>
+                  <div className="text-[9px] text-gray-500">{item.part_number}</div>
                 )}
               </td>
-              <td className="py-3 px-2 text-right">{item.qty.toFixed(2)}</td>
-              <td className="py-3 px-2 text-right">{formatAmount(item.originalPrice)}</td>
-              <td className="py-3 px-2 text-right">
+              <td className="py-1.5 px-2 text-right">{item.qty.toFixed(2)}</td>
+              <td className="py-1.5 px-2 text-right">{formatAmount(item.originalPrice)}</td>
+              <td className="py-1.5 px-2 text-right">
                 {formatAmount(item.discountAmount * item.qty)}
               </td>
-              <td className="py-3 pl-2 pr-3 text-right">{formatAmount(item.lineTotal)}</td>
+              <td className="py-1.5 pl-2 pr-3 text-right">{formatAmount(item.lineTotal)}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
       {/* ── TOTALS ──────────────────────────────────────────────────────── */}
-      <div className="flex justify-end mt-6">
+      {/* Small enough that keeping it whole can't push a page, but it looks
+          broken if Sub Total and Balance Due land on different sheets. */}
+      <div className="flex justify-end mt-4 break-inside-avoid">
         <div className="w-[45%]">
           <div className="flex justify-between px-3 py-1.5">
             <span className="text-gray-600">Sub Total</span>
@@ -200,7 +212,7 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       </div>
 
       {/* ── NOTES ───────────────────────────────────────────────────────── */}
-      <div className="mt-16">
+      <div className="mt-5">
         <div className="font-bold text-gray-900 mb-1">Notes</div>
         <p className="text-gray-700">Thanks for your business.</p>
         {sale?.credit_note && paymentStatus !== "PAID" && (
@@ -209,7 +221,7 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       </div>
 
       {/* ── TERMS ───────────────────────────────────────────────────────── */}
-      <div className="mt-8">
+      <div className="mt-4">
         <div className="font-bold text-gray-900 mb-1">Terms &amp; Conditions</div>
         <p className="text-gray-600 leading-relaxed">
           {balanceDue > 0

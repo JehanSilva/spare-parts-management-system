@@ -1,6 +1,8 @@
 import io
 import pandas as pd
 from django.test import TestCase
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -796,6 +798,106 @@ class SaleMileageSyncAPITest(TestCase):
         self.vehicle.refresh_from_db()
         self.assertEqual(self.vehicle.current_mileage, 40000)
 
+    def test_recording_a_reading_stamps_when_it_was_taken(self):
+        registered_at = self.vehicle.mileage_updated_at
+        self.assertIsNotNone(registered_at)  # stamped when the vehicle was created
+
+        self.client.post(reverse('create_sale'), self._sale_payload(mileage=55000), format='json')
+        self.vehicle.refresh_from_db()
+        self.assertGreater(self.vehicle.mileage_updated_at, registered_at)
+
+    def test_ignored_reading_does_not_restamp_the_date(self):
+        # A lower reading is discarded, so the recorded date must stay put —
+        # otherwise the bill would claim a stale figure was just taken.
+        self.client.post(reverse('create_sale'), self._sale_payload(mileage=55000), format='json')
+        self.vehicle.refresh_from_db()
+        first_stamp = self.vehicle.mileage_updated_at
+
+        self.client.post(reverse('create_sale'), self._sale_payload(mileage=40000), format='json')
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.mileage_updated_at, first_stamp)
+        self.assertEqual(self.vehicle.current_mileage, 55000)
+
+    def test_editing_the_registry_stamps_the_reading_but_other_edits_do_not(self):
+        url = reverse('update_customer_vehicle', kwargs={'vehicle_pk': self.vehicle.pk})
+
+        self.client.patch(url, {"current_mileage": 60000}, format='json')
+        self.vehicle.refresh_from_db()
+        stamped = self.vehicle.mileage_updated_at
+        self.assertIsNotNone(stamped)
+
+        # Changing something unrelated must leave the reading's date alone.
+        self.client.patch(url, {"color": "Pearl White"}, format='json')
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.mileage_updated_at, stamped)
+
+
+class SaleVehicleDetailsTest(TestCase):
+    """
+    The printed bill needs the vehicle's make/model and last known odometer
+    reading, none of which live on Sale — it only stores the plate as free text.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+
+        self.part = Part.objects.create(
+            name="Brake Pad", part_number="BP-100", buy_price=500, sell_price=1000, stock_qty=10,
+        )
+        self.vehicle = CustomerVehicle.objects.create(
+            vehicle_number="KT-8352", make="Perodua", model="Viva Elite", current_mileage=50120,
+        )
+
+    def _create_sale(self, **overrides):
+        payload = {
+            "customer_name": "John Doe",
+            "vehicle_number": "KT-8352",
+            "items": [
+                {"part_id": str(self.part.id), "quantity": 1, "unit_price": 1000, "discount": 0}
+            ],
+        }
+        payload.update(overrides)
+        return self.client.post(reverse('create_sale'), payload, format='json')
+
+    def test_create_response_carries_the_vehicle_for_the_printed_bill(self):
+        response = self._create_sale()
+        details = response.data['vehicle_details']
+        self.assertEqual(details['make'], "Perodua")
+        self.assertEqual(details['model'], "Viva Elite")
+        self.assertEqual(details['current_mileage'], 50120)
+
+    def test_sales_list_resolves_the_plate_case_insensitively(self):
+        self._create_sale(vehicle_number="kt-8352")
+        response = self.client.get(reverse('get_all_sales'))
+        self.assertEqual(response.data[0]['vehicle_details']['make'], "Perodua")
+
+    def test_unregistered_plate_has_no_details(self):
+        self._create_sale(vehicle_number="ZZZ-9999")
+        response = self.client.get(reverse('get_all_sales'))
+        self.assertIsNone(response.data[0]['vehicle_details'])
+
+    def test_a_job_without_a_reading_still_exposes_the_last_known_one(self):
+        # The bill falls back to this, dated mileage_updated_at.
+        self._create_sale()
+
+        response = self.client.get(reverse('get_all_sales'))
+        sale = response.data[0]
+        self.assertIsNone(sale['mileage'])
+        self.assertEqual(sale['vehicle_details']['current_mileage'], 50120)
+        self.assertIsNotNone(sale['vehicle_details']['mileage_updated_at'])
+
+    def test_the_registry_is_resolved_in_one_query_for_the_whole_list(self):
+        for _ in range(4):
+            self._create_sale()
+
+        with CaptureQueriesContext(connection) as captured:
+            self.client.get(reverse('get_all_sales'))
+
+        registry_queries = [
+            q for q in captured.captured_queries if 'inventory_customervehicle' in q['sql']
+        ]
+        self.assertEqual(len(registry_queries), 1, "vehicle_details must not query per sale")
 
 
 class RestockPrimarySupplierTest(TestCase):

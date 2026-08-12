@@ -86,7 +86,7 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       : "",
     "Please retain this invoice for warranty claims.",
     "No refunds or returns on electrical parts.",
-    "Goods remain the property of NSS Auto Spares until paid in full.",
+    "Goods remain the property of NSS Auto Engineers until paid in full.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -104,12 +104,25 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
     >
       {/* ── HEADER ──────────────────────────────────────────────────────── */}
       <div className="flex justify-between items-start">
-        {/* Circular badge, echoing the reference's monogram mark. The logo
-            artwork is red on transparent, so it sits on white inside a black
-            ring rather than being recoloured — html2canvas ignores filters. */}
-        <div className="w-16 h-16 rounded-full border-[3px] border-black bg-white flex items-center justify-center overflow-hidden">
-          <img src={logo} alt="NSS Auto Spares" className="w-12 h-auto" />
-        </div>
+        {/* Width-only sizing (never a fixed box): the mark is roughly 2.4:1 and
+            html2canvas ignores object-fit when rasterizing this invoice for the
+            WhatsApp share, so a fixed height would come out stretched even
+            though the browser letterboxes it correctly.
+
+            The artwork also carries empty canvas around the ink — it measures
+            771x324 but the red mark only occupies x 102-642, y 57-293. That
+            padding scales with the image, so at w-28 it renders as 15px left,
+            8px top and 5px bottom, pushing the mark out of line with the
+            address block below. These margins cancel it so the *ink* sits
+            flush, and are tied to both this asset and the w-28 width: changing
+            either one invalidates them. The right side is left alone since
+            nothing aligns to it. */}
+        <img
+          src={logo}
+          alt="NSS Auto Engineers"
+          className="w-28 h-auto"
+          style={{ marginLeft: "-15px", marginTop: "-8px", marginBottom: "-5px" }}
+        />
 
         <div className="text-right">
           <div className="text-3xl font-bold tracking-tight leading-none">INVOICE</div>
@@ -120,7 +133,7 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       {/* COMPANY + BALANCE DUE */}
       <div className="flex justify-between items-start mt-4">
         <div className="text-gray-800 leading-relaxed">
-          <div className="font-bold text-gray-900">NSS Auto Spares</div>
+          <div className="font-bold text-gray-900">NSS Auto Engineers</div>
           <div>No. 272 Thudella</div>
           <div>Ja-ela, Sri Lanka</div>
           <div>+94 71 618 8187</div>

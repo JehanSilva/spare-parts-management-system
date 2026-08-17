@@ -13,6 +13,12 @@ class Supplier(models.Model):
     # itself rather than an index, so reordering or renaming contacts doesn't
     # silently repoint it at someone else. Blank = fall back to the first number.
     primary_phone = models.CharField(max_length=30, blank=True)
+    # Where to send payment. All optional — plenty of suppliers are paid in cash,
+    # and the ones already on file predate these fields.
+    bank_name = models.CharField(max_length=100, blank=True)
+    bank_branch = models.CharField(max_length=100, blank=True)
+    bank_account_number = models.CharField(max_length=50, blank=True)
+    bank_account_name = models.CharField(max_length=100, blank=True, help_text="Name the account is held under")
 
     def __str__(self):
         return self.name

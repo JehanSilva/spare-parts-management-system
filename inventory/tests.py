@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, CustomerVehicle, Estimate
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -1142,3 +1142,222 @@ class EstimateAPITest(TestCase):
         estimate = Estimate.objects.get(pk=created.data['id'])
         self.assertIsNone(estimate.vehicle)
         self.assertEqual(estimate.vehicle_number, "CAB-1122")
+
+
+class VehiclePlateRenameTest(TestCase):
+    """
+    The plate is the join key for everything that stores it as free text, so a
+    correction on the registry has to follow through to sales, estimates and
+    in-progress carts — otherwise the service history silently empties out.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+
+        self.vehicle = CustomerVehicle.objects.create(
+            vehicle_number="KT-8352", make="Perodua", model="Viva Elite",
+        )
+        self.url = reverse('update_customer_vehicle', kwargs={'vehicle_pk': self.vehicle.pk})
+
+        self.sale = Sale.objects.create(total_amount=1000, vehicle_number="KT-8352")
+        # Lower-cased on purpose: matching is case-insensitive everywhere else.
+        self.old_sale = Sale.objects.create(total_amount=500, vehicle_number="kt-8352")
+        self.other_sale = Sale.objects.create(total_amount=750, vehicle_number="CAB-1122")
+        self.estimate = Estimate.objects.create(
+            estimate_number="EST-9001", vehicle=self.vehicle, vehicle_number="KT-8352",
+            insurance_company="Amana Takaful", date="2026-08-10",
+        )
+        self.cart = ActiveCart.objects.create(id="cart-1", vehicle_number="KT-8352")
+
+    def test_plate_can_be_renamed(self):
+        response = self.client.patch(self.url, {"vehicle_number": "kt-8532"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.vehicle_number, "KT-8532")
+
+    def test_rename_follows_through_to_sales_estimates_and_carts(self):
+        self.client.patch(self.url, {"vehicle_number": "KT-8532"}, format='json')
+
+        self.sale.refresh_from_db()
+        self.old_sale.refresh_from_db()
+        self.other_sale.refresh_from_db()
+        self.estimate.refresh_from_db()
+        self.cart.refresh_from_db()
+
+        self.assertEqual(self.sale.vehicle_number, "KT-8532")
+        self.assertEqual(self.old_sale.vehicle_number, "KT-8532")
+        self.assertEqual(self.estimate.vehicle_number, "KT-8532")
+        self.assertEqual(self.cart.vehicle_number, "KT-8532")
+        # A different vehicle's records must be left alone.
+        self.assertEqual(self.other_sale.vehicle_number, "CAB-1122")
+
+    def test_renamed_vehicle_keeps_its_service_history(self):
+        self.client.patch(self.url, {"vehicle_number": "KT-8532"}, format='json')
+
+        response = self.client.get(
+            reverse('get_vehicle_history', kwargs={'pk': self.vehicle.pk})
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+
+    def test_rename_onto_an_existing_plate_is_rejected(self):
+        CustomerVehicle.objects.create(vehicle_number="CAB-1122")
+
+        # Different case, same plate — the DB's unique=True would miss this.
+        response = self.client.patch(self.url, {"vehicle_number": "cab-1122"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('vehicle_number', response.data)
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.vehicle_number, "KT-8352")
+        self.sale.refresh_from_db()
+        self.assertEqual(self.sale.vehicle_number, "KT-8352")
+
+    def test_blank_plate_is_rejected(self):
+        response = self.client.patch(self.url, {"vehicle_number": "  "}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.vehicle_number, "KT-8352")
+
+    def test_resubmitting_the_same_plate_is_not_a_clash(self):
+        response = self.client.patch(
+            self.url, {"vehicle_number": "KT-8352", "color": "Pearl White"}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.vehicle.refresh_from_db()
+        self.assertEqual(self.vehicle.color, "Pearl White")
+
+
+class CustomerRenameTest(TestCase):
+    """
+    A sale keeps the customer's name as free text taken at checkout, so a
+    correction on the customer record has to follow through — otherwise the
+    sales history reads as a different person.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+
+        self.customer = Customer.objects.create(name="Jehan Silva", phone="0765722909")
+        self.other = Customer.objects.create(name="Shiwarne Silva", phone="0771234567")
+        self.url = reverse('update_customer', kwargs={'pk': self.customer.pk})
+
+        self.sale = Sale.objects.create(
+            customer=self.customer, customer_name="Jehan Silva", total_amount=5150,
+        )
+        self.other_sale = Sale.objects.create(
+            customer=self.other, customer_name="Shiwarne Silva", total_amount=16856,
+        )
+        # No customer FK — a walk-in who happens to share the name may be someone else.
+        self.walkin_sale = Sale.objects.create(customer_name="Jehan Silva", total_amount=12000)
+        self.cart = ActiveCart.objects.create(
+            id="cart-1", customer=self.customer, customer_name="Jehan Silva",
+        )
+
+    def test_rename_follows_through_to_that_customers_sales(self):
+        response = self.client.put(self.url, {"name": "Jehan shenil Silva"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.customer.refresh_from_db()
+        self.sale.refresh_from_db()
+        self.assertEqual(self.customer.name, "Jehan shenil Silva")
+        self.assertEqual(self.sale.customer_name, "Jehan shenil Silva")
+
+    def test_rename_follows_through_to_an_open_cart(self):
+        self.client.put(self.url, {"name": "Jehan shenil Silva"}, format='json')
+        self.cart.refresh_from_db()
+        self.assertEqual(self.cart.customer_name, "Jehan shenil Silva")
+
+    def test_another_customers_sales_are_left_alone(self):
+        self.client.put(self.url, {"name": "Jehan shenil Silva"}, format='json')
+        self.other_sale.refresh_from_db()
+        self.assertEqual(self.other_sale.customer_name, "Shiwarne Silva")
+
+    def test_unlinked_walkin_sale_keeps_its_typed_name(self):
+        self.client.put(self.url, {"name": "Jehan shenil Silva"}, format='json')
+        self.walkin_sale.refresh_from_db()
+        self.assertEqual(self.walkin_sale.customer_name, "Jehan Silva")
+
+    def test_editing_only_the_phone_does_not_touch_the_sales(self):
+        response = self.client.put(self.url, {"phone": "0700000000"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.customer.refresh_from_db()
+        self.sale.refresh_from_db()
+        self.assertEqual(self.customer.phone, "0700000000")
+        self.assertEqual(self.sale.customer_name, "Jehan Silva")
+
+    def test_invalid_payload_changes_nothing(self):
+        response = self.client.put(self.url, {"name": "x" * 200}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.customer.refresh_from_db()
+        self.sale.refresh_from_db()
+        self.assertEqual(self.customer.name, "Jehan Silva")
+        self.assertEqual(self.sale.customer_name, "Jehan Silva")
+
+
+class SupplierBankDetailsTest(TestCase):
+    """Where to pay a supplier is kept on the supplier record, and is optional."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="bankuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.bank = {
+            "bank_name": "Commercial Bank",
+            "bank_branch": "Kollupitiya",
+            "bank_account_number": "8001234567",
+            "bank_account_name": "Wurth Lanka (Pvt) Ltd",
+        }
+
+    def test_bank_details_saved_on_create(self):
+        response = self.client.post(
+            reverse('add_supplier'), {"name": "Wurth Lanka", **self.bank}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        supplier = Supplier.objects.get(name="Wurth Lanka")
+        self.assertEqual(supplier.bank_name, "Commercial Bank")
+        self.assertEqual(supplier.bank_branch, "Kollupitiya")
+        self.assertEqual(supplier.bank_account_number, "8001234567")
+        self.assertEqual(supplier.bank_account_name, "Wurth Lanka (Pvt) Ltd")
+
+    def test_bank_details_updated_on_edit(self):
+        supplier = Supplier.objects.create(name="Wurth Lanka", **self.bank)
+        response = self.client.put(
+            reverse('update_supplier', args=[supplier.id]),
+            {
+                "name": "Wurth Lanka",
+                **self.bank,
+                "bank_branch": "Nugegoda",
+                "bank_account_number": "8009999999",
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        supplier.refresh_from_db()
+        self.assertEqual(supplier.bank_branch, "Nugegoda")
+        self.assertEqual(supplier.bank_account_number, "8009999999")
+        self.assertEqual(supplier.bank_name, "Commercial Bank")
+
+    def test_bank_details_are_exposed_by_the_list_endpoint(self):
+        Supplier.objects.create(name="Wurth Lanka", **self.bank)
+        response = self.client.get(reverse('get_suppliers'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]["bank_account_number"], "8001234567")
+        self.assertEqual(response.data[0]["bank_account_name"], "Wurth Lanka (Pvt) Ltd")
+
+    def test_supplier_paid_in_cash_needs_no_bank_details(self):
+        response = self.client.post(
+            reverse('add_supplier'), {"name": "Cash Only Supplier"}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        supplier = Supplier.objects.get(name="Cash Only Supplier")
+        self.assertEqual(supplier.bank_name, "")
+        self.assertEqual(supplier.bank_branch, "")
+        self.assertEqual(supplier.bank_account_number, "")
+        self.assertEqual(supplier.bank_account_name, "")

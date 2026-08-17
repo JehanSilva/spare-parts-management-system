@@ -193,7 +193,6 @@ const VehicleModal = ({ customerId, vehicle, onClose, onSaved }) => {
             value={form.vehicle_number}
             onChange={e => setForm(p => ({ ...p, vehicle_number: e.target.value.toUpperCase() }))}
             placeholder="e.g. ABC-1234"
-            disabled={isEdit}
           />
 
           {/* Make / Model / Year row */}

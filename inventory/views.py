@@ -46,13 +46,32 @@ def add_customer(request):
 
 @api_view(['PUT'])
 def update_customer(request, pk):
-    """Update a customer's details."""
+    """
+    Update a customer's details.
+
+    A sale stores the customer's name as free text taken at checkout (walk-ins
+    have no customer FK at all, so the column can't just be dropped), which
+    means a corrected name would otherwise leave the sales history reading as a
+    different person. So a rename follows through to the sales — and any open
+    POS cart — actually linked to this customer.
+    """
     customer = get_object_or_404(Customer, pk=pk)
+    old_name = customer.name
+
     serializer = CustomerSerializer(customer, data=request.data, partial=True)
-    if serializer.is_valid():
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
         serializer.save()
-        return Response(serializer.data)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        new_name = customer.name
+        if new_name != old_name:
+            # Matched on the FK, never on the old text: an unlinked walk-in that
+            # happens to share the name may well be somebody else.
+            Sale.objects.filter(customer=customer).update(customer_name=new_name)
+            ActiveCart.objects.filter(customer=customer).update(customer_name=new_name)
+
+    return Response(serializer.data)
 
 
 @api_view(['DELETE'])
@@ -180,17 +199,52 @@ def delete_customer_vehicle(request, vehicle_pk):
 def update_customer_vehicle(request, vehicle_pk):
     """
     PATCH /customers/vehicles/<vehicle_pk>/update/
-    Updates vehicle details (make, model, year, color, mileage, notes).
-    vehicle_number cannot be changed to maintain data integrity.
+    Updates vehicle details (plate number, make, model, year, color, mileage, notes).
+
+    The plate is the join key for everything that only stores it as free text
+    (sales, estimates, in-progress carts), so renaming it here cascades to those
+    rows in the same transaction — otherwise a corrected plate would orphan the
+    vehicle's service history and the make/model printed on old bills.
     """
     vehicle = get_object_or_404(CustomerVehicle, pk=vehicle_pk)
-    # Prevent vehicle_number from being changed via this endpoint
-    data = {k: v for k, v in request.data.items() if k != 'vehicle_number'}
+    data = {**request.data}
+
+    old_number = vehicle.vehicle_number
+    new_number = None
+    if 'vehicle_number' in data:
+        new_number = (data['vehicle_number'] or '').strip().upper()
+        if not new_number:
+            return Response(
+                {'vehicle_number': ['Vehicle number cannot be blank.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        data['vehicle_number'] = new_number
+        # The model's unique=True is case-sensitive, but every lookup here is
+        # case-insensitive — so guard the rename the same way we look plates up.
+        clash = CustomerVehicle.objects.filter(
+            vehicle_number__iexact=new_number
+        ).exclude(pk=vehicle.pk).exists()
+        if clash:
+            return Response(
+                {'vehicle_number': ['Another vehicle is already registered with this number.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     serializer = CustomerVehicleSerializer(vehicle, data=data, partial=True)
-    if serializer.is_valid():
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    renamed = new_number is not None and new_number.upper() != old_number.upper()
+    with transaction.atomic():
         serializer.save()
-        return Response(serializer.data)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if renamed:
+            Sale.objects.filter(vehicle_number__iexact=old_number).update(vehicle_number=new_number)
+            Estimate.objects.filter(
+                Q(vehicle=vehicle) | Q(vehicle_number__iexact=old_number)
+            ).update(vehicle_number=new_number)
+            ActiveCart.objects.filter(vehicle_number__iexact=old_number).update(vehicle_number=new_number)
+
+    return Response(serializer.data)
 
 
 # --- VEHICLE VIEWS ---
@@ -1746,9 +1800,12 @@ def cancel_bulk_upload(request):
 @api_view(['GET'])
 def get_active_carts(request):
     """
-    List all active repairs/carts from the database
+    List all active repairs/carts from the database.
+
+    Newest first, matching the POS tab strip — the most recently opened repair
+    sits next to the "+" button instead of scrolling off the far end.
     """
-    carts = ActiveCart.objects.all().order_by('created_at')
+    carts = ActiveCart.objects.all().order_by('-created_at')
     serializer = ActiveCartSerializer(carts, many=True)
     return Response(serializer.data)
 

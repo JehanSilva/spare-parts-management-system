@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Save, X, Truck, User, Phone, Mail, MapPin, Loader, Trash2, Plus } from "lucide-react";
+import { Save, X, Truck, User, Phone, Mail, MapPin, Loader, Trash2, Plus, Landmark, Building2, Hash } from "lucide-react";
 import AvatarBadge from "../AvatarBadge";
 
 // Small uppercase section heading, matching the muted meta line on the cards.
@@ -17,6 +17,10 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
     address: "",
     contacts: [{ name: "", phones: [""] }],
     primary_phone: "",
+    bank_name: "",
+    bank_branch: "",
+    bank_account_number: "",
+    bank_account_name: "",
   });
 
   // Populate form if editing
@@ -33,6 +37,10 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
             }))
           : [{ name: "", phones: [""] }],
         primary_phone: editingSupplier.primary_phone || "",
+        bank_name: editingSupplier.bank_name || "",
+        bank_branch: editingSupplier.bank_branch || "",
+        bank_account_number: editingSupplier.bank_account_number || "",
+        bank_account_name: editingSupplier.bank_account_name || "",
       });
     } else {
       setFormData({
@@ -41,6 +49,10 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
         address: "",
         contacts: [{ name: "", phones: [""] }],
         primary_phone: "",
+        bank_name: "",
+        bank_branch: "",
+        bank_account_number: "",
+        bank_account_name: "",
       });
     }
   }, [editingSupplier]);
@@ -117,13 +129,17 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // Clean up empty phone numbers and whitespaces
+    // A number typed without a name is filed under the company itself rather
+    // than rejected — the point of the row is the number, not who owns it.
+    const fallbackName = formData.name.trim() || "Contact";
     const cleanedContacts = formData.contacts
       .map(c => ({
         name: c.name.trim(),
         phones: c.phones.map(p => p.trim()).filter(p => p !== "")
       }))
-      .filter(c => c.name !== "");
+      // Only a completely untouched row is dropped (the form always starts with one).
+      .filter(c => c.name !== "" || c.phones.length > 0)
+      .map(c => ({ ...c, name: c.name || fallbackName }));
 
     const remainingPhones = cleanedContacts.flatMap((c) => c.phones);
     onSubmit({
@@ -248,11 +264,10 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
                       <User className="absolute left-3 top-2.5 text-gray-400" size={15} />
                       <input
                         type="text"
-                        required
                         value={contact.name}
                         onChange={(e) => handleContactNameChange(contactIdx, e.target.value)}
                         className="w-full pl-9 p-2 bg-white border border-gray-200 rounded-xl text-sm font-semibold text-gray-800 focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
-                        placeholder="Contact name *"
+                        placeholder="Contact name (optional)"
                       />
                     </div>
                   </div>
@@ -297,7 +312,6 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
                           <Phone className="absolute left-3 top-2.5 text-gray-400" size={15} />
                           <input
                             type="text"
-                            required
                             value={phone}
                             onChange={(e) => handlePhoneChange(contactIdx, phoneIdx, e.target.value)}
                             className={`w-full pl-9 pr-16 p-2 bg-white border rounded-xl text-sm focus:ring-0 focus:outline-none transition-colors ${isDefault && showDefaultPicker
@@ -337,6 +351,66 @@ const AddSupplierForm = ({ onSubmit, onCancel, editingSupplier, isSaving }) => {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* ── Bank details — where payments go ────────────────────────── */}
+        <div className="mt-6">
+          <SectionLabel>
+            Bank Details
+            <span className="normal-case tracking-normal font-medium text-gray-400">
+              {" "}— optional
+            </span>
+          </SectionLabel>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="relative">
+              <Landmark className="absolute left-3 top-3 text-gray-400" size={16} />
+              <input
+                type="text"
+                name="bank_name"
+                value={formData.bank_name}
+                onChange={handleChange}
+                className={inputClass}
+                placeholder="Bank (e.g. Commercial Bank)"
+              />
+            </div>
+
+            <div className="relative">
+              <Building2 className="absolute left-3 top-3 text-gray-400" size={16} />
+              <input
+                type="text"
+                name="bank_branch"
+                value={formData.bank_branch}
+                onChange={handleChange}
+                className={inputClass}
+                placeholder="Branch (e.g. Kollupitiya)"
+              />
+            </div>
+
+            <div className="relative">
+              <Hash className="absolute left-3 top-3 text-gray-400" size={16} />
+              <input
+                type="text"
+                name="bank_account_number"
+                value={formData.bank_account_number}
+                onChange={handleChange}
+                className={inputClass}
+                placeholder="Account number"
+              />
+            </div>
+
+            <div className="relative">
+              <User className="absolute left-3 top-3 text-gray-400" size={16} />
+              <input
+                type="text"
+                name="bank_account_name"
+                value={formData.bank_account_name}
+                onChange={handleChange}
+                className={inputClass}
+                placeholder="Account name"
+              />
+            </div>
           </div>
         </div>
 

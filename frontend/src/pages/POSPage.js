@@ -34,6 +34,7 @@ import {
   StickyNote,
   Pencil,
   MessageCircle,
+  X,
 } from "lucide-react";
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
@@ -585,6 +586,7 @@ const POSPage = () => {
   const [cartsLoading, setCartsLoading] = useState(true);
   const isInitialLoadCompleted = useRef(false);
   const syncTimer = useRef(null);
+  const tabStripRef = useRef(null);
 
   // Load carts from database on mount
   useEffect(() => {
@@ -882,8 +884,11 @@ const POSPage = () => {
       mileage: "",
       notes: "",
     };
-    setCarts((prev) => [...prev, newCart]);
+    // Newest first, right beside the + button — the tab strip scrolls, and the
+    // repair you just opened is the one you're about to work in.
+    setCarts((prev) => [newCart, ...prev]);
     setActiveCartId(newId);
+    tabStripRef.current?.scrollTo({ left: 0, behavior: "smooth" });
     setAlertInfo({ type: "success", message: "New repair cart created." });
   };
 
@@ -1577,12 +1582,26 @@ const POSPage = () => {
           </div>
 
           {/* Scrollable Cart Tabs */}
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0">
+          <div
+            ref={tabStripRef}
+            className="flex items-center gap-2 overflow-x-auto scrollbar-none flex-1 max-w-full sm:max-w-[75%] md:max-w-[80%] pb-1 sm:pb-0"
+          >
+            {/* Add New Cart Button — leads the strip, so new repairs land beside it */}
+            <button
+              onClick={handleAddNewCart}
+              className="flex items-center justify-center p-2 rounded-xl border border-dashed border-gray-300 hover:border-gray-500 text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 active:scale-95 transition-all shrink-0 w-8 h-8"
+              title="Add New Cart/Repair"
+            >
+              <Plus size={16} />
+            </button>
+
             {carts.map((c, index) => {
               const isActive = c.id === activeCartId;
               const displayName = c.vehicleNumber
                 ? c.vehicleNumber
-                : (c.customerName ? c.customerName : `Repair ${index + 1}`);
+                // Counted from the far end: the list is newest-first, so the
+                // oldest repair keeps the number it was given.
+                : (c.customerName ? c.customerName : `Repair ${carts.length - index}`);
               const cartVehicleInfo = c.vehicleNumber
                 ? vehicleInfoByNumber[c.vehicleNumber.trim().toUpperCase()]
                 : null;
@@ -1632,15 +1651,6 @@ const POSPage = () => {
                 </div>
               );
             })}
-
-            {/* Add New Cart Button */}
-            <button
-              onClick={handleAddNewCart}
-              className="flex items-center justify-center p-2 rounded-xl border border-dashed border-gray-300 hover:border-gray-500 text-gray-500 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 active:scale-95 transition-all shrink-0 w-8 h-8"
-              title="Add New Cart/Repair"
-            >
-              <Plus size={16} />
-            </button>
           </div>
         </div>
   );
@@ -1891,10 +1901,20 @@ const POSPage = () => {
               <input
                 type="text"
                 placeholder="Search part name, number, brand..."
-                className="w-full pl-10 p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white transition-colors focus:ring-2 focus:ring-red-500 outline-none text-base md:text-sm"
+                className="w-full pl-10 pr-11 p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white transition-colors focus:ring-2 focus:ring-red-500 outline-none text-base md:text-sm"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  title="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-200 rounded-full transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              )}
             </div>
           </div>
 

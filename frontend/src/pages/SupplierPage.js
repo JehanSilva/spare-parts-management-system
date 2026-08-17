@@ -20,7 +20,66 @@ import {
   Edit2,
   Trash2,
   XCircle,
+  Landmark,
+  Copy,
+  Check,
 } from "lucide-react";
+
+// Payment details, shown only once something is on file — suppliers paid in cash
+// keep the card exactly as it was.
+const BankDetails = ({ supplier }) => {
+  const [copied, setCopied] = useState(false);
+  const account = supplier.bank_account_number || "";
+  const bankLine = [supplier.bank_name, supplier.bank_branch].filter(Boolean).join(" · ");
+
+  if (!bankLine && !account && !supplier.bank_account_name) return null;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(account);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard blocked (insecure origin or denied) — the number is on screen anyway.
+    }
+  };
+
+  return (
+    <div className="bg-gray-50 rounded-xl px-3 py-2 mt-2">
+      <div className="flex items-center gap-2">
+        <Landmark size={13} className="text-gray-400 shrink-0" />
+        <span className="text-[11px] font-bold uppercase tracking-widest text-gray-400">
+          Bank Details
+        </span>
+      </div>
+
+      <div className="pl-5 mt-1">
+        {bankLine && (
+          <p title={bankLine} className="text-xs text-gray-500 truncate">{bankLine}</p>
+        )}
+
+        {account && (
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-sm font-semibold text-gray-800 truncate">{account}</span>
+            <button
+              onClick={handleCopy}
+              title={copied ? "Copied" : "Copy account number"}
+              className="p-1 text-gray-400 hover:text-gray-900 hover:bg-gray-200 rounded-full transition-colors shrink-0"
+            >
+              {copied ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
+            </button>
+          </div>
+        )}
+
+        {supplier.bank_account_name && (
+          <p title={supplier.bank_account_name} className="text-xs text-gray-500 truncate">
+            {supplier.bank_account_name}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};
 
 // --- Supplier card ---
 const SupplierCard = ({ supplier, onEdit, onDelete }) => {
@@ -141,6 +200,8 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
           </div>
         )}
       </div>
+
+      <BankDetails supplier={supplier} />
 
       {/* Footer: primary number + call action */}
       <div className="border-t border-gray-100 mt-4 pt-4 flex items-end justify-between gap-3">
@@ -303,7 +364,11 @@ const SupplierPage = () => {
         (c.name && c.name.toLowerCase().includes(searchLower)) ||
         (c.phones && c.phones.some((p) => p.includes(searchTerm.trim())))
     );
-    return matchesName || matchesContacts;
+    // Also findable by bank/account, so a payment can be traced back to a supplier.
+    const matchesBank =
+      (s.bank_name && s.bank_name.toLowerCase().includes(searchLower)) ||
+      (s.bank_account_number && s.bank_account_number.toLowerCase().includes(searchLower));
+    return matchesName || matchesContacts || matchesBank;
   });
 
   return (
@@ -370,7 +435,7 @@ const SupplierPage = () => {
         <Search className="absolute left-3 top-3 text-gray-400" size={20} />
         <input
           type="text"
-          placeholder="Search by name or contact person..."
+          placeholder="Search by name, contact person or bank account..."
           className="w-full pl-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 focus:outline-none transition"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}

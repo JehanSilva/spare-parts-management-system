@@ -671,6 +671,9 @@ const InventoryPage = () => {
     return isNaN(val) ? 2 : val;
   });
 
+  // Sort order — defaults to most-sold-first
+  const [sortBy, setSortBy] = useState("most_sold");
+
   // ── Alert & Modal States ─────────────────────────────────────────────────
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const [deleteId, setDeleteId] = useState(null);
@@ -752,8 +755,23 @@ const InventoryPage = () => {
       );
     }
 
+    // Sorting — applied last, always on a copy so allParts is never mutated
+    const num = (v) => {
+      const n = parseFloat(v);
+      return isNaN(n) ? 0 : n;
+    };
+    if (sortBy === "most_sold") {
+      result = [...result].sort((a, b) => num(b.total_sold) - num(a.total_sold));
+    } else if (sortBy === "least_sold") {
+      result = [...result].sort((a, b) => num(a.total_sold) - num(b.total_sold));
+    } else if (sortBy === "price_high") {
+      result = [...result].sort((a, b) => num(b.sell_price) - num(a.sell_price));
+    } else if (sortBy === "price_low") {
+      result = [...result].sort((a, b) => num(a.sell_price) - num(b.sell_price));
+    }
+
     return result;
-  }, [allParts, searchTerm, selectedBrand, selectedSupplier, stockFilter, lowStockThreshold]);
+  }, [allParts, searchTerm, selectedBrand, selectedSupplier, stockFilter, lowStockThreshold, sortBy]);
 
   // ── Filter handlers — just update state, useMemo does the rest ───────────
   const handleStockFilter = (filter) => setStockFilter(filter);
@@ -768,6 +786,7 @@ const InventoryPage = () => {
     setSelectedSupplier("");
     setStockFilter("all");
     setLowStockThreshold(2);
+    setSortBy("most_sold");
   };
 
   const handleDownloadReport = () => {
@@ -1091,7 +1110,7 @@ const InventoryPage = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
-          {(searchTerm || selectedBrand || selectedSupplier || stockFilter !== "all") && (
+          {(searchTerm || selectedBrand || selectedSupplier || stockFilter !== "all" || sortBy !== "most_sold") && (
             <button
               type="button"
               onClick={handleClearFilters}
@@ -1125,6 +1144,20 @@ const InventoryPage = () => {
             {suppliers.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
+          </select>
+        </div>
+
+        {/* Sort */}
+        <div className="flex-1 min-w-0">
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            className="w-full h-10 px-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none bg-white text-sm text-gray-700"
+          >
+            <option value="most_sold">Sort: Most Sold</option>
+            <option value="least_sold">Sort: Least Sold</option>
+            <option value="price_high">Sort: Price High → Low</option>
+            <option value="price_low">Sort: Price Low → High</option>
           </select>
         </div>
       </div>

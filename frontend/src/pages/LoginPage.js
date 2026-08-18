@@ -1,8 +1,54 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { loginUser } from "../services/api";
-import { KeyRound, User, Loader2, Eye, EyeOff } from "lucide-react"; // Import Loader2, Eye, EyeOff
+import { Loader2, Eye, EyeOff, ArrowRight, Github } from "lucide-react";
 import logo from "../assets/logo.png";
+
+// The faint technical grid behind everything, plus the reference's full-height
+// column rules. Purely decorative, so it never intercepts clicks.
+const GridBackdrop = () => (
+  <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+    <div
+      className="absolute inset-0"
+      style={{
+        backgroundImage:
+          "linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)",
+        backgroundSize: "40px 40px",
+      }}
+    />
+    {["14%", "38%", "62%"].map((left) => (
+      <div
+        key={left}
+        className="absolute top-0 bottom-0 w-px bg-white/[0.05] hidden lg:block"
+        style={{ left }}
+      />
+    ))}
+    {/* Soft light falling in from the top-left, as in the reference. */}
+    <div className="absolute -top-40 -left-40 w-[38rem] h-[38rem] rounded-full bg-white/[0.04] blur-[120px]" />
+    <div className="absolute top-1/3 -right-32 w-[26rem] h-[26rem] rounded-full bg-red-700/10 blur-[130px]" />
+  </div>
+);
+
+const SectionLabel = ({ children }) => (
+  <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-slate-600">
+    <span className="text-red-600">{"//"}</span> {children}
+  </p>
+);
+
+// ─── Set this to your GitHub profile or the repo URL. ────────────────────────
+const GITHUB_URL = "https://github.com/JehanSilva";
+
+const CAPABILITIES = [
+  "Point-of-sale billing & printed invoices",
+  "Live stock, restocking & returns",
+  "Customers, vehicles & service history",
+];
+
+const MODULES = [
+  { label: "Counter", items: ["Point of sale", "Invoices & receipts", "Credit & part payment"] },
+  { label: "Workshop", items: ["Repair pricing", "Vehicle history", "Insurance estimates"] },
+  { label: "Back office", items: ["Stock & restocking", "Sales & daily reports", "Staff & payroll"] },
+];
 
 const LoginPage = () => {
   const [username, setUsername] = useState("");
@@ -22,7 +68,7 @@ const LoginPage = () => {
       // Small delay to show the nice animation
       setTimeout(() => {
         navigate("/");
-      }, 500); 
+      }, 500);
     } catch (err) {
       setError("Invalid username or password");
       setLoading(false); // Re-enable button on error
@@ -37,110 +83,229 @@ const LoginPage = () => {
     }
   }, []);
 
+  const inputClass =
+    "mt-1.5 w-full rounded-xl border border-white/[0.08] bg-black/40 px-3.5 py-2.5 text-sm text-white placeholder-slate-600 outline-none backdrop-blur-sm transition-all focus:border-red-500/50 focus:bg-black/60 focus:ring-2 focus:ring-red-600/15 disabled:opacity-50";
+
   return (
-    <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 relative overflow-hidden font-sans">
-      
-      {/* Background Texture/Gradient - Industrial Vibe */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-900 via-black to-black opacity-80"></div>
-      
-      {/* Subtle Grid Pattern for Technical Feel */}
-      <div className="absolute inset-0" style={{ backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
+    <div className="min-h-screen lg:h-screen bg-black p-3 md:p-4 font-display antialiased lg:overflow-hidden">
+      <div className="relative min-h-[calc(100vh-1.5rem)] lg:h-full lg:min-h-0 flex flex-col overflow-hidden rounded-[28px] border border-white/[0.06] bg-[#0d0d0d]">
+        <GridBackdrop />
 
-      <div className="bg-gray-900/60 backdrop-blur-xl p-8 rounded-2xl shadow-2xl w-full max-w-md border border-gray-800 relative z-10">
-        
-        {/* Aesthetic "Bolts" or Industrial Accents */}
-        <div className="absolute -top-3 -left-3 w-6 h-6 border-t-2 border-l-2 border-red-600/50 rounded-tl-lg"></div>
-        <div className="absolute -bottom-3 -right-3 w-6 h-6 border-b-2 border-r-2 border-red-600/50 rounded-br-lg"></div>
+        {/* ── ROW 1: headline + sign-in ─────────────────────────────── */}
+        <div className="relative flex flex-1 lg:min-h-0 flex-col lg:flex-row">
+          {/* The form is why anyone opens this page, so on phones it comes
+              first and the headline follows. */}
+          <div className="order-first lg:order-last w-full lg:w-[440px] xl:w-[480px] shrink-0 border-b lg:border-b-0 lg:border-l border-white/[0.06] p-6 sm:p-8 lg:pl-8 lg:pr-14 xl:pl-10 xl:pr-16 flex items-center">
+            <div className="relative w-full animate-login-rise" style={{ animationDelay: "80ms" }}>
+              <div
+                className="pointer-events-none absolute -inset-10 rounded-[56px] bg-red-600/[0.025] blur-[72px]"
+                aria-hidden="true"
+              />
+              <div className="relative rounded-[28px] border border-white/[0.08] bg-black/50 p-6 sm:p-7 lg:p-6 xl:p-7 shadow-[0_28px_70px_-20px_rgba(0,0,0,0.95)] backdrop-blur-2xl">
+                {/* Light catching the top edge — what sells the glass. */}
+                <div
+                  className="pointer-events-none absolute inset-0 rounded-[28px] bg-gradient-to-b from-white/[0.05] via-transparent to-transparent"
+                  aria-hidden="true"
+                />
+                <div
+                  className="pointer-events-none absolute inset-x-6 -top-px h-px bg-gradient-to-r from-transparent via-white/20 to-transparent"
+                  aria-hidden="true"
+                />
+                <div className="relative">
 
-        <div className="text-center mb-10">
-           <div className="inline-flex items-center justify-center w-24 h-24 bg-black/40 rounded-full mb-6 shadow-lg border border-gray-700 p-2 ring-1 ring-gray-700/50">
-             <img src={logo} alt="NSS Logo" className="w-full h-full object-contain opacity-90 hover:opacity-100 transition-opacity" />
-           </div>
-          <h1 className="text-3xl font-bold text-white tracking-wide uppercase">Inventory Access</h1>
-          <p className="text-gray-400 text-xs mt-2 font-medium tracking-wider">NSS Auto Spares Management System</p>
+                  <h2 className="font-display text-2xl lg:text-[24px] xl:text-[28px] font-bold leading-[1.1] tracking-tight text-white">
+                    Sign in to the
+                    <br />
+                    workshop <span className="text-red-600">system</span>
+                  </h2>
+
+                  <p className="mt-4 xl:mt-5 text-[11px] font-mono uppercase tracking-[0.18em] text-slate-500">
+                    You'll have access to:
+                  </p>
+                  <ul className="mt-2.5 space-y-1.5">
+                    {CAPABILITIES.map((item) => (
+                      <li key={item} className="flex items-start gap-2 text-[12.5px] text-slate-400">
+                        <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-red-600" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+
+                  <div className="my-4 xl:my-5 h-px bg-white/10" />
+
+                  {error && (
+                    <div
+                      role="alert"
+                      className="mb-4 flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2.5 text-[12.5px] font-medium text-red-300 backdrop-blur-sm"
+                    >
+                      <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-red-500" />
+                      {error}
+                    </div>
+                  )}
+
+                  <form onSubmit={handleLogin}>
+                    <label
+                      htmlFor="login-username"
+                      className="block text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500"
+                    >
+                      Username
+                    </label>
+                    <input
+                      id="login-username"
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className={inputClass}
+                      placeholder="Type your username"
+                      autoComplete="username"
+                      required
+                      disabled={loading}
+                    />
+
+                    <label
+                      htmlFor="login-password"
+                      className="mt-4 xl:mt-5 block text-[10px] font-mono uppercase tracking-[0.2em] text-slate-500"
+                    >
+                      Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="login-password"
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className={`${inputClass} pr-11`}
+                        placeholder="••••••••"
+                        autoComplete="current-password"
+                        required
+                        disabled={loading}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        disabled={loading}
+                        className="absolute right-3 top-1/2 mt-[3px] -translate-y-1/2 text-slate-500 transition-colors hover:text-slate-300 focus:outline-none"
+                        title={showPassword ? "Hide password" : "Show password"}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                      >
+                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+
+                    {/* Left accent bar + trailing arrow, as in the reference. */}
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className={`group mt-6 xl:mt-7 flex w-full items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-bold transition-all ${loading
+                        ? "cursor-not-allowed border border-white/[0.08] bg-black/40 text-slate-500"
+                        : "bg-red-600 text-white shadow-lg shadow-red-950/50 hover:-translate-y-0.5 hover:bg-red-500 hover:shadow-xl hover:shadow-red-900/50 active:translate-y-0"
+                        }`}
+                    >
+                      {loading ? (
+                        <>
+                          <span>Authenticating…</span>
+                          <Loader2 className="animate-spin" size={16} />
+                        </>
+                      ) : (
+                        <>
+                          <span>Sign In</span>
+                          <ArrowRight
+                            size={16}
+                            className="transition-transform group-hover:translate-x-1"
+                          />
+                        </>
+                      )}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Headline */}
+          <div className="flex flex-1 flex-col justify-center p-6 sm:p-10 lg:px-12 lg:py-8 xl:px-14">
+            <div className="animate-login-rise">
+              <SectionLabel>NSS Auto Spares Management System</SectionLabel>
+            </div>
+
+            <h1
+              className="animate-login-rise mt-6 font-display font-black leading-[0.82] tracking-[-0.045em] text-white"
+              style={{ fontSize: "clamp(2.5rem, min(8.5vw, 15vh), 7.5rem)", animationDelay: "120ms" }}
+            >
+              NSS
+              <br />
+              Auto
+              <br />
+              Engineers
+              <span className="text-red-600">.</span>
+            </h1>
+
+            <p
+              className="animate-login-rise mt-6 max-w-xl text-sm leading-relaxed text-slate-400 xl:text-[15px]"
+              style={{ animationDelay: "200ms" }}
+            >
+              Spare parts, repairs, and the paperwork in between. One system for the counter, the
+              workshop floor and the back office — billing that deducts stock as it prints, inventory
+              that tracks every restock and return, and vehicles remembered by their plate.
+            </p>
+          </div>
         </div>
 
-        {error && (
-          <div className="bg-red-900/20 border border-red-900/50 text-red-400 px-4 py-3 rounded-lg mb-6 text-center text-sm font-medium flex items-center justify-center gap-2">
-            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span>
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div className="space-y-2">
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">
-              Operator ID
-            </label>
-            <div className="relative group">
-              <User className="absolute left-3 top-3.5 text-gray-500 group-focus-within:text-red-500 transition-colors" size={18} />
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full pl-10 p-3 bg-black/40 border border-gray-700/50 rounded-lg focus:bg-black/60 focus:border-red-600/50 focus:ring-1 focus:ring-red-600/50 outline-none transition-all font-mono text-gray-300 placeholder-gray-600"
-                placeholder="ENTER USERNAME"
-                required
-                disabled={loading}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">
-              Passcode
-            </label>
-            <div className="relative group">
-              <KeyRound
-                className="absolute left-3 top-3.5 text-gray-500 group-focus-within:text-red-500 transition-colors"
-                size={18}
-              />
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-10 p-3 bg-black/40 border border-gray-700/50 rounded-lg focus:bg-black/60 focus:border-red-600/50 focus:ring-1 focus:ring-red-600/50 outline-none transition-all font-mono text-gray-300 placeholder-gray-600"
-                placeholder="••••••••"
-                required
-                disabled={loading}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                disabled={loading}
-                className="absolute right-3 top-3.5 text-gray-500 hover:text-gray-300 focus:outline-none transition-colors"
-                title={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
-          </div>
-
-          <div className="pt-4">
-            <button
-                type="submit"
-                disabled={loading}
-                className={`w-full py-4 rounded-lg font-bold uppercase tracking-wider text-sm shadow-lg flex justify-center items-center gap-2 transition-all duration-300
-                ${
-                    loading
-                    ? "bg-gray-800 text-gray-500 cursor-not-allowed"
-                    : "bg-red-700 hover:bg-red-600 text-white shadow-red-900/20 border-b-2 border-red-900 hover:border-red-800 active:border-none active:translate-y-[2px]"
-                }`}
+        {/* ── ROW 2: what the system covers ─────────────────────────── */}
+        <div className="relative hidden border-t border-white/[0.06] sm:grid sm:grid-cols-3 [@media(max-height:780px)]:!hidden">
+          {MODULES.map(({ label, items }, i) => (
+            <div
+              key={label}
+              className={`p-6 lg:px-12 lg:py-5 xl:px-14 ${i > 0 ? "border-l border-white/[0.06]" : ""}`}
             >
-                {loading ? (
-                <>
-                    <Loader2 className="animate-spin" size={18} />
-                    <span>Authenticating...</span>
-                </>
-                ) : (
-                "Sign In"
-                )}
-            </button>
+              <SectionLabel>{label}</SectionLabel>
+              <ul className="mt-3 space-y-1.5">
+                {items.map((item) => (
+                  <li key={item} className="text-[13px] text-slate-400">
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        {/* ── ROW 3: footer bar ─────────────────────────────────────── */}
+        <div className="relative flex flex-col items-center justify-between gap-3 border-t border-white/[0.06] px-6 py-3.5 text-center sm:flex-row sm:text-left lg:px-12 xl:px-14">
+          <div className="flex items-center gap-2.5">
+            {/* The logo mark is red on transparent with baked-in whitespace, so
+                it sits on a white chip and is sized width-only (see Invoice.js). */}
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white">
+              <img src={logo} alt="" className="w-6 h-auto" />
+            </span>
+            <span className="text-[13px] font-bold text-white">NSS Auto Spares</span>
           </div>
-        </form>
-        
-        <div className="mt-8 text-center">
-            <p className="text-[10px] text-gray-600 font-mono uppercase">System v1.0.0 | Authorized Personnel Only</p>
+
+          <p className="text-[11px] text-slate-600">
+            © {new Date().getFullYear()} NSS Auto Engineers
+          </p>
+
+          {/* Renders as a link once GITHUB_URL is filled in above, and as plain
+              text until then — so an empty URL never ships a dead anchor. */}
+          {React.createElement(
+            GITHUB_URL ? "a" : "div",
+            {
+              ...(GITHUB_URL
+                ? { href: GITHUB_URL, target: "_blank", rel: "noopener noreferrer" }
+                : {}),
+              className:
+                "group flex items-center gap-2 text-[10px] font-mono uppercase tracking-[0.18em] text-slate-500 transition-colors hover:text-slate-300",
+            },
+            <>
+              <Github size={13} className="shrink-0 transition-colors group-hover:text-white" />
+              <span>
+                Developed by{" "}
+                <span className="font-semibold text-slate-300 group-hover:text-white">
+                  Jehan Silva
+                </span>
+              </span>
+            </>
+          )}
         </div>
       </div>
     </div>

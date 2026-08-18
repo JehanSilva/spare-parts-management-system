@@ -28,6 +28,33 @@
   animation: slideInRight 0.3s ease-out forwards;
 }
 
+/* Login page entrance. Named specifically rather than reusing the generic
+   `animate-fade-in-up` / `animate-fade-in` names, because those are referenced
+   ~30 times across the app but defined nowhere — they are silent no-ops today,
+   and defining them here would switch animations on everywhere at once. */
+@keyframes loginRise {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-login-rise {
+  opacity: 0;
+  animation: loginRise 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-login-rise {
+    animation-duration: 0.01ms;
+    animation-delay: 0ms !important;
+  }
+}
+
 @media print {
   @page {
     size: A4 portrait;

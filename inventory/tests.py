@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -1361,3 +1361,302 @@ class SupplierBankDetailsTest(TestCase):
         self.assertEqual(supplier.bank_branch, "")
         self.assertEqual(supplier.bank_account_number, "")
         self.assertEqual(supplier.bank_account_name, "")
+
+
+class RepairPriceHistoryTest(TestCase):
+    """
+    Repair/labour charges are billed from memory, so the POS recalls what the
+    same job was charged before. These cover the grouping and the catalog that
+    grows out of it.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.supplier = Supplier.objects.create(name="Test Supplier")
+        self.part = Part.objects.create(
+            name="Brake Pad", part_number="BP-001", supplier=self.supplier,
+            buy_price=500, sell_price=1000, stock_qty=10,
+        )
+
+    def _bill_labor(self, description, price, vehicle_number="CAB-1234", sale_status='COMPLETED'):
+        sale = Sale.objects.create(
+            customer_name="Test", vehicle_number=vehicle_number,
+            total_amount=price, status=sale_status,
+        )
+        SaleItem.objects.create(
+            sale=sale, item_type='LABOR', description=description,
+            quantity=1, unit_price=price,
+        )
+        return sale
+
+    # --- create_sale: first coverage of the LABOR path ---
+
+    def test_labor_sale_creates_saleitem_with_description(self):
+        payload = {
+            "customer_name": "John Doe",
+            "vehicle_number": "CAB-1234",
+            "items": [
+                {"item_type": "LABOR", "description": "Bearing replacement",
+                 "quantity": 2, "unit_price": 400, "discount": 0},
+                {"item_type": "PART", "part_id": str(self.part.id),
+                 "quantity": 1, "unit_price": 1000, "discount": 0},
+            ],
+        }
+        response = self.client.post(reverse('create_sale'), payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        sale = Sale.objects.get(pk=response.data['id'])
+        labor = sale.items.get(item_type='LABOR')
+        self.assertEqual(labor.description, "Bearing replacement")
+        self.assertIsNone(labor.part)
+        self.assertEqual(labor.total_price, 800)
+        # Labour is billed but never stocked, so only the part moves stock.
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 9)
+        self.assertEqual(sale.total_amount, 1800)
+
+    def test_labor_item_without_a_description_is_rejected(self):
+        payload = {
+            "customer_name": "John Doe",
+            "items": [{"item_type": "LABOR", "description": "  ", "quantity": 1, "unit_price": 400}],
+        }
+        response = self.client.post(reverse('create_sale'), payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Sale.objects.count(), 0)
+
+    # --- suggestions ---
+
+    def test_descriptions_differing_only_by_case_or_spacing_are_one_suggestion(self):
+        self._bill_labor("Bearing replacement", 400)
+        self._bill_labor("  bearing   REPLACEMENT ", 500)
+
+        response = self.client.get(reverse('get_repair_suggestions'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+
+        suggestion = response.data[0]
+        self.assertEqual(suggestion['times_billed'], 2)
+        self.assertEqual(float(suggestion['last_price']), 500)
+        self.assertEqual(float(suggestion['min_price']), 400)
+        self.assertEqual(float(suggestion['max_price']), 500)
+        # Internal whitespace is collapsed in whatever spelling is offered back.
+        self.assertNotIn("  ", suggestion['description'])
+
+    def test_cancelled_sales_are_not_counted_as_prices_charged(self):
+        self._bill_labor("Bearing replacement", 400)
+        self._bill_labor("Bearing replacement", 9999, sale_status='CANCELLED')
+
+        response = self.client.get(reverse('get_repair_suggestions'))
+        suggestion = response.data[0]
+        self.assertEqual(suggestion['times_billed'], 1)
+        self.assertEqual(float(suggestion['max_price']), 400)
+
+    def test_this_vehicles_own_bills_are_flagged_and_listed_first(self):
+        self._bill_labor("Bearing replacement", 500, vehicle_number="KX-9981")
+        self._bill_labor("Bearing replacement", 400, vehicle_number="CAB-1234")
+        self._bill_labor("Bearing replacement", 550, vehicle_number="ZZ-0001")
+
+        # Plate matching is case-insensitive, as it is everywhere else.
+        response = self.client.get(reverse('get_repair_suggestions'), {'vehicle_number': 'cab-1234'})
+        recent = response.data[0]['recent']
+        self.assertTrue(recent[0]['is_this_vehicle'])
+        self.assertEqual(recent[0]['vehicle_number'], "CAB-1234")
+        self.assertEqual(float(recent[0]['unit_price']), 400)
+        self.assertFalse(any(r['is_this_vehicle'] for r in recent[1:]))
+
+    def test_without_a_plate_nothing_is_flagged_as_this_vehicle(self):
+        self._bill_labor("Bearing replacement", 400, vehicle_number="CAB-1234")
+        response = self.client.get(reverse('get_repair_suggestions'))
+        self.assertFalse(any(r['is_this_vehicle'] for r in response.data[0]['recent']))
+
+    def test_only_the_most_recent_bills_are_listed(self):
+        for i in range(8):
+            self._bill_labor("Bearing replacement", 400 + i, vehicle_number="KX-9981")
+        response = self.client.get(reverse('get_repair_suggestions'))
+        self.assertEqual(response.data[0]['times_billed'], 8)
+        self.assertEqual(len(response.data[0]['recent']), 5)
+        # Newest first.
+        self.assertEqual(float(response.data[0]['recent'][0]['unit_price']), 407)
+
+    # --- catalog ---
+
+    def test_a_catalog_service_is_suggested_before_it_has_ever_been_billed(self):
+        RepairService.objects.create(name="Wheel alignment", default_price=1500)
+        response = self.client.get(reverse('get_repair_suggestions'))
+
+        self.assertEqual(len(response.data), 1)
+        suggestion = response.data[0]
+        self.assertTrue(suggestion['is_catalog'])
+        self.assertEqual(suggestion['times_billed'], 0)
+        self.assertEqual(suggestion['recent'], [])
+        self.assertEqual(float(suggestion['catalog_price']), 1500)
+
+    def test_the_catalog_price_rides_alongside_the_history_it_matches(self):
+        self._bill_labor("bearing replacement", 400)
+        RepairService.objects.create(name="Bearing replacement", default_price=450)
+
+        response = self.client.get(reverse('get_repair_suggestions'))
+        self.assertEqual(len(response.data), 1)
+        suggestion = response.data[0]
+        self.assertTrue(suggestion['is_catalog'])
+        # The catalog's own spelling and price win; history is still reported.
+        self.assertEqual(suggestion['description'], "Bearing replacement")
+        self.assertEqual(float(suggestion['catalog_price']), 450)
+        self.assertEqual(float(suggestion['last_price']), 400)
+        self.assertEqual(suggestion['times_billed'], 1)
+
+    def test_catalog_services_are_suggested_ahead_of_plain_history(self):
+        self._bill_labor("Oil change", 800)
+        RepairService.objects.create(name="Wheel alignment", default_price=1500)
+
+        response = self.client.get(reverse('get_repair_suggestions'))
+        self.assertEqual(response.data[0]['description'], "Wheel alignment")
+        self.assertEqual(response.data[1]['description'], "Oil change")
+
+    def test_retired_services_are_not_suggested(self):
+        RepairService.objects.create(name="Wheel alignment", default_price=1500, is_active=False)
+        response = self.client.get(reverse('get_repair_suggestions'))
+        self.assertEqual(len(response.data), 0)
+
+    def test_a_service_cannot_be_added_twice_under_different_capitalisation(self):
+        first = self.client.post(
+            reverse('add_repair_service'),
+            {"name": "Bearing replacement", "default_price": 400}, format='json',
+        )
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+
+        second = self.client.post(
+            reverse('add_repair_service'),
+            {"name": "  bearing REPLACEMENT  ", "default_price": 999}, format='json',
+        )
+        self.assertEqual(second.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(RepairService.objects.count(), 1)
+        # The name is stored trimmed, as typed.
+        self.assertEqual(RepairService.objects.get().name, "Bearing replacement")
+
+
+class LabourInReportsTest(TestCase):
+    """
+    Labour lines have no part, and reports used to assume every SaleItem had one.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        supplier = Supplier.objects.create(name="Test Supplier")
+        self.part = Part.objects.create(
+            name="Brake Pad", part_number="BP-001", supplier=supplier,
+            buy_price=600, sell_price=1000, stock_qty=10,
+        )
+        sale = Sale.objects.create(customer_name="Test", vehicle_number="CAB-1234", total_amount=1400)
+        SaleItem.objects.create(sale=sale, part=self.part, item_type='PART',
+                                quantity=1, unit_price=1000, discount=0)
+        SaleItem.objects.create(sale=sale, item_type='LABOR', description="Bearing replacement",
+                                quantity=1, unit_price=400, discount=0)
+
+    def test_daily_report_survives_a_labour_line(self):
+        response = self.client.get(reverse('daily_report'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Part profit is 1000-600=400; labour has no cost of goods, so its full
+        # 400 is profit. Cost of goods counts only the part.
+        self.assertEqual(float(response.data['today_profit']), 800)
+        self.assertEqual(float(response.data['total_investment']), 600)
+
+        names = [i['part_name'] for i in response.data['items']]
+        self.assertIn("Bearing replacement", names)
+        labour_row = next(i for i in response.data['items'] if i['part_name'] == "Bearing replacement")
+        self.assertEqual(labour_row['part_number'], "")
+        self.assertEqual(float(labour_row['profit']), 400)
+
+    def test_dashboard_profit_includes_labour(self):
+        response = self.client.get(reverse('dashboard_stats'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(float(response.data['total_profit']), 800)
+
+
+class BulkAddRepairServicesTest(TestCase):
+    """Pasting a whole price list into the catalog page."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse('bulk_add_repair_services')
+
+    def test_a_list_of_services_is_created_in_one_go(self):
+        response = self.client.post(self.url, {"services": [
+            {"name": "Bearing replacement", "default_price": 400},
+            {"name": "Wheel alignment", "default_price": 1500},
+            {"name": "Oil change", "default_price": "800.50"},
+        ]}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data, {"created": 3, "updated": 0})
+        self.assertEqual(RepairService.objects.count(), 3)
+        self.assertEqual(float(RepairService.objects.get(name="Oil change").default_price), 800.50)
+
+    def test_pasting_over_an_existing_list_reprices_instead_of_duplicating(self):
+        RepairService.objects.create(name="Bearing replacement", default_price=400)
+
+        response = self.client.post(self.url, {"services": [
+            {"name": "  bearing REPLACEMENT  ", "default_price": 450},
+            {"name": "Wheel alignment", "default_price": 1500},
+        ]}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data, {"created": 1, "updated": 1})
+        self.assertEqual(RepairService.objects.count(), 2)
+        self.assertEqual(float(RepairService.objects.get(name="Bearing replacement").default_price), 450)
+
+    def test_repricing_brings_a_retired_service_back(self):
+        RepairService.objects.create(name="Oil change", default_price=800, is_active=False)
+        self.client.post(self.url, {"services": [{"name": "Oil change", "default_price": 900}]}, format='json')
+        self.assertTrue(RepairService.objects.get(name="Oil change").is_active)
+
+    def test_one_bad_row_saves_nothing(self):
+        response = self.client.post(self.url, {"services": [
+            {"name": "Bearing replacement", "default_price": 400},
+            {"name": "Broken row", "default_price": "not a number"},
+            {"name": "Wheel alignment", "default_price": 1500},
+        ]}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # A half-applied price list is worse than a rejected one.
+        self.assertEqual(RepairService.objects.count(), 0)
+        self.assertEqual(response.data['rows'][0]['row'], 2)
+        self.assertIn("not a number", response.data['rows'][0]['error'].lower())
+
+    def test_a_name_listed_twice_in_the_paste_is_rejected(self):
+        response = self.client.post(self.url, {"services": [
+            {"name": "Bearing replacement", "default_price": 400},
+            {"name": "bearing  replacement", "default_price": 999},
+        ]}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(RepairService.objects.count(), 0)
+        self.assertIn("row 1", response.data['rows'][0]['error'].lower())
+
+    def test_blank_names_and_negative_prices_are_rejected(self):
+        for bad in ({"name": "   ", "default_price": 400},
+                    {"name": "Negative", "default_price": -5}):
+            response = self.client.post(self.url, {"services": [bad]}, format='json')
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, bad)
+        self.assertEqual(RepairService.objects.count(), 0)
+
+    def test_an_empty_paste_is_rejected(self):
+        response = self.client.post(self.url, {"services": []}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_bulk_added_services_are_suggested_at_the_pos(self):
+        self.client.post(self.url, {"services": [
+            {"name": "Bearing replacement", "default_price": 400},
+        ]}, format='json')
+
+        response = self.client.get(reverse('get_repair_suggestions'))
+        self.assertEqual(len(response.data), 1)
+        self.assertTrue(response.data[0]['is_catalog'])
+        self.assertEqual(float(response.data[0]['catalog_price']), 400)

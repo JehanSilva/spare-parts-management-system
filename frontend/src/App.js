@@ -20,6 +20,7 @@ import DailyReportPage from "./pages/DailyReportPage";
 import OptionsPage from "./pages/OptionsPage";
 import EstimatePage from "./pages/EstimatePage";
 import EstimateListPage from "./pages/EstimateListPage";
+import RepairServicesPage from "./pages/RepairServicesPage";
 import PrivateRoute from "./components/PrivateRoute";
 import useAutoLogout from "./hooks/useAutoLogout";
 import { PartsProvider } from "./context/PartsContext";
@@ -105,6 +106,14 @@ function App() {
             element={
               <PrivateRoute>
                 <VehiclePage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/repairs"
+            element={
+              <PrivateRoute>
+                <RepairServicesPage />
               </PrivateRoute>
             }
           />

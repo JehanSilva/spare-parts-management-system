@@ -120,6 +120,28 @@ export const reverseSale = async (id) =>
   (await API.post(`/sales/${id}/reverse/`)).data;
 export const markSaleAsPaid = async (id, amount) =>
   (await API.post(`/sales/${id}/mark-paid/`, amount != null ? { amount } : {})).data;
+// Past repair/labour charges, grouped by description — powers the price-recall
+// dropdown in the POS "Add Repair / Labor" modal. Pass the cart's plate to have
+// that vehicle's own bills floated to the top of each suggestion.
+export const fetchRepairSuggestions = async (vehicleNumber) =>
+  (await API.get("/repairs/suggestions/", {
+    params: vehicleNumber ? { vehicle_number: vehicleNumber } : {},
+  })).data;
+
+// --- REPAIR SERVICE CATALOG ---
+export const fetchRepairServices = async (includeInactive = false) =>
+  (await API.get("/repairs/services/", {
+    params: includeInactive ? { include_inactive: 1 } : {},
+  })).data;
+export const createRepairService = async (data) =>
+  (await API.post("/repairs/services/add/", data)).data;
+export const bulkAddRepairServices = async (services) =>
+  (await API.post("/repairs/services/bulk-add/", { services })).data;
+export const updateRepairService = async (id, data) =>
+  (await API.patch(`/repairs/services/${id}/update/`, data)).data;
+export const deleteRepairService = async (id) =>
+  await API.delete(`/repairs/services/${id}/delete/`);
+
 export const fetchDashboardStats = async (period = 'all') =>
   (await API.get("/dashboard/stats/", { params: { period } })).data;
 export const fetchDailyReport = async (date) =>

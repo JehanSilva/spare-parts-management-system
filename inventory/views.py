@@ -1,21 +1,39 @@
 import uuid
+from collections import Counter
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.utils import timezone
 from datetime import timedelta
-from django.db.models.functions import TruncDate
+from django.db.models.functions import TruncDate, Coalesce
 from rest_framework import status
-from django.db.models import Sum, F
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, build_vehicle_registry_context
+from django.db.models import Sum, F, Value, DecimalField
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, build_vehicle_registry_context
 from decimal import Decimal, InvalidOperation
-from .models import Vehicle
+from .models import Vehicle, normalize_repair_description
 from .serializers import VehicleSerializer
 from django.shortcuts import get_object_or_404
 from django.db.models import Sum, F
 from django.db import transaction
 from django.db.models import Q
+
+
+def buy_price_expr():
+    """
+    A SaleItem's unit cost, with labour treated as costing nothing.
+
+    LABOR lines have no `part`, so a bare F('part__buy_price') is NULL and the
+    whole profit expression collapses to NULL — which Sum() then skips, quietly
+    dropping the row from every profit aggregate. Coalescing to zero keeps
+    labour in the totals, where it counts as pure profit (there is no COGS).
+    """
+    return Coalesce(
+        F('part__buy_price'),
+        Value(0),
+        output_field=DecimalField(max_digits=12, decimal_places=2),
+    )
+
 
 # --- CUSTOMER VIEWS ---
 @api_view(['GET'])
@@ -1032,6 +1050,260 @@ def mark_sale_paid(request, pk):
     return Response(SaleSerializer(sale).data)
 
 
+# --- REPAIR / LABOUR VIEWS ---
+# How many past labour lines to scan when building suggestions. Grouping happens
+# in Python rather than in SQL because the bucket key is a normalised string, so
+# the window keeps the work bounded on a shop with years of history.
+REPAIR_HISTORY_WINDOW = 5000
+# Extra rows pulled for the cart's own vehicle, so a repair last done on it years
+# ago still shows up even when it falls outside the window above.
+REPAIR_VEHICLE_WINDOW = 500
+# Past bills shown under a suggestion.
+REPAIR_RECENT_LIMIT = 5
+
+
+@api_view(['GET'])
+def get_repair_suggestions(request):
+    """
+    Every repair/labour description ever billed, with what it was charged at.
+
+    Powers the price-recall dropdown in the POS "Add Repair / Labor" modal:
+    descriptions are typed free-hand, so this groups them case- and
+    whitespace-insensitively and reports the last price, the range, and the last
+    few actual bills. Passing ?vehicle_number= floats that vehicle's own bills to
+    the top of each suggestion, since repeat customers notice a price change.
+    """
+    plate = request.query_params.get('vehicle_number', '').strip()
+
+    base = (
+        SaleItem.objects
+        .filter(item_type='LABOR', sale__status='COMPLETED')
+        .exclude(description='')
+        .order_by('-sale__created_at')
+        .values('id', 'description', 'unit_price', 'quantity',
+                'sale__created_at', 'sale__vehicle_number')
+    )
+
+    rows = list(base[:REPAIR_HISTORY_WINDOW])
+    if plate:
+        rows += list(base.filter(sale__vehicle_number__iexact=plate)[:REPAIR_VEHICLE_WINDOW])
+
+    # The two queries overlap; keep one copy of each line, newest first.
+    seen = set()
+    unique_rows = []
+    for row in rows:
+        if row['id'] in seen:
+            continue
+        seen.add(row['id'])
+        unique_rows.append(row)
+    unique_rows.sort(key=lambda r: r['sale__created_at'], reverse=True)
+
+    plate_key = plate.lower()
+    buckets = {}
+    for row in unique_rows:
+        key = normalize_repair_description(row['description'])
+        if not key:
+            continue
+        bucket = buckets.get(key)
+        if bucket is None:
+            bucket = buckets[key] = {
+                'spellings': Counter(),
+                'last_price': row['unit_price'],
+                'min_price': row['unit_price'],
+                'max_price': row['unit_price'],
+                'times_billed': 0,
+                'last_billed_at': row['sale__created_at'],
+                'recent': [],
+            }
+        bucket['times_billed'] += 1
+        bucket['spellings'][' '.join(row['description'].split())] += 1
+        bucket['min_price'] = min(bucket['min_price'], row['unit_price'])
+        bucket['max_price'] = max(bucket['max_price'], row['unit_price'])
+        bucket['recent'].append({
+            'date': row['sale__created_at'],
+            'vehicle_number': row['sale__vehicle_number'] or '',
+            'unit_price': row['unit_price'],
+            'quantity': row['quantity'],
+            'is_this_vehicle': bool(plate) and (row['sale__vehicle_number'] or '').lower() == plate_key,
+        })
+
+    suggestions = []
+    for bucket in buckets.values():
+        # Offer back the spelling the shop actually uses, not whichever typo
+        # happened to be typed most recently. Rows were consumed newest-first,
+        # so Counter ties already break towards the more recent wording.
+        bucket['description'] = bucket.pop('spellings').most_common(1)[0][0]
+        # This vehicle's own bills first, each group still newest-first.
+        bucket['recent'].sort(key=lambda r: (not r['is_this_vehicle'], -r['date'].timestamp()))
+        bucket['recent'] = bucket['recent'][:REPAIR_RECENT_LIMIT]
+        suggestions.append(bucket)
+
+    # Fold in the priced catalog. A catalog entry that has never been billed
+    # still needs to be suggestible, and where one exists its price is the
+    # authority — history only says what was charged, the catalog says what the
+    # job costs.
+    for service in RepairService.objects.filter(is_active=True):
+        key = normalize_repair_description(service.name)
+        bucket = next((b for b in suggestions if normalize_repair_description(b['description']) == key), None)
+        if bucket is None:
+            bucket = {
+                'description': service.name,
+                'last_price': service.default_price,
+                'min_price': service.default_price,
+                'max_price': service.default_price,
+                'times_billed': 0,
+                'last_billed_at': None,
+                'recent': [],
+            }
+            suggestions.append(bucket)
+        else:
+            bucket['description'] = service.name
+        bucket['is_catalog'] = True
+        bucket['catalog_price'] = service.default_price
+
+    for bucket in suggestions:
+        bucket.setdefault('is_catalog', False)
+        bucket.setdefault('catalog_price', None)
+
+    # Catalog first, then everything else by how recently it was billed.
+    suggestions.sort(
+        key=lambda b: (
+            not b['is_catalog'],
+            -(b['last_billed_at'].timestamp() if b['last_billed_at'] else 0),
+        )
+    )
+    return Response(suggestions)
+
+
+@api_view(['GET'])
+def get_repair_services(request):
+    """The priced repair catalog. ?include_inactive=1 to also list retired ones."""
+    qs = RepairService.objects.all()
+    if request.query_params.get('include_inactive') not in ('1', 'true', 'True'):
+        qs = qs.filter(is_active=True)
+    return Response(RepairServiceSerializer(qs, many=True).data)
+
+
+@api_view(['POST'])
+def add_repair_service(request):
+    serializer = RepairServiceSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    # The case-insensitive unique constraint is enforced in the DB, so check
+    # here to answer with a usable message instead of an IntegrityError.
+    name = serializer.validated_data.get('name', '')
+    if RepairService.objects.filter(name__iexact=name.strip()).exists():
+        return Response(
+            {"error": f"A repair service named '{name.strip()}' already exists."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    serializer.save(name=name.strip())
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['PATCH', 'PUT'])
+def update_repair_service(request, pk):
+    service = get_object_or_404(RepairService, pk=pk)
+    serializer = RepairServiceSerializer(service, data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    name = serializer.validated_data.get('name')
+    if name is not None:
+        name = name.strip()
+        if RepairService.objects.filter(name__iexact=name).exclude(pk=pk).exists():
+            return Response(
+                {"error": f"A repair service named '{name}' already exists."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        serializer.save(name=name)
+    else:
+        serializer.save()
+    return Response(serializer.data)
+
+
+@api_view(['DELETE'])
+def delete_repair_service(request, pk):
+    service = get_object_or_404(RepairService, pk=pk)
+    service.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['POST'])
+def bulk_add_repair_services(request):
+    """
+    Create or re-price many services at once, from the catalog page's paste box.
+
+    Existing names are re-priced rather than rejected: pasting an updated price
+    list over the top of the current one is the obvious way to use this, and
+    erroring on every row the shop already has would make that useless.
+
+    Nothing is written unless every row is valid — a half-applied price list is
+    worse than a rejected one, because there is no way to tell which half took.
+    """
+    services = request.data.get('services')
+    if not isinstance(services, list) or not services:
+        return Response({"error": "No services provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+    errors = []
+    cleaned = []
+    seen = {}
+    for index, entry in enumerate(services):
+        row = index + 1
+        if not isinstance(entry, dict):
+            errors.append({"row": row, "error": "Malformed entry."})
+            continue
+
+        name = str(entry.get('name', '')).strip()
+        if not name:
+            errors.append({"row": row, "error": "Missing a name."})
+            continue
+        if len(name) > 255:
+            errors.append({"row": row, "name": name, "error": "Name is longer than 255 characters."})
+            continue
+
+        try:
+            price = Decimal(str(entry.get('default_price', '')).strip())
+        except (InvalidOperation, TypeError):
+            errors.append({"row": row, "name": name, "error": "Price is not a number."})
+            continue
+        if price < 0:
+            errors.append({"row": row, "name": name, "error": "Price cannot be negative."})
+            continue
+
+        # Catch names repeated inside the paste itself, which would otherwise
+        # resolve to whichever row happened to be applied last.
+        key = normalize_repair_description(name)
+        if key in seen:
+            errors.append({
+                "row": row, "name": name,
+                "error": f"Listed twice — also on row {seen[key]}.",
+            })
+            continue
+        seen[key] = row
+        cleaned.append((name, price))
+
+    if errors:
+        return Response(
+            {"error": "Nothing was saved — fix these rows and try again.", "rows": errors},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    created = updated = 0
+    with transaction.atomic():
+        for name, price in cleaned:
+            existing = RepairService.objects.filter(name__iexact=name).first()
+            if existing:
+                existing.default_price = price
+                existing.is_active = True
+                existing.save()
+                updated += 1
+            else:
+                RepairService.objects.create(name=name, default_price=price)
+                created += 1
+
+    return Response({"created": created, "updated": updated}, status=status.HTTP_201_CREATED)
+
+
 # --- ESTIMATE VIEWS ---
 def _resolve_estimate_vehicle(vehicle_number, make_model):
     """
@@ -1169,7 +1441,7 @@ def dashboard_stats(request):
         # item.unit_price is the marked sell price. item.discount is the deduction.
         # item.part.buy_price is the purchase cost.
         actual_revenue = (item.unit_price - item.discount) * item.quantity
-        total_cost = item.part.buy_price * item.quantity
+        total_cost = (item.part.buy_price if item.part else 0) * item.quantity
         profit += (actual_revenue - total_cost)
 
     # Low Stock Items
@@ -1221,7 +1493,7 @@ def get_dashboard_stats(request):
 
     # 3. Calculate Profit - FILTERED BY DATE (Accounts for discounts)
     profit_data = sale_items_query.aggregate(
-        total_profit=Sum((F('unit_price') - F('discount') - F('part__buy_price')) * F('quantity'))
+        total_profit=Sum((F('unit_price') - F('discount') - buy_price_expr()) * F('quantity'))
     )
     total_profit = profit_data['total_profit'] or 0
 
@@ -1264,7 +1536,7 @@ def get_dashboard_stats(request):
     profit_trend_query = sale_items_query.filter(sale__status='COMPLETED')\
         .annotate(date=TruncDate('sale__created_at'))\
         .values('date')\
-        .annotate(daily_profit=Sum((F('unit_price') - F('discount') - F('part__buy_price')) * F('quantity')))\
+        .annotate(daily_profit=Sum((F('unit_price') - F('discount') - buy_price_expr()) * F('quantity')))\
         .order_by('date')
     
     trend_dict = {}
@@ -1328,8 +1600,8 @@ def daily_report(request):
     target_revenue = sales_data['total'] or 0
 
     profit_cost_data = target_items.aggregate(
-        total_profit=Sum((F('unit_price') - F('discount') - F('part__buy_price')) * F('quantity')),
-        total_cost=Sum(F('part__buy_price') * F('quantity'))
+        total_profit=Sum((F('unit_price') - F('discount') - buy_price_expr()) * F('quantity')),
+        total_cost=Sum(buy_price_expr() * F('quantity'))
     )
     target_profit = profit_cost_data['total_profit'] or 0
     total_investment = profit_cost_data['total_cost'] or 0 # Investment of the items sold that day
@@ -1356,11 +1628,14 @@ def daily_report(request):
     # List of target's sales items
     items_list = []
     for item in target_items:
-        # Net Profit = ((Sell Price - Discount) - Buy Price) * Quantity
-        item_profit = (item.unit_price - item.discount - item.part.buy_price) * item.quantity
+        # Net Profit = ((Sell Price - Discount) - Buy Price) * Quantity.
+        # Labour lines have no part, so no buy price and no name of their own —
+        # they cost nothing to provide and are billed under their description.
+        buy_price = item.part.buy_price if item.part else 0
+        item_profit = (item.unit_price - item.discount - buy_price) * item.quantity
         items_list.append({
-            "part_name": item.part.name,
-            "part_number": item.part.part_number,
+            "part_name": item.part.name if item.part else item.description,
+            "part_number": item.part.part_number if item.part else "",
             "unit_price": item.unit_price,
             "quantity": item.quantity,
             "discount": item.discount,
@@ -1379,7 +1654,8 @@ def daily_report(request):
         
     for item in target_items:
         hour = item.sale.created_at.astimezone(timezone.get_current_timezone()).hour
-        profit = (item.unit_price - item.discount - item.part.buy_price) * item.quantity
+        buy_price = item.part.buy_price if item.part else 0
+        profit = (item.unit_price - item.discount - buy_price) * item.quantity
         if hour in hours:
             hours[hour]["profit"] += profit
 

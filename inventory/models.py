@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models.functions import Lower
 import uuid
 
 class Supplier(models.Model):
@@ -180,6 +181,17 @@ class SaleItem(models.Model):
     def __str__(self):
         return f"{self.part.name if self.part else self.description} (x{self.quantity})"
 
+def normalize_repair_description(text):
+    """
+    Grouping key for repair/labour descriptions.
+
+    Descriptions are typed free-hand at the POS, so "Bearing replacement",
+    "bearing  replacement" and " BEARING REPLACEMENT " are all the same job and
+    have to fall into one bucket before their prices can be compared.
+    """
+    return ' '.join((text or '').strip().lower().split())
+
+
 # The four task groups an estimate is built from — mirrors ESTIMATE_SECTIONS in
 # frontend/src/components/EstimateDocument.js.
 ESTIMATE_SECTION_KEYS = ['removing', 'repair', 'paint', 'replacing']
@@ -243,6 +255,34 @@ class Estimate(models.Model):
 
     def __str__(self):
         return f"{self.estimate_number or 'Estimate'} - {self.vehicle_number} ({self.insurance_company})"
+
+
+class RepairService(models.Model):
+    """
+    A standard repair the shop offers at a known price.
+
+    Seeded by promoting descriptions that have already been billed (the POS
+    repair modal offers a "Save as service" button once a job has been priced),
+    so the catalog grows out of real history rather than having to be filled in
+    up front. Catalog entries are suggested in the POS even before they have
+    ever been billed, and their price wins over the historical one.
+    """
+    name = models.CharField(max_length=255, help_text="e.g. 'Bearing replacement'")
+    default_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_active = models.BooleanField(default=True, help_text="Retired services stop being suggested but keep their sale history")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            # Case-insensitive, so "Bearing replacement" can't be added twice
+            # under different capitalisation — the whole point is one price per job.
+            models.UniqueConstraint(Lower('name'), name='repairservice_name_ci_unique'),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.default_price})"
 
 
 class ActiveCart(models.Model):

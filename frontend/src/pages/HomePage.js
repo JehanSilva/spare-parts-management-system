@@ -22,6 +22,7 @@ import {
   Settings,
   ClipboardList,
   Layers,
+  Wrench,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
@@ -166,6 +167,14 @@ const HomePage = () => {
             colorClass="text-amber-600 bg-amber-100"
             gradient="from-amber-400 to-amber-600"
             desc="Configure the make, model & year catalog parts are matched against."
+          />
+          <QuickActionCard
+            to="/repairs"
+            title="Repair Services"
+            icon={Wrench}
+            colorClass="text-teal-600 bg-teal-100"
+            gradient="from-teal-400 to-teal-600"
+            desc="Standard repairs and their prices, suggested when billing labour."
           />
           <QuickActionCard
             to="/daily-report"

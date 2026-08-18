@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
-import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle } from "../services/api";
+import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle, fetchRepairSuggestions, createRepairService } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import { useSettings } from "../context/SettingsContext";
 import BillingDocument from "../components/BillingDocument";
@@ -494,16 +494,104 @@ const PaymentModal = ({
 // Doubles as the "add" and "edit" form for a labor line item — editItem
 // (when passed) seeds the fields and onAdd is called with the same id back
 // so the caller can tell an edit from a fresh add.
-const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
+//
+// Prices for the same job are typed from memory and drift between bills, so the
+// description field recalls what has been charged before: a dropdown of past
+// descriptions with their price history, and the last few actual bills beneath
+// the price. Suggestions are fetched once per open (cheap, and always fresh —
+// a repair billed two minutes ago is already in the list) and filtered
+// client-side, so typing never waits on the network.
+
+// Same case/whitespace-insensitive key the backend groups on — see
+// normalize_repair_description in inventory/models.py.
+const normalizeRepairDescription = (text) =>
+  (text || "").trim().toLowerCase().split(/\s+/).join(" ");
+
+const formatMoney = (value) =>
+  Number(value || 0).toLocaleString("en-LK", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+const formatBillDate = (iso) =>
+  new Date(iso).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+
+const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => {
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [savingService, setSavingService] = useState(false);
+  const [serviceError, setServiceError] = useState("");
+  const dropdownRef = useRef(null);
 
   useEffect(() => {
     if (isOpen) {
       setDescription(editItem ? editItem.name : "");
       setPrice(editItem ? String(editItem.sell_price) : "");
+      setShowDropdown(false);
+      setServiceError("");
     }
   }, [isOpen, editItem]);
+
+  // Refetch on every open so a repair billed moments ago is already suggestible.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setSuggestionsLoading(true);
+    fetchRepairSuggestions(vehicleNumber)
+      .then((data) => {
+        if (!cancelled) setSuggestions(Array.isArray(data) ? data : []);
+      })
+      .catch((err) => {
+        // Price recall is a convenience — losing it must not block billing.
+        console.error("[POS] Failed to load repair price history:", err);
+        if (!cancelled) setSuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSuggestionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, vehicleNumber]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Same keyword-AND matching the part search uses, so "bear repl" finds
+  // "Bearing replacement".
+  const filteredSuggestions = useMemo(() => {
+    const term = description.trim().toLowerCase();
+    if (!term) return suggestions;
+    const keywords = term.split(/\s+/);
+    return suggestions.filter((s) => {
+      const haystack = s.description.toLowerCase();
+      return keywords.every((k) => haystack.includes(k));
+    });
+  }, [suggestions, description]);
+
+  // The bill history shown under the price belongs to whatever is typed right
+  // now, matched on the normalised key rather than the exact characters.
+  const matchedSuggestion = useMemo(() => {
+    const key = normalizeRepairDescription(description);
+    if (!key) return null;
+    return (
+      suggestions.find((s) => normalizeRepairDescription(s.description) === key) || null
+    );
+  }, [suggestions, description]);
 
   if (!isOpen) return null;
 
@@ -513,6 +601,58 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
   const handleAdd = () => {
     if (!canAdd) return;
     onAdd(description.trim(), price, editItem ? editItem.id : null);
+  };
+
+  const applySuggestion = (suggestion) => {
+    setDescription(suggestion.description);
+    // The catalog is the authority on what a job costs; history only records
+    // what happened to be charged.
+    setPrice(String(suggestion.catalog_price ?? suggestion.last_price));
+    setShowDropdown(false);
+  };
+
+  // Promote what's typed into the priced catalog, so it is suggested at this
+  // price from now on even before it is billed again.
+  const handleSaveAsService = async () => {
+    setSavingService(true);
+    setServiceError("");
+    try {
+      const created = await createRepairService({
+        name: description.trim(),
+        default_price: parseFloat(price),
+      });
+      setSuggestions((prev) => {
+        const key = normalizeRepairDescription(created.name);
+        const next = prev.map((s) =>
+          normalizeRepairDescription(s.description) === key
+            ? { ...s, is_catalog: true, catalog_price: created.default_price, description: created.name }
+            : s
+        );
+        return next.some((s) => normalizeRepairDescription(s.description) === key)
+          ? next
+          : [
+              {
+                description: created.name,
+                last_price: created.default_price,
+                min_price: created.default_price,
+                max_price: created.default_price,
+                times_billed: 0,
+                last_billed_at: null,
+                recent: [],
+                is_catalog: true,
+                catalog_price: created.default_price,
+              },
+              ...next,
+            ];
+      });
+    } catch (err) {
+      console.error("[POS] Failed to save repair service:", err);
+      setServiceError(
+        err.response?.data?.error || "Could not save this as a service. The repair can still be billed."
+      );
+    } finally {
+      setSavingService(false);
+    }
   };
 
   return (
@@ -533,8 +673,8 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
           </button>
         </div>
 
-        <div className="p-4 space-y-3">
-          <div>
+        <div className="p-4 space-y-3 overflow-y-auto custom-scrollbar">
+          <div className="relative" ref={dropdownRef}>
             <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
               Description *
             </label>
@@ -542,11 +682,62 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
               type="text"
               autoFocus
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => {
+                setDescription(e.target.value);
+                setShowDropdown(true);
+              }}
+              onFocus={() => setShowDropdown(true)}
               placeholder="e.g. Brake pad replacement labor"
               className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
             />
+
+            {showDropdown && (suggestionsLoading || filteredSuggestions.length > 0) && (
+              <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl mt-1 max-h-56 overflow-y-auto shadow-xl custom-scrollbar animate-fade-in-up">
+                {suggestionsLoading ? (
+                  <div className="p-4 text-gray-400 text-center text-sm flex items-center justify-center gap-2">
+                    <Loader2 size={14} className="animate-spin" /> Loading past charges…
+                  </div>
+                ) : (
+                  filteredSuggestions.map((s) => {
+                    const thisVehicle = s.recent.find((r) => r.is_this_vehicle);
+                    const range =
+                      s.min_price === s.max_price
+                        ? formatMoney(s.last_price)
+                        : `${formatMoney(s.min_price)}–${formatMoney(s.max_price)}`;
+                    return (
+                      <button
+                        key={s.description}
+                        type="button"
+                        onClick={() => applySuggestion(s)}
+                        className="w-full text-left px-3 py-2 border-b border-gray-50 last:border-b-0 hover:bg-blue-50 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-[13px] text-gray-800 leading-snug">
+                            {s.description}
+                          </span>
+                          {s.is_catalog && (
+                            <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide bg-blue-100 text-blue-700 border border-blue-200 rounded-full px-1.5 py-0.5">
+                              Service
+                            </span>
+                          )}
+                          {thisVehicle && (
+                            <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-1.5 py-0.5">
+                              ★ this vehicle {formatMoney(thisVehicle.unit_price)}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-0.5">
+                          last {formatMoney(s.last_price)} · usual {range} · billed{" "}
+                          {s.times_billed}×
+                        </p>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
+
           <div>
             <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
               Price (LKR) *
@@ -561,6 +752,64 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem }) => {
               className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
             />
           </div>
+
+          {matchedSuggestion && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-2.5">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5">
+                Previously charged
+              </p>
+              <div className="space-y-1">
+                {matchedSuggestion.recent.map((r, i) => (
+                  <div
+                    key={`${r.date}-${i}`}
+                    className={`flex items-center gap-2 text-[11px] rounded-lg px-1.5 py-1 ${
+                      r.is_this_vehicle
+                        ? "bg-amber-50 border border-amber-200 text-amber-900 font-bold"
+                        : "text-gray-600"
+                    }`}
+                  >
+                    <span className="w-3 shrink-0 text-amber-500">
+                      {r.is_this_vehicle ? "★" : ""}
+                    </span>
+                    <span className="w-20 shrink-0 tabular-nums">
+                      {formatBillDate(r.date)}
+                    </span>
+                    <span className="flex-1 truncate font-mono text-[10px]">
+                      {r.vehicle_number || "—"}
+                    </span>
+                    <span className="tabular-nums">{formatMoney(r.unit_price)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {serviceError && (
+            <p className="text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+              {serviceError}
+            </p>
+          )}
+
+          {canAdd && !matchedSuggestion?.is_catalog && (
+            <button
+              type="button"
+              onClick={handleSaveAsService}
+              disabled={savingService}
+              className="w-full py-2 text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100 disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              {savingService ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" /> Saving…
+                </>
+              ) : (
+                <>
+                  <BadgeCheck size={12} /> Save as a standard service at{" "}
+                  {formatMoney(price)}
+                </>
+              )}
+            </button>
+          )}
+
           <button
             onClick={handleAdd}
             disabled={!canAdd}
@@ -1208,7 +1457,10 @@ const POSPage = () => {
         }
 
         const newItem = {
-          id: `labor_${Date.now()}`,
+          // Random suffix, not just the clock: adding several repairs by
+          // clicking suggestions in quick succession can land two in the same
+          // millisecond, and a duplicate id silently merges the cart rows.
+          id: `labor_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           item_type: "LABOR",
           name: description,
           sell_price: parseFloat(price),
@@ -1879,6 +2131,7 @@ const POSPage = () => {
         }}
         onAdd={handleAddLaborItem}
         editItem={editingLaborItem}
+        vehicleNumber={vehicleNumber}
       />
 
       {/* Mobile: products and cart are alternating views, so the repair tabs

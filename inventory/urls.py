@@ -40,6 +40,14 @@ urlpatterns = [
     path('sales/<uuid:pk>/reverse/', views.reverse_sale, name='reverse_sale'),
     path('sales/<uuid:pk>/mark-paid/', views.mark_sale_paid, name='mark_sale_paid'),
 
+    # Repairs / labour (price recall for the POS repair modal)
+    path('repairs/suggestions/', views.get_repair_suggestions, name='get_repair_suggestions'),
+    path('repairs/services/', views.get_repair_services, name='get_repair_services'),
+    path('repairs/services/add/', views.add_repair_service, name='add_repair_service'),
+    path('repairs/services/bulk-add/', views.bulk_add_repair_services, name='bulk_add_repair_services'),
+    path('repairs/services/<int:pk>/update/', views.update_repair_service, name='update_repair_service'),
+    path('repairs/services/<int:pk>/delete/', views.delete_repair_service, name='delete_repair_service'),
+
     # Estimates (insurance claim repair estimates)
     path('estimates/', views.get_estimates, name='get_estimates'),
     path('estimates/create/', views.create_estimate, name='create_estimate'),

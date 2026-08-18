@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db.models.functions import Upper
-from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate
+from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -240,6 +240,12 @@ class EstimateSerializer(serializers.ModelSerializer):
         # create, the vehicle link is resolved from the plate, and the total is
         # recomputed from the lines in Estimate.save().
         read_only_fields = ['estimate_number', 'vehicle', 'total_amount']
+
+
+class RepairServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RepairService
+        fields = ['id', 'name', 'default_price', 'is_active', 'created_at', 'updated_at']
 
 
 class ActiveCartSerializer(serializers.ModelSerializer):

@@ -160,6 +160,10 @@ const VehicleCustomerModal = ({
   linkPickerOpen,
   setLinkPickerOpen,
   onCustomerSelected,
+  vehicleChoiceCustomer,
+  onVehicleChosenForCustomer,
+  onCustomerWithoutVehicle,
+  onCancelVehicleChoice,
   onUnlinkCustomer,
   unlinkingCustomer,
   vehicleNumberInputRef,
@@ -206,105 +210,216 @@ const VehicleCustomerModal = ({
         </div>
 
         <div className="p-4 overflow-y-auto space-y-3">
-          {/* 1. Vehicle Number with smart lookup — always the first, primary action */}
-          <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
-              Vehicle No.
-            </label>
-            <div className="relative">
-              <Car size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                ref={vehicleNumberInputRef}
-                value={vehicleNumber}
-                onChange={(e) => onVehicleNumberChange(e.target.value)}
-                className={`w-full pl-7 pr-7 py-2 bg-gray-50 border rounded-lg focus:bg-white outline-none text-sm transition-all ${vehicleLookupStatus === "found"
-                    ? "border-green-400 focus:ring-1 focus:ring-green-400"
-                    : vehicleLookupStatus === "not_found"
-                      ? "border-amber-400 focus:ring-1 focus:ring-amber-400"
-                      : "border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500"
-                  }`}
-                placeholder="Plate number..."
-              />
-              <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                {vehicleLookupStatus === "searching" && <Loader2 size={13} className="text-gray-400 animate-spin" />}
-                {vehicleLookupStatus === "found" && <BadgeCheck size={14} className="text-green-500" />}
-                {vehicleLookupStatus === "not_found" && <UserPlus size={13} className="text-amber-500" />}
+          {/* 1. Who the job is for — plate and customer share a panel because
+              either one can be the way in: type a plate and the owner resolves,
+              or pick a customer and choose from their vehicles. */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2.5">
+            {/* 1a. Vehicle Number with smart lookup — always the first, primary action */}
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                Vehicle No.
+              </label>
+              <div className="relative">
+                <Car size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  ref={vehicleNumberInputRef}
+                  value={vehicleNumber}
+                  onChange={(e) => onVehicleNumberChange(e.target.value)}
+                  className={`w-full pl-7 pr-7 py-2 bg-white border rounded-lg focus:bg-white outline-none text-sm transition-all ${vehicleLookupStatus === "found"
+                      ? "border-green-400 focus:ring-1 focus:ring-green-400"
+                      : vehicleLookupStatus === "not_found"
+                        ? "border-amber-400 focus:ring-1 focus:ring-amber-400"
+                        : "border-gray-200 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                    }`}
+                  placeholder="Plate number..."
+                />
+                <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                  {vehicleLookupStatus === "searching" && <Loader2 size={13} className="text-gray-400 animate-spin" />}
+                  {vehicleLookupStatus === "found" && <BadgeCheck size={14} className="text-green-500" />}
+                  {vehicleLookupStatus === "not_found" && <UserPlus size={13} className="text-amber-500" />}
+                </div>
               </div>
+            </div>
+
+
+            {/* 1b. Vehicle state — save as standalone master data, no customer required */}
+            {vehicleLookupStatus === "not_found" && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered yet</p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Make (e.g. Toyota)"
+                    value={vehicleForm.make}
+                    onChange={(e) => setVehicleForm((p) => ({ ...p, make: e.target.value }))}
+                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Model (e.g. Corolla)"
+                    value={vehicleForm.model}
+                    onChange={(e) => setVehicleForm((p) => ({ ...p, model: e.target.value }))}
+                    className="w-1/2 px-2.5 py-2 text-sm bg-white border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400"
+                  />
+                </div>
+                <button
+                  onClick={onSaveVehicle}
+                  disabled={vehicleSaving}
+                  className="w-full py-1.5 text-xs font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60"
+                >
+                  {vehicleSaving ? "Saving..." : "Save Vehicle"}
+                </button>
+              </div>
+            )}
+
+            {vehicleLookupStatus === "found" && linkedVehicle && (
+              <div className="bg-green-50 border border-green-200 rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setDetailsExpanded((v) => !v)}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
+                >
+                  <Car size={12} className="text-green-600 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-green-800 truncate">
+                      {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ")}
+                    </p>
+                    {vehicleDetails.length > 0 && (
+                      <p className="text-[10px] text-green-600 truncate">
+                        {vehicleDetails.map((d) => `${d.label}: ${d.value}`).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                  <ChevronUp size={12} className={`text-green-500 shrink-0 transition-transform ${detailsExpanded ? "" : "-rotate-90"}`} />
+                </button>
+
+                {detailsExpanded && (
+                  <div className="px-2.5 pb-2.5 pt-1.5 border-t border-green-200 space-y-1">
+                    {linkedVehicle?.notes && (
+                      <div className="text-[11px]">
+                        <span className="text-green-600 block">Notes</span>
+                        <span className="font-medium text-green-900">{linkedVehicle.notes}</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onVehicleNumberChange("")}
+                      className="w-full mt-1.5 py-1.5 text-[11px] font-bold text-green-700 bg-white border border-green-300 rounded-lg hover:bg-green-100"
+                    >
+                      Change Vehicle
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                Customer (optional)
+              </label>
+              {/* 1c. Link Customer — always optional, and independent of whether a
+                  vehicle is entered at all (works for a "customer only" sale too).
+                  Once linked, the only action is Unlink — to pick a different
+                  customer, unlink first, which reopens the search/create picker. */}
+              {linkedCustomer && !linkPickerOpen ? (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-0.5">Linked Customer</p>
+                      <p className="text-xs font-bold text-blue-900 truncate">{linkedCustomer.name}</p>
+                      {(linkedCustomer.phone || linkedCustomer.email) && (
+                        <p className="text-[10px] text-blue-600 truncate">
+                          {[linkedCustomer.phone, linkedCustomer.email].filter(Boolean).join(" · ")}
+                        </p>
+                      )}
+                      {linkedCustomer.address && (
+                        <p className="text-[10px] text-blue-600 truncate">{linkedCustomer.address}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => setConfirmUnlinkOpen(true)}
+                      disabled={unlinkingCustomer}
+                      className="shrink-0 px-2.5 py-1 text-[10px] font-bold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
+                    >
+                      {unlinkingCustomer ? "..." : "Unlink"}
+                    </button>
+                  </div>
+                </div>
+              ) : vehicleChoiceCustomer ? (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-2">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider truncate">
+                      {vehicleChoiceCustomer.name}
+                    </p>
+                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider shrink-0">
+                      Which vehicle?
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                    {vehicleChoiceCustomer.vehicles.map((v) => (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => onVehicleChosenForCustomer(vehicleChoiceCustomer, v)}
+                        className="w-full flex items-center gap-2.5 bg-white border border-blue-200 rounded-lg px-2.5 py-2 text-left hover:border-blue-400 hover:bg-blue-50/60 transition-colors"
+                      >
+                        <span className="w-8 h-8 shrink-0 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                          <Car size={14} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-bold text-gray-800 tracking-wide truncate">
+                            {v.vehicle_number}
+                          </span>
+                          {[v.make, v.model, v.year].filter(Boolean).length > 0 && (
+                            <span className="block text-[10px] text-gray-500 font-medium truncate">
+                              {[v.make, v.model, v.year].filter(Boolean).join(" ")}
+                            </span>
+                          )}
+                        </span>
+                        {v.current_mileage != null && (
+                          <span className="shrink-0 flex items-center gap-1 text-[10px] text-gray-500">
+                            <Gauge size={10} />
+                            {v.current_mileage.toLocaleString()} km
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => onCustomerWithoutVehicle(vehicleChoiceCustomer)}
+                      className="flex-1 py-1.5 text-[10px] font-bold text-blue-700 bg-white border border-blue-200 rounded-lg hover:bg-blue-50"
+                    >
+                      No specific vehicle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onCancelVehicleChoice}
+                      className="px-3 py-1.5 text-[10px] font-bold text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </div>
+              ) : linkPickerOpen ? (
+                <CustomerLinkPicker onSelect={onCustomerSelected} onCancel={() => setLinkPickerOpen(false)} />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLinkPickerOpen(true)}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-gray-500 hover:text-blue-600 bg-white hover:bg-blue-50 border border-dashed border-gray-300 hover:border-blue-300 rounded-xl py-2.5 transition-colors"
+                >
+                  <UserPlus size={13} /> Link a customer
+                </button>
+              )}
             </div>
           </div>
 
-          {/* 2. Vehicle state — save as standalone master data, no customer required */}
-          {vehicleLookupStatus === "not_found" && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
-              <p className="text-[11px] text-amber-700 font-medium">Vehicle not registered yet</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="Make (e.g. Toyota)"
-                  value={vehicleForm.make}
-                  onChange={(e) => setVehicleForm((p) => ({ ...p, make: e.target.value }))}
-                  className="w-1/2 px-2.5 py-2 text-sm bg-white border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400"
-                />
-                <input
-                  type="text"
-                  placeholder="Model (e.g. Corolla)"
-                  value={vehicleForm.model}
-                  onChange={(e) => setVehicleForm((p) => ({ ...p, model: e.target.value }))}
-                  className="w-1/2 px-2.5 py-2 text-sm bg-white border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400"
-                />
-              </div>
-              <button
-                onClick={onSaveVehicle}
-                disabled={vehicleSaving}
-                className="w-full py-1.5 text-xs font-bold text-white bg-amber-600 rounded-lg hover:bg-amber-700 disabled:opacity-60"
-              >
-                {vehicleSaving ? "Saving..." : "Save Vehicle"}
-              </button>
-            </div>
-          )}
-
-          {vehicleLookupStatus === "found" && linkedVehicle && (
-            <div className="bg-green-50 border border-green-200 rounded-lg overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setDetailsExpanded((v) => !v)}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
-              >
-                <Car size={12} className="text-green-600 shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-bold text-green-800 truncate">
-                    {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ")}
-                  </p>
-                  {vehicleDetails.length > 0 && (
-                    <p className="text-[10px] text-green-600 truncate">
-                      {vehicleDetails.map((d) => `${d.label}: ${d.value}`).join(" · ")}
-                    </p>
-                  )}
-                </div>
-                <ChevronUp size={12} className={`text-green-500 shrink-0 transition-transform ${detailsExpanded ? "" : "-rotate-90"}`} />
-              </button>
-
-              {detailsExpanded && (
-                <div className="px-2.5 pb-2.5 pt-1.5 border-t border-green-200 space-y-1">
-                  {linkedVehicle?.notes && (
-                    <div className="text-[11px]">
-                      <span className="text-green-600 block">Notes</span>
-                      <span className="font-medium text-green-900">{linkedVehicle.notes}</span>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onVehicleNumberChange("")}
-                    className="w-full mt-1.5 py-1.5 text-[11px] font-bold text-green-700 bg-white border border-green-300 rounded-lg hover:bg-green-100"
-                  >
-                    Change Vehicle
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 3. Job Details — mileage/notes for THIS repair, both optional
+          {/* 2. Job Details — mileage/notes for THIS repair, both optional
               ("if available"), independent of vehicle/customer link status */}
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Job Details (optional)</p>
@@ -331,45 +446,6 @@ const VehicleCustomerModal = ({
             </div>
           </div>
 
-          {/* 4. Link Customer — always optional, and independent of whether a
-              vehicle is entered at all (works for a "customer only" sale too).
-              Once linked, the only action is Unlink — to pick a different
-              customer, unlink first, which reopens the search/create picker. */}
-          {linkedCustomer && !linkPickerOpen ? (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-0.5">Linked Customer</p>
-                  <p className="text-xs font-bold text-blue-900 truncate">{linkedCustomer.name}</p>
-                  {(linkedCustomer.phone || linkedCustomer.email) && (
-                    <p className="text-[10px] text-blue-600 truncate">
-                      {[linkedCustomer.phone, linkedCustomer.email].filter(Boolean).join(" · ")}
-                    </p>
-                  )}
-                  {linkedCustomer.address && (
-                    <p className="text-[10px] text-blue-600 truncate">{linkedCustomer.address}</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => setConfirmUnlinkOpen(true)}
-                  disabled={unlinkingCustomer}
-                  className="shrink-0 px-2.5 py-1 text-[10px] font-bold text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-60"
-                >
-                  {unlinkingCustomer ? "..." : "Unlink"}
-                </button>
-              </div>
-            </div>
-          ) : linkPickerOpen ? (
-            <CustomerLinkPicker onSelect={onCustomerSelected} onCancel={() => setLinkPickerOpen(false)} />
-          ) : (
-            <button
-              type="button"
-              onClick={() => setLinkPickerOpen(true)}
-              className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-gray-500 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 border border-dashed border-gray-300 hover:border-blue-300 rounded-xl py-2.5 transition-colors"
-            >
-              <UserPlus size={13} /> Link a customer (optional)
-            </button>
-          )}
         </div>
       </div>
     </div>
@@ -1049,6 +1125,9 @@ const POSPage = () => {
   const [vehicleForm, setVehicleForm] = useState({ make: "", model: "" });
   const [vehicleSaving, setVehicleSaving] = useState(false);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
+  // Set when a customer is picked before any plate is known — holds them while
+  // the modal asks which of their vehicles this job is for.
+  const [vehicleChoiceCustomer, setVehicleChoiceCustomer] = useState(null);
   const [unlinkingCustomer, setUnlinkingCustomer] = useState(false);
   const vehicleLookupTimer = useRef(null);
   // Bumped on every lookup kicked off (typing or tab switch) so a slower,
@@ -1192,6 +1271,7 @@ const POSPage = () => {
     setLinkedVehicle(null);
     setSelectedCustomer(null);
     setLinkPickerOpen(false);
+    setVehicleChoiceCustomer(null);
     setMileageOverrideConfirmed(false);
     setVehicleForm({ make: "", model: "" });
     setVehicleLookupStatus("idle");
@@ -1262,6 +1342,12 @@ const POSPage = () => {
         setCarts((prev) =>
           prev.map((c) => (c.id === activeCartId ? { ...c, customerName: customer.name } : c))
         );
+      } else if (customer.vehicles?.length) {
+        // Known customer, no plate yet — ask which of their vehicles this job
+        // is for rather than guessing. Their vehicles already came down with
+        // the customer search, so this costs no extra request.
+        setVehicleChoiceCustomer(customer);
+        return;
       } else {
         // Customer-only path (no vehicle): stamp the real id + details onto
         // the cart itself so this link survives a tab switch or reload —
@@ -1279,6 +1365,40 @@ const POSPage = () => {
     } catch {
       setAlertInfo({ type: "error", message: "Failed to link customer." });
     }
+  };
+
+  // A vehicle picked out of the customer's own list. It arrives from
+  // CustomerSerializer.vehicles, which is the same shape lookupVehicle returns
+  // and already carries customer_details — so linkedCustomer lights up from it
+  // with no extra request, and no PATCH, since the FK already exists.
+  const handleVehicleChosenForCustomer = (customer, vehicle) => {
+    const plate = (vehicle.vehicle_number || "").toUpperCase();
+    setLinkedVehicle(vehicle);
+    setVehicleLookupStatus("found");
+    cacheVehicleInfo(plate, vehicle);
+    setSelectedCustomer(null);
+    setCarts((prev) =>
+      prev.map((c) =>
+        c.id === activeCartId ? { ...c, vehicleNumber: plate, customerName: customer.name } : c
+      )
+    );
+    setVehicleChoiceCustomer(null);
+    setLinkPickerOpen(false);
+  };
+
+  // "No specific vehicle" — fall through to the customer-only path, the only
+  // branch that persists a customer without a plate.
+  const handleCustomerWithoutVehicle = (customer) => {
+    setSelectedCustomer(customer);
+    setCarts((prev) =>
+      prev.map((c) =>
+        c.id === activeCartId
+          ? { ...c, customerName: customer.name, customerId: customer.id, customerDetails: customer }
+          : c
+      )
+    );
+    setVehicleChoiceCustomer(null);
+    setLinkPickerOpen(false);
   };
 
   const handleUnlinkCustomer = async () => {
@@ -1310,6 +1430,7 @@ const POSPage = () => {
   useEffect(() => {
     setVehicleModalOpen(false);
     setLinkPickerOpen(false);
+    setVehicleChoiceCustomer(null);
     setVehicleForm({ make: "", model: "" });
     setPaymentMode("PAID");
     setCreditNote("");
@@ -2100,6 +2221,10 @@ const POSPage = () => {
         linkPickerOpen={linkPickerOpen}
         setLinkPickerOpen={setLinkPickerOpen}
         onCustomerSelected={handleCustomerSelected}
+        vehicleChoiceCustomer={vehicleChoiceCustomer}
+        onVehicleChosenForCustomer={handleVehicleChosenForCustomer}
+        onCustomerWithoutVehicle={handleCustomerWithoutVehicle}
+        onCancelVehicleChoice={() => setVehicleChoiceCustomer(null)}
         onUnlinkCustomer={handleUnlinkCustomer}
         unlinkingCustomer={unlinkingCustomer}
         vehicleNumberInputRef={vehicleNumberInputRef}

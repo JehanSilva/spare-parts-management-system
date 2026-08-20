@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import html2canvas from "html2canvas";
-import { MessageCircle, XCircle, Users, Phone, UserCheck, ChevronRight } from "lucide-react";
+import { MessageCircle, XCircle, Users, Phone, UserCheck, ChevronRight, Loader2 } from "lucide-react";
 import BillingDocument from "./BillingDocument";
 import { useSettings } from "../context/SettingsContext";
 import { updateCustomer } from "../services/api";
@@ -8,7 +8,7 @@ import { updateCustomer } from "../services/api";
 // Lets the cashier pick how to send the document: straight to the registered
 // customer's number (only offered when one is on file), by picking a chat in
 // WhatsApp itself, or by typing a one-off number.
-const ShareOptionsModal = ({ customerName, customerPhone, onCancel, onSelect }) => {
+const ShareOptionsModal = ({ customerName, customerPhone, busyKey, onCancel, onSelect }) => {
   const options = [
     customerPhone && {
       key: "registered",
@@ -29,11 +29,12 @@ const ShareOptionsModal = ({ customerName, customerPhone, onCancel, onSelect }) 
       subtitle: "Type the number to send the document to",
     },
   ].filter(Boolean);
+  const busy = !!busyKey;
 
   return (
     <div
       className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm print:hidden"
-      onClick={onCancel}
+      onClick={busy ? undefined : onCancel}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
@@ -43,27 +44,41 @@ const ShareOptionsModal = ({ customerName, customerPhone, onCancel, onSelect }) 
           <h3 className="font-bold text-lg flex items-center gap-2">
             <MessageCircle size={18} /> Share to WhatsApp
           </h3>
-          <button onClick={onCancel} className="hover:bg-green-700 p-1 rounded-full transition-colors">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="hover:bg-green-700 p-1 rounded-full transition-colors disabled:opacity-40"
+          >
             <XCircle size={20} />
           </button>
         </div>
         <div className="p-4 space-y-2">
-          {options.map(({ key, icon: Icon, title, subtitle }) => (
-            <button
-              key={key}
-              onClick={() => onSelect(key)}
-              className="w-full flex items-center gap-3 p-3 text-left border border-gray-200 rounded-xl hover:border-green-500 hover:bg-green-50 transition-colors"
-            >
-              <span className="p-2 bg-green-100 text-green-700 rounded-lg shrink-0">
-                <Icon size={18} />
-              </span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-bold text-gray-800">{title}</span>
-                <span className="block text-xs text-gray-500 truncate">{subtitle}</span>
-              </span>
-              <ChevronRight size={18} className="text-gray-400 shrink-0" />
-            </button>
-          ))}
+          {options.map(({ key, icon: Icon, title, subtitle }) => {
+            const isBusy = busyKey === key;
+            return (
+              <button
+                key={key}
+                onClick={() => onSelect(key)}
+                disabled={busy}
+                className={`w-full flex items-center gap-3 p-3 text-left border rounded-xl transition-colors disabled:cursor-not-allowed ${
+                  isBusy
+                    ? "border-green-500 bg-green-50"
+                    : "border-gray-200 hover:border-green-500 hover:bg-green-50 disabled:opacity-50"
+                }`}
+              >
+                <span className="p-2 bg-green-100 text-green-700 rounded-lg shrink-0">
+                  {isBusy ? <Loader2 size={18} className="animate-spin" /> : <Icon size={18} />}
+                </span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-bold text-gray-800">{title}</span>
+                  <span className="block text-xs text-gray-500 truncate">
+                    {isBusy ? "Preparing document..." : subtitle}
+                  </span>
+                </span>
+                {!isBusy && <ChevronRight size={18} className="text-gray-400 shrink-0" />}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -88,7 +103,7 @@ const PhoneEntryModal = ({ onCancel, onBack, onSubmit, isSaving }) => {
   return (
     <div
       className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm print:hidden"
-      onClick={onCancel}
+      onClick={isSaving ? undefined : onCancel}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden"
@@ -98,7 +113,11 @@ const PhoneEntryModal = ({ onCancel, onBack, onSubmit, isSaving }) => {
           <h3 className="font-bold text-lg flex items-center gap-2">
             <MessageCircle size={18} /> Enter WhatsApp Number
           </h3>
-          <button onClick={onCancel} className="hover:bg-green-700 p-1 rounded-full transition-colors">
+          <button
+            onClick={onCancel}
+            disabled={isSaving}
+            className="hover:bg-green-700 p-1 rounded-full transition-colors disabled:opacity-40"
+          >
             <XCircle size={20} />
           </button>
         </div>
@@ -123,16 +142,18 @@ const PhoneEntryModal = ({ onCancel, onBack, onSubmit, isSaving }) => {
         <div className="px-5 py-4 border-t border-gray-100 flex justify-end gap-3">
           <button
             onClick={onBack || onCancel}
-            className="px-4 py-2 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+            disabled={isSaving}
+            className="px-4 py-2 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
           >
             {onBack ? "Back" : "Cancel"}
           </button>
           <button
             onClick={handleSubmit}
             disabled={isSaving}
-            className="px-5 py-2 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
+            className="px-5 py-2 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-70 flex items-center gap-2"
           >
-            {isSaving ? "Sharing..." : "Share"}
+            {isSaving && <Loader2 size={16} className="animate-spin" />}
+            {isSaving ? "Preparing..." : "Share"}
           </button>
         </div>
       </div>
@@ -206,6 +227,9 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
   const documentRef = useRef(null);
   const [step, setStep] = useState("options"); // "options" | "phone"
   const [sharing, setSharing] = useState(false);
+  // Which option is mid-share, so its row can show a spinner instead of the
+  // modal simply vanishing while the document is still being rasterised.
+  const [busyOption, setBusyOption] = useState(null);
   // Locally-entered number, so the "registered number" option can appear on a
   // re-share within the same session even before the sale data is refetched.
   const [phoneOverride, setPhoneOverride] = useState(null);
@@ -224,6 +248,7 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
     }
     setStep("options");
     setPhoneOverride(null);
+    setBusyOption(null);
 
     const fileName = `${documentLabel.toLowerCase()}-${sale.id.substring(0, 8)}.png`;
     const prepare = async () => {
@@ -268,8 +293,11 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
   };
 
   // `phone` may be null — that's the "pick a contact in WhatsApp yourself"
-  // path, where wa.me is opened without a recipient so WhatsApp shows its own
-  // chat chooser.
+  // path. Only that path uses the native share sheet: it's the one case where
+  // letting WhatsApp choose the chat is the point, and it attaches the image
+  // directly. With a specific number to hand, the sheet would ignore it and
+  // ask for the contact all over again, so those go through wa.me instead,
+  // which opens that exact chat.
   const share = async (phone) => {
     setSharing(true);
     const caption = buildCaption();
@@ -278,7 +306,7 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
     const file = await (filePromiseRef.current || Promise.resolve(null));
 
     try {
-      if (file && isMobileDevice() && navigator.canShare?.({ files: [file] })) {
+      if (!phone && file && isMobileDevice() && navigator.canShare?.({ files: [file] })) {
         try {
           await navigator.share({ files: [file], text: caption, title: documentLabel });
           return;
@@ -292,10 +320,9 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
         }
       }
 
-      // Desktop (or a mobile browser that wouldn't take the file): wa.me can
-      // only pre-fill text, never attach a file, so download the document
-      // image separately and let the cashier attach it themselves in the
-      // WhatsApp chat that just opened.
+      // wa.me can only pre-fill text, never attach a file, so download the
+      // document image separately and let the cashier attach it themselves in
+      // the WhatsApp chat that just opened.
       let downloaded = false;
       if (file) {
         try {
@@ -309,7 +336,7 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
         downloaded
           ? {
               type: "info",
-              message: `${documentLabel} image downloaded — attach it in the WhatsApp chat that just opened.`,
+              message: `${documentLabel} image saved — attach it in the WhatsApp chat that just opened.`,
             }
           : {
               type: "warning",
@@ -323,6 +350,7 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
       openWhatsApp(`https://wa.me/${recipient}?text=${encodeURIComponent(caption)}`);
     } finally {
       setSharing(false);
+      setBusyOption(null);
       onClose?.();
     }
   };
@@ -332,6 +360,7 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
       setStep("phone");
       return;
     }
+    setBusyOption(option);
     share(option === "registered" ? customerPhone : null);
   };
 
@@ -351,16 +380,17 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
 
   return (
     <>
-      {step === "options" && !sharing && (
+      {step === "options" && (
         <ShareOptionsModal
           customerName={sale.customer_name}
           customerPhone={customerPhone}
+          busyKey={busyOption}
           onCancel={onClose}
           onSelect={handleOptionSelect}
         />
       )}
 
-      {step === "phone" && !sharing && (
+      {step === "phone" && (
         <PhoneEntryModal
           onCancel={onClose}
           onBack={() => setStep("options")}

@@ -140,6 +140,58 @@ const PhoneEntryModal = ({ onCancel, onBack, onSubmit, isSaving }) => {
   );
 };
 
+// html2canvas can fire before a freshly-mounted <img> (the logo) has
+// finished loading, silently capturing a blank spot where it should be.
+const waitForImagesToLoad = async (container) => {
+  const imgs = Array.from(container.querySelectorAll("img"));
+  await Promise.all(
+    imgs.map((img) =>
+      img.complete
+        ? img.decode?.().catch(() => {})
+        : new Promise((resolve) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+          })
+    )
+  );
+};
+
+const downloadBlob = (blob, fileName) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+// Only phones/tablets reliably offer WhatsApp (or another chat app) as a
+// real target in the native share sheet for a file. Desktop browsers that
+// report canShare()===true (e.g. Chrome on macOS) still only expose a
+// generic "Copy" action there, which round-trips through the clipboard and
+// produces duplicated/garbled pastes in WhatsApp Desktop/Web — so desktop
+// is always treated as "can't share a file" and gets the download+link
+// fallback instead, regardless of what canShare() reports.
+const isMobileDevice = () => {
+  if (navigator.userAgentData) return !!navigator.userAgentData.mobile;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+};
+
+// Popup blockers only allow window.open() while the tap that triggered it is
+// still active, which it no longer is once sharing has finished its async
+// work — on mobile the link is silently swallowed. Navigate the current tab
+// there instead: wa.me hands off to the WhatsApp app, and the POS page is
+// still sitting there on the way back.
+const openWhatsApp = (url) => {
+  if (isMobileDevice()) {
+    window.location.href = url;
+    return;
+  }
+  window.open(url, "_blank");
+};
+
 /**
  * The full "share this sale to WhatsApp" flow — option chooser, phone entry,
  * and rasterising the receipt/invoice — reused by POS and Sales History.
@@ -157,13 +209,39 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
   // Locally-entered number, so the "registered number" option can appear on a
   // re-share within the same session even before the sale data is refetched.
   const [phoneOverride, setPhoneOverride] = useState(null);
+  // Promise of the rasterised document, started as soon as the flow opens.
+  const filePromiseRef = useRef(null);
 
+  // navigator.share() only works while the tap that triggered it still counts
+  // as a user activation, and rasterising the document takes far longer than
+  // that window allows (iOS Safari rejects after *any* await). So capture the
+  // document up-front, while the cashier is still choosing a recipient, and
+  // keep the share call itself as close to the tap as possible.
   useEffect(() => {
-    if (sale) {
-      setStep("options");
-      setPhoneOverride(null);
+    if (!sale) {
+      filePromiseRef.current = null;
+      return;
     }
-  }, [sale]);
+    setStep("options");
+    setPhoneOverride(null);
+
+    const fileName = `${documentLabel.toLowerCase()}-${sale.id.substring(0, 8)}.png`;
+    const prepare = async () => {
+      await waitForImagesToLoad(documentRef.current);
+      const canvas = await html2canvas(documentRef.current, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+      });
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      return blob ? new File([blob], fileName, { type: "image/png" }) : null;
+    };
+
+    filePromiseRef.current = prepare().catch((err) => {
+      console.error("Failed to render document for WhatsApp share", err);
+      return null;
+    });
+  }, [sale, documentLabel]);
 
   useEffect(() => {
     onSharingChange?.(sharing);
@@ -189,86 +267,60 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
     return digits;
   };
 
-  // Only phones/tablets reliably offer WhatsApp (or another chat app) as a
-  // real target in the native share sheet for a file. Desktop browsers that
-  // report canShare()===true (e.g. Chrome on macOS) still only expose a
-  // generic "Copy" action there, which round-trips through the clipboard and
-  // produces duplicated/garbled pastes in WhatsApp Desktop/Web — so desktop
-  // is always treated as "can't share a file" and gets the download+link
-  // fallback instead, regardless of what canShare() reports.
-  const isMobileDevice = () => {
-    if (navigator.userAgentData) return !!navigator.userAgentData.mobile;
-    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  };
-
-  // html2canvas can fire before a freshly-mounted <img> (the logo) has
-  // finished loading, silently capturing a blank spot where it should be.
-  const waitForImagesToLoad = async (container) => {
-    const imgs = Array.from(container.querySelectorAll("img"));
-    await Promise.all(
-      imgs.map((img) =>
-        img.complete
-          ? img.decode?.().catch(() => {})
-          : new Promise((resolve) => {
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-            })
-      )
-    );
-  };
-
-  const downloadBlob = (blob, fileName) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
   // `phone` may be null — that's the "pick a contact in WhatsApp yourself"
   // path, where wa.me is opened without a recipient so WhatsApp shows its own
   // chat chooser.
   const share = async (phone) => {
     setSharing(true);
-    try {
-      await waitForImagesToLoad(documentRef.current);
-      const canvas = await html2canvas(documentRef.current, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        useCORS: true,
-      });
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-      const caption = buildCaption();
-      const fileName = `${documentLabel.toLowerCase()}-${sale.id.substring(0, 8)}.png`;
+    const caption = buildCaption();
+    // Usually already resolved by now; awaiting only matters when the cashier
+    // picks a recipient faster than the document renders.
+    const file = await (filePromiseRef.current || Promise.resolve(null));
 
-      if (blob && isMobileDevice()) {
-        const file = new File([blob], fileName, { type: "image/png" });
-        if (navigator.canShare?.({ files: [file] })) {
+    try {
+      if (file && isMobileDevice() && navigator.canShare?.({ files: [file] })) {
+        try {
           await navigator.share({ files: [file], text: caption, title: documentLabel });
           return;
+        } catch (err) {
+          // Backing out of the share sheet isn't a failure.
+          if (err?.name === "AbortError") return;
+          // Anything else — an expired activation, a target that refuses the
+          // file — falls through to the link below rather than dead-ending on
+          // an error the cashier can do nothing about.
+          console.error("Native share failed, falling back to wa.me link", err);
         }
       }
 
-      // Desktop (or a mobile browser without file-share support): wa.me can
+      // Desktop (or a mobile browser that wouldn't take the file): wa.me can
       // only pre-fill text, never attach a file, so download the document
       // image separately and let the cashier attach it themselves in the
       // WhatsApp chat that just opened.
-      if (blob) downloadBlob(blob, fileName);
+      let downloaded = false;
+      if (file) {
+        try {
+          downloadBlob(file, file.name);
+          downloaded = true;
+        } catch (err) {
+          console.error("Failed to download document image", err);
+        }
+      }
+      onAlert?.(
+        downloaded
+          ? {
+              type: "info",
+              message: `${documentLabel} image downloaded — attach it in the WhatsApp chat that just opened.`,
+            }
+          : {
+              type: "warning",
+              message: `Couldn't attach the ${documentLabel.toLowerCase()} image — the sale details were shared as text instead.`,
+            }
+      );
       const recipient = phone ? formatPhoneForWhatsApp(phone) : "";
-      window.open(`https://wa.me/${recipient}?text=${encodeURIComponent(caption)}`, "_blank");
-      if (blob) {
-        onAlert?.({
-          type: "info",
-          message: `${documentLabel} image downloaded — attach it in the WhatsApp chat that just opened.`,
-        });
-      }
-    } catch (err) {
-      if (err?.name !== "AbortError") {
-        onAlert?.({ type: "error", message: `Failed to share ${documentLabel.toLowerCase()}.` });
-      }
+      // On mobile the wa.me hand-off takes over the current tab, which would
+      // cancel a download that has only just started — give it a moment first.
+      if (downloaded) await new Promise((resolve) => setTimeout(resolve, 400));
+      openWhatsApp(`https://wa.me/${recipient}?text=${encodeURIComponent(caption)}`);
     } finally {
       setSharing(false);
       onClose?.();

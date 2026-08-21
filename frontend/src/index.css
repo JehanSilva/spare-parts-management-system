@@ -48,6 +48,27 @@
   animation: loginRise 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+/* Rasterising a receipt with html2canvas blocks the main thread for a second
+   or more on a phone. Chrome never promotes a transform animation on an <svg>
+   element, so an animated icon freezes solid for the whole block — exactly
+   when a spinner needs to be moving. Spinning a promoted <div>/<span> wrapper
+   instead hands the animation to the compositor, which keeps running while
+   the main thread is busy. Used by WhatsAppShareFlow's Spinner. */
+@keyframes spinComposited {
+  from {
+    transform: translateZ(0) rotate(0deg);
+  }
+  to {
+    transform: translateZ(0) rotate(360deg);
+  }
+}
+
+.animate-spin-composited {
+  animation: spinComposited 0.9s linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-login-rise {
     animation-duration: 0.01ms;

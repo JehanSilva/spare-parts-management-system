@@ -14,3 +14,6 @@ python manage.py migrate
 
 cd frontend
 npm start
+
+# to test in the phone
+python manage.py runserver 0.0.0.0:8000

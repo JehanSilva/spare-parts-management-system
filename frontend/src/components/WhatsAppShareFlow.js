@@ -434,13 +434,17 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
 
   const customerPhone = phoneOverride || sale.customer_phone || null;
 
-  // No per-item lines — the attached document already itemises the sale.
-  const buildCaption = () =>
-    `Hi ${sale.customer_name}, thank you for your purchase at NSS Auto Spares!\n\n` +
-    `Invoice #${sale.id.substring(0, 8).toUpperCase()}\n` +
-    (sale.vehicle_number ? `Vehicle: ${sale.vehicle_number}\n` : "") +
-    `\nTotal: LKR ${parseFloat(sale.total_amount).toLocaleString()}\n\n` +
-    `Thank you for your business!`;
+  const buildCaption = () => {
+    let msg = `Hi ${sale.customer_name || "Customer"},\n\n` +
+      `Please see the attached receipt for your recent service at NSS Auto Engineers.\n\n` +
+      `Invoice: #${sale.id.substring(0, 8).toUpperCase()}`;
+    if (sale.vehicle_number) {
+      msg += ` | Vehicle: ${sale.vehicle_number}`;
+    }
+    msg += ` | Total: LKR ${parseFloat(sale.total_amount).toLocaleString()}\n\n` +
+      `Thank you, and drive safely.`;
+    return msg;
+  };
 
   // Sri Lankan numbers are stored locally (e.g. "0765722909"); wa.me needs
   // the full international number with no leading zero or plus sign.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   fetchCustomerVehicles,
   createCustomerVehicle,
@@ -508,9 +508,10 @@ const VehicleCard = ({ vehicle, onEdit, onDelete, onLink, onHistory }) => (
 );
 
 const VehicleRegistryPage = () => {
+  const location = useLocation();
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(location.state?.search || "");
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const [showAddModal, setShowAddModal] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);

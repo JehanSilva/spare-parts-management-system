@@ -314,17 +314,34 @@ const copyImageToClipboard = (filePromise) => {
   if (!filePromise || typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
     return Promise.resolve(false);
   }
+  
   const png = filePromise.then((file) => {
     if (!file) throw new Error("Document image could not be rendered");
     return file;
   });
-  return navigator.clipboard
-    .write([new ClipboardItem({ "image/png": png })])
-    .then(() => true)
-    .catch((err) => {
-      console.error("Failed to copy document image to clipboard", err);
-      return false;
-    });
+
+  const fallbackWrite = () => filePromise.then((file) => {
+    if (!file) return false;
+    return navigator.clipboard.write([new ClipboardItem({ "image/png": file })])
+      .then(() => true)
+      .catch((e) => {
+        console.error("Fallback clipboard write failed", e);
+        return false;
+      });
+  });
+
+  try {
+    return navigator.clipboard
+      .write([new ClipboardItem({ "image/png": png })])
+      .then(() => true)
+      .catch((err) => {
+        console.warn("Promise-based clipboard write failed, attempting Blob fallback...", err);
+        return fallbackWrite();
+      });
+  } catch (err) {
+    console.warn("ClipboardItem does not support Promise, attempting Blob fallback...", err);
+    return fallbackWrite();
+  }
 };
 
 // Popup blockers only allow window.open() while the tap that triggered it is
@@ -390,9 +407,10 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
       await nextPaint();
       await waitForImagesToLoad(documentRef.current);
       const canvas = await html2canvas(documentRef.current, {
-        scale: 2,
+        scale: isMobileDevice() ? 1 : 2,
         backgroundColor: "#ffffff",
         useCORS: true,
+        logging: false,
       });
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
       return blob ? new File([blob], fileName, { type: "image/png" }) : null;

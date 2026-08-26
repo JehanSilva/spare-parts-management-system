@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   Package,
   XCircle,
@@ -18,6 +18,7 @@ import {
   ChevronUp,
   PackagePlus,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { fetchRestockHistory, returnRestockRecord, editRestockRecord } from "../services/api";
 
 const formatLKR = (val) =>
@@ -370,6 +371,32 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
 
 // ─── Main Modal ───────────────────────────────────────────────────────────────
 const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
+  const navigate = useNavigate();
+  const pressTimer = useRef(null);
+  const isLongPress = useRef(false);
+
+  const startSupplierPress = () => {
+    isLongPress.current = false;
+    pressTimer.current = setTimeout(() => {
+      onClose();
+      navigate('/suppliers', { state: { search: part.supplier_details?.name } });
+      isLongPress.current = true;
+    }, 500);
+  };
+
+  const endSupplierPress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+    }
+  };
+
+  const handleSupplierClick = () => {
+    if (isLongPress.current) {
+      isLongPress.current = false;
+      return;
+    }
+  };
+
   if (!part) return null;
 
   const renderVehicleName = (v) => {
@@ -490,8 +517,18 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
               <p className="text-lg font-bold text-red-700 break-words">{formatLKR(part.sell_price)}</p>
             </div>
 
-            <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 col-span-2 sm:col-span-1">
-              <p className="text-xs text-gray-500 mb-1 shrink-0">Primary Supplier</p>
+            <div 
+              className="bg-gray-50 p-3 rounded-xl border border-gray-100 col-span-2 sm:col-span-1 cursor-pointer select-none active:bg-gray-200 transition-colors"
+              onMouseDown={startSupplierPress}
+              onMouseUp={endSupplierPress}
+              onMouseLeave={endSupplierPress}
+              onTouchStart={startSupplierPress}
+              onTouchEnd={endSupplierPress}
+              onClick={handleSupplierClick}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-gray-500 shrink-0">Primary Supplier</p>
+              </div>
               <p className="text-md font-bold text-gray-800 break-words">{part.supplier_details?.name || "N/A"}</p>
             </div>
 

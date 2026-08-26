@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   fetchSuppliers,
   deleteSupplier,
@@ -242,10 +243,11 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
 };
 
 const SupplierPage = () => {
+  const location = useLocation();
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(location.state?.search || "");
 
   // UI States
   const [showForm, setShowForm] = useState(false);

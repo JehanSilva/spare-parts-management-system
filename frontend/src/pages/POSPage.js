@@ -112,8 +112,12 @@ const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => 
           </div>
         )}
         <div className="absolute bottom-1.5 left-1.5">
-          {part.stock_qty < 2 ? (
-            <span className="bg-red-500 text-white text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+          {part.stock_qty <= 0 ? (
+            <span className="bg-red-600 text-white text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+              <AlertTriangle size={10} /> Out of Stock
+            </span>
+          ) : part.stock_qty < 2 ? (
+            <span className="bg-orange-500 text-white text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
               <AlertTriangle size={10} /> Low ({part.stock_qty})
             </span>
           ) : (

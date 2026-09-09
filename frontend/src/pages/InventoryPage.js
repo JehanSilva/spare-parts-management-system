@@ -1308,8 +1308,12 @@ const InventoryPage = () => {
                   )}
                   {/* Stock Badge */}
                   <div className="absolute bottom-1 left-1 md:bottom-2 md:left-2 z-10">
-                    {part.stock_qty <= 1 ? (
-                      <span className="bg-red-500 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
+                    {part.stock_qty <= 0 ? (
+                      <span className="bg-red-600 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
+                        <AlertTriangle size={10} className="md:w-3 md:h-3" /> Out of Stock
+                      </span>
+                    ) : part.stock_qty <= parseInt(lowStockThreshold || 2, 10) ? (
+                      <span className="bg-orange-500 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
                         <AlertTriangle size={10} className="md:w-3 md:h-3" /> Low
                       </span>
                     ) : null}

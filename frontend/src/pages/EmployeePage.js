@@ -1020,9 +1020,6 @@ const EmployeePage = () => {
                 let halfDayCount = 0;
                 let absentCount = 0;
                 let paidLeaveCount = 0;
-                let holidayCount = 0;
-                let offDayCount = 0;
-                let pendingCount = 0;
 
                 const dayCells = [];
                 // Add empty cells for offset
@@ -1060,18 +1057,14 @@ const EmployeePage = () => {
                     if (isSunday) {
                       status = "HOLIDAY";
                       label = "Holiday (Sunday)";
-                      holidayCount++;
                     } else if (customHoliday) {
                       status = "HOLIDAY";
                       label = customHoliday.name || "Holiday";
-                      holidayCount++;
                     } else if (!isWorkingDay) {
                       status = "OFF_DAY";
                       label = "Off Day";
-                      offDayCount++;
                     } else {
                       status = "PENDING";
-                      pendingCount++;
                     }
                   }
 

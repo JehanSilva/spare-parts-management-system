@@ -121,6 +121,7 @@ const generateReorderListPDF = (parts, supplierName) => {
 };
 
 // --- DETAILED STOCK REPORT PDF (for low stock — internal use) ---
+// eslint-disable-next-line no-unused-vars
 const generateStockReportPDF = (parts, supplierName) => {
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const formatLKR = (amount) => `LKR ${parseFloat(amount || 0).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

@@ -121,6 +121,7 @@ const generateReorderListPDF = (parts, supplierName) => {
 };
 
 // --- DETAILED STOCK REPORT PDF (for low stock — internal use) ---
+// eslint-disable-next-line no-unused-vars
 const generateStockReportPDF = (parts, supplierName) => {
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
   const formatLKR = (amount) => `LKR ${parseFloat(amount || 0).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -668,8 +669,9 @@ const InventoryPage = () => {
   const [lowStockThreshold, setLowStockThreshold] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const val = parseInt(params.get("low_stock_threshold"), 10);
-    return isNaN(val) ? 2 : val;
+    return !isNaN(val) ? val : 2;
   });
+  const [includeOutOfStock, setIncludeOutOfStock] = useState(false);
 
   // Sort order — defaults to most-sold-first
   const [sortBy, setSortBy] = useState("most_sold");
@@ -742,7 +744,11 @@ const InventoryPage = () => {
     } else if (stockFilter === "low") {
       const threshold = parseInt(lowStockThreshold, 10);
       result = result.filter(
-        (p) => p.stock_qty > 0 && p.stock_qty <= (isNaN(threshold) ? 2 : threshold)
+        (p) => {
+          if (p.stock_qty > (isNaN(threshold) ? 2 : threshold)) return false;
+          if (p.stock_qty <= 0) return includeOutOfStock;
+          return true;
+        }
       );
     } else if (stockFilter === "no_price") {
       result = result.filter(
@@ -771,7 +777,7 @@ const InventoryPage = () => {
     }
 
     return result;
-  }, [allParts, searchTerm, selectedBrand, selectedSupplier, stockFilter, lowStockThreshold, sortBy]);
+  }, [allParts, searchTerm, selectedBrand, selectedSupplier, stockFilter, lowStockThreshold, includeOutOfStock, sortBy]);
 
   // ── Filter handlers — just update state, useMemo does the rest ───────────
   const handleStockFilter = (filter) => setStockFilter(filter);
@@ -1185,15 +1191,27 @@ const InventoryPage = () => {
           Low Stock
         </button>
         {stockFilter === "low" && (
-          <div className="flex items-center gap-1.5 bg-orange-50 text-orange-600 border border-orange-200 px-3 py-1 rounded-full text-sm font-bold shadow-sm transition-all duration-300 animate-fadeIn">
-            <span className="text-orange-700 text-xs font-semibold">Qty &le;</span>
-            <input
-              type="number"
-              min="0"
-              value={lowStockThreshold}
-              onChange={(e) => handleThresholdChange(e.target.value)}
-              className="w-12 bg-white text-orange-700 border border-orange-200 rounded text-center py-0.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
-            />
+          <div className="flex items-center gap-3 bg-orange-50 text-orange-600 border border-orange-200 px-3 py-1 rounded-full text-sm font-bold shadow-sm transition-all duration-300 animate-fadeIn">
+            <div className="flex items-center gap-1.5">
+              <span className="text-orange-700 text-xs font-semibold">Qty &le;</span>
+              <input
+                type="number"
+                min="0"
+                value={lowStockThreshold}
+                onChange={(e) => handleThresholdChange(e.target.value)}
+                className="w-12 bg-white text-orange-700 border border-orange-200 rounded text-center py-0.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              />
+            </div>
+            <div className="w-px h-4 bg-orange-200"></div>
+            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={includeOutOfStock}
+                onChange={(e) => setIncludeOutOfStock(e.target.checked)}
+                className="rounded border-orange-300 text-orange-500 focus:ring-orange-500 focus:ring-offset-orange-50"
+              />
+              <span className="text-orange-700 text-xs font-semibold">Include Out of Stock</span>
+            </label>
           </div>
         )}
         <button
@@ -1307,8 +1325,12 @@ const InventoryPage = () => {
                   )}
                   {/* Stock Badge */}
                   <div className="absolute bottom-1 left-1 md:bottom-2 md:left-2 z-10">
-                    {part.stock_qty <= 1 ? (
-                      <span className="bg-red-500 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
+                    {part.stock_qty <= 0 ? (
+                      <span className="bg-red-600 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
+                        <AlertTriangle size={10} className="md:w-3 md:h-3" /> Out of Stock
+                      </span>
+                    ) : part.stock_qty <= parseInt(lowStockThreshold || 2, 10) ? (
+                      <span className="bg-orange-500 text-white text-[10px] md:text-xs font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-1">
                         <AlertTriangle size={10} className="md:w-3 md:h-3" /> Low
                       </span>
                     ) : null}

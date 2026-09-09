@@ -34,6 +34,10 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const [showVehicleDropdown, setShowVehicleDropdown] = useState(false);
   const dropdownRef = useRef(null); // To close dropdown when clicking outside
 
+  const [supplierSearch, setSupplierSearch] = useState("");
+  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
+  const supplierDropdownRef = useRef(null); // To close dropdown when clicking outside
+
   // Image Preview State
   const [previewUrl, setPreviewUrl] = useState(null);
 
@@ -81,6 +85,9 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setShowVehicleDropdown(false);
+      }
+      if (supplierDropdownRef.current && !supplierDropdownRef.current.contains(event.target)) {
+        setShowSupplierDropdown(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -191,6 +198,11 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     const fullName = `${yearStr}${v.make} ${v.model}`.toLowerCase();
     return fullName.includes(vehicleSearch.trim().toLowerCase());
   });
+
+  // --- Filter Suppliers based on search ---
+  const filteredSuppliers = suppliers.filter((s) =>
+    s.name.toLowerCase().includes(supplierSearch.trim().toLowerCase())
+  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -362,24 +374,79 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                   className={iconInputClass}
                 />
               </div>
-              <div className="relative">
+              <div className="relative" ref={supplierDropdownRef}>
                 <Truck className="absolute left-3 top-3 text-gray-400 z-10" size={16} />
-                <select
-                  name="supplier"
-                  value={formData.supplier}
-                  onChange={handleChange}
-                  className={`${iconInputClass} appearance-none`}
+                <div 
+                  className={`${iconInputClass} flex items-center justify-between cursor-pointer`}
+                  onClick={() => setShowSupplierDropdown(!showSupplierDropdown)}
                 >
-                  <option value="">Select a supplier...</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-                <div className="h-4 w-4 absolute right-3 top-3.5 pointer-events-none text-gray-400 fill-current">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                  <span className={formData.supplier ? "text-gray-900" : "text-gray-400"}>
+                    {formData.supplier 
+                      ? suppliers.find(s => s.id === formData.supplier)?.name || "Unknown Supplier" 
+                      : "Select a supplier..."}
+                  </span>
+                  <div className="h-4 w-4 text-gray-400 fill-current shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                  </div>
                 </div>
+
+                {showSupplierDropdown && (
+                  <div className="absolute z-20 w-full bg-white border border-gray-200 rounded-2xl mt-1 max-h-60 flex flex-col shadow-xl overflow-hidden animate-fade-in-up">
+                    <div className="p-2 border-b border-gray-100 bg-white sticky top-0">
+                      <div className="relative">
+                        <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
+                        <input
+                          type="text"
+                          value={supplierSearch}
+                          onChange={(e) => setSupplierSearch(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder="Search suppliers..."
+                          className="w-full pl-8 p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
+                          autoFocus
+                        />
+                      </div>
+                    </div>
+                    <div className="overflow-y-auto custom-scrollbar">
+                      <div
+                        onClick={() => {
+                          setFormData({ ...formData, supplier: "" });
+                          setShowSupplierDropdown(false);
+                          setSupplierSearch("");
+                        }}
+                        className="px-3 py-2.5 cursor-pointer flex justify-between items-center hover:bg-gray-50 transition-colors border-b border-gray-50"
+                      >
+                        <span className="text-sm text-gray-500 italic">None</span>
+                        {!formData.supplier && <Check size={15} className="text-gray-900" />}
+                      </div>
+
+                      {filteredSuppliers.length > 0 ? (
+                        filteredSuppliers.map((s) => {
+                          const isSelected = formData.supplier === s.id;
+                          return (
+                            <div
+                              key={s.id}
+                              onClick={() => {
+                                setFormData({ ...formData, supplier: s.id });
+                                setShowSupplierDropdown(false);
+                                setSupplierSearch("");
+                              }}
+                              className={`px-3 py-2.5 cursor-pointer flex justify-between items-center hover:bg-gray-50 transition-colors ${
+                                isSelected ? "bg-gray-50" : ""
+                              }`}
+                            >
+                              <span className="text-sm text-gray-700">{s.name}</span>
+                              {isSelected && <Check size={15} className="text-gray-900" />}
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <div className="p-4 text-gray-400 text-center text-sm">
+                          No suppliers found
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

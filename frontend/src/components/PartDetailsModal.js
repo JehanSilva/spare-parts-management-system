@@ -375,6 +375,29 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
   const pressTimer = useRef(null);
   const isLongPress = useRef(false);
 
+  // Full image view state
+  const [showFullImage, setShowFullImage] = useState(false);
+  const imagePressTimer = useRef(null);
+
+  // Reset full image state when a new part is opened
+  useEffect(() => {
+    if (part) {
+      setShowFullImage(false);
+    }
+  }, [part]);
+
+  const startImagePress = () => {
+    imagePressTimer.current = setTimeout(() => {
+      setShowFullImage(true);
+    }, 400); // 400ms long press
+  };
+
+  const endImagePress = () => {
+    if (imagePressTimer.current) {
+      clearTimeout(imagePressTimer.current);
+    }
+  };
+
   const startSupplierPress = () => {
     isLongPress.current = false;
     pressTimer.current = setTimeout(() => {
@@ -422,12 +445,35 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
     sellPrice > 0 ? ((unitProfit / sellPrice) * 100).toFixed(1) : "0.0";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+      {/* Backdrop */}
+      <div 
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm" 
+        onClick={onClose} 
+      />
+
+      {/* Full Screen Image Overlay */}
+      {showFullImage && part?.image && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md animate-fade-in"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button 
+            className="absolute top-4 right-4 text-white hover:text-red-500 transition-colors p-2 bg-black/50 rounded-full"
+            onClick={(e) => { e.stopPropagation(); setShowFullImage(false); }}
+          >
+            <X size={24} />
+          </button>
+          <img 
+            src={part.image} 
+            alt={part.name} 
+            className="max-w-[95vw] max-h-[95vh] object-contain"
+          />
+        </div>
+      )}
+
       <div
-        className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-scale-in flex flex-col max-h-[90vh]"
+        className="bg-white relative z-10 rounded-2xl shadow-xl w-full max-w-lg overflow-hidden animate-scale-in flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -460,7 +506,17 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
               <img
                 src={part.image}
                 alt={part.name}
-                className="w-full sm:w-40 h-48 sm:h-40 object-cover rounded-xl border border-gray-200 shadow-sm shrink-0"
+                onMouseDown={startImagePress}
+                onMouseUp={endImagePress}
+                onMouseLeave={endImagePress}
+                onTouchStart={startImagePress}
+                onTouchEnd={endImagePress}
+                onTouchCancel={endImagePress}
+                onClick={() => setShowFullImage(true)}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{ WebkitTouchCallout: "none", userSelect: "none" }}
+                className="w-full sm:w-40 h-48 sm:h-40 object-cover rounded-xl border border-gray-200 shadow-sm shrink-0 cursor-pointer active:scale-95 transition-transform"
+                title="Click or long press to view full image"
               />
             ) : (
               <div className="w-full h-48 sm:w-40 sm:h-40 flex items-center justify-center bg-gray-50 rounded-xl border border-gray-200 text-gray-400 shrink-0">

@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   fetchCustomers,
   createCustomer,
@@ -324,10 +325,14 @@ const CustomerHistoryModal = ({ customer, onClose }) => {
 };
 
 const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoExpand }) => {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(!!autoExpand);
   const [showAddVehicle, setShowAddVehicle] = useState(false);
   const [editVehicle, setEditVehicle] = useState(null);
   const [vehicleToDelete, setVehicleToDelete] = useState(null);
+  
+  const pressTimer = useRef(null);
+  const isLongPress = useRef(false);
 
   // Auto-expand when a vehicle-number search targets this customer
   useEffect(() => {
@@ -338,6 +343,21 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
     if (!vehicleToDelete) return;
     try { await deleteCustomerVehicle(vehicleToDelete.id); onRefresh(); } catch {}
     setVehicleToDelete(null);
+  };
+
+  const startVehiclePress = (vehicle) => {
+    isLongPress.current = false;
+    pressTimer.current = setTimeout(() => {
+      navigate('/vehicles', { state: { search: vehicle.vehicle_number } });
+      isLongPress.current = true;
+    }, 500);
+  };
+
+  const endVehiclePress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
   };
 
   return (
@@ -455,7 +475,18 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
                 {customer.vehicles.map(v => (
                   <div key={v.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                     {/* Vehicle Header */}
-                    <div className="flex items-center justify-between px-3 py-2.5">
+                    <div 
+                      className="flex items-center justify-between px-3 py-2.5 cursor-pointer active:bg-gray-50 transition-colors"
+                      onPointerDown={() => startVehiclePress(v)}
+                      onPointerUp={endVehiclePress}
+                      onPointerLeave={endVehiclePress}
+                      onClick={(e) => {
+                        if (isLongPress.current) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }}
+                    >
                       <div className="flex items-center gap-3">
                         <AvatarBadge name={v.vehicle_number} icon={Car} iconSize={14} size="w-8 h-8" />
                         <div>

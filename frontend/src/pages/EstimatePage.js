@@ -5,11 +5,14 @@ import EstimateDocument, {
   rowTotal,
   sectionTotal,
   estimateTotal,
+  isPendingQuotation,
+  hasPendingQuotation,
   toEstimatePayload,
   fromEstimateRecord,
 } from "../components/EstimateDocument";
 import AlertComponent from "../components/AlertComponent";
 import { fetchEstimate, createEstimate, updateEstimate, lookupVehicle } from "../services/api";
+import { customerDisplayName } from "../components/customerName";
 import {
   ArrowLeft,
   Plus,
@@ -23,6 +26,7 @@ import {
   ClipboardList,
   Save,
   Loader2,
+  Clock,
   Link2,
   UserCheck,
   PlusCircle,
@@ -33,7 +37,7 @@ const formatAmount = (amount) =>
     amount || 0
   );
 
-const emptyRow = () => ({ description: "", hours: "", rate: "" });
+const emptyRow = () => ({ description: "", hours: "", rate: "", quotationPending: false });
 
 const blankSections = () =>
   ESTIMATE_SECTIONS.reduce((acc, s) => ({ ...acc, [s.key]: [emptyRow()] }), {});
@@ -46,6 +50,16 @@ const SectionEditor = ({ section, rows, onChange }) => {
   const updateRow = (index, field, value) =>
     onChange(rows.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
 
+  // Marking a line pending drops whatever rate was typed: the line is quoted at
+  // nothing until the supplier comes back, and a stale figure sitting behind a
+  // disabled field would reappear if the flag were cleared again.
+  const togglePending = (index, pending) =>
+    onChange(
+      rows.map((r, i) =>
+        i === index ? { ...r, quotationPending: pending, rate: pending ? "" : r.rate } : r
+      )
+    );
+
   const addRow = () => onChange([...rows, emptyRow()]);
   const removeRow = (index) =>
     onChange(rows.length === 1 ? [emptyRow()] : rows.filter((_, i) => i !== index));
@@ -54,9 +68,16 @@ const SectionEditor = ({ section, rows, onChange }) => {
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-5">
       <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100">
         <h3 className="font-bold text-gray-800 uppercase tracking-wide text-sm">{section.title}</h3>
-        <span className="text-sm font-bold text-gray-700">
-          LKR {formatAmount(sectionTotal(rows))}
-        </span>
+        <div className="flex items-center gap-2">
+          {rows.some(isPendingQuotation) && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wide">
+              <Clock size={10} /> Quotation pending
+            </span>
+          )}
+          <span className="text-sm font-bold text-gray-700">
+            LKR {formatAmount(sectionTotal(rows))}
+          </span>
+        </div>
       </div>
 
       <div className="p-4">
@@ -81,6 +102,25 @@ const SectionEditor = ({ section, rows, onChange }) => {
                 placeholder={isQty ? `Item ${index + 1} description` : `Task ${index + 1} description`}
                 className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
               />
+              {/* Parts often can't be priced until the spare-part seller quotes
+                  them — the line still belongs on the estimate, just without a
+                  figure. */}
+              {section.allowPending && (
+                <label
+                  className={`mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none ${
+                    isPendingQuotation(row) ? "text-amber-600" : "text-gray-400 hover:text-gray-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isPendingQuotation(row)}
+                    onChange={(e) => togglePending(index, e.target.checked)}
+                    className="rounded border-gray-300 text-amber-500 focus:ring-amber-400"
+                  />
+                  <Clock size={12} className="shrink-0" />
+                  Quotation pending — price not known yet
+                </label>
+              )}
             </div>
             {/* Grid while stacked on small screens; from lg it switches to a
                 flex row whose widths match the caption row above it exactly —
@@ -109,11 +149,17 @@ const SectionEditor = ({ section, rows, onChange }) => {
                   Rate
                 </span>
                 <input
-                  value={row.rate}
+                  value={isPendingQuotation(row) ? "" : row.rate}
                   onChange={(e) => updateRow(index, "rate", e.target.value)}
+                  disabled={isPendingQuotation(row)}
                   inputMode="decimal"
-                  placeholder="0.00"
-                  className="w-full p-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                  placeholder={isPendingQuotation(row) ? "Pending" : "0.00"}
+                  title={
+                    isPendingQuotation(row)
+                      ? "Waiting on the supplier's quotation — untick to price this item"
+                      : undefined
+                  }
+                  className="w-full p-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none disabled:bg-amber-50 disabled:border-amber-200 disabled:placeholder-amber-500 disabled:cursor-not-allowed"
                 />
               </div>
               {/* Calculated, never typed into — styled as a read-only value
@@ -123,10 +169,18 @@ const SectionEditor = ({ section, rows, onChange }) => {
                   Total
                 </span>
                 <div
-                  title="Calculated automatically from rate and quantity"
-                  className="w-full p-2 text-sm text-right font-bold text-gray-900 bg-gray-100 rounded-lg border border-dashed border-gray-300 truncate"
+                  title={
+                    isPendingQuotation(row)
+                      ? "Left out of the totals until the supplier quotes this item"
+                      : "Calculated automatically from rate and quantity"
+                  }
+                  className={`w-full p-2 text-sm text-right font-bold rounded-lg border border-dashed truncate ${
+                    isPendingQuotation(row)
+                      ? "text-amber-600 bg-amber-50 border-amber-300"
+                      : "text-gray-900 bg-gray-100 border-gray-300"
+                  }`}
                 >
-                  {formatAmount(rowTotal(row))}
+                  {isPendingQuotation(row) ? "Pending" : formatAmount(rowTotal(row))}
                 </div>
               </div>
               <div className="lg:w-8 flex justify-center pb-1">
@@ -183,7 +237,7 @@ const VehicleLookupStatus = ({ lookup }) => {
       </span>
       {owner && (
         <span className="inline-flex items-center gap-1.5 text-gray-500">
-          <UserCheck size={12} className="shrink-0 text-gray-400" /> {owner.name}
+          <UserCheck size={12} className="shrink-0 text-gray-400" /> {customerDisplayName(owner)}
         </span>
       )}
     </div>
@@ -204,6 +258,9 @@ const EstimatePage = () => {
       vehicleNumber: "",
       makeModel: "",
       validityDays: 30,
+      ownerName: "",
+      ownerPhone: "",
+      ownerAddress: "",
       sections: blankSections(),
     }),
     [today]
@@ -302,9 +359,22 @@ const EstimatePage = () => {
         const registryMakeModel = [result.vehicle.make, result.vehicle.model]
           .filter(Boolean)
           .join(" ");
+        const owner = result.vehicle.customer_details;
         // Only for a plate the user just typed — see autoFillPlateRef.
-        if (registryMakeModel && autoFillPlateRef.current === plate) {
-          setEstimate((prev) => ({ ...prev, makeModel: registryMakeModel }));
+        if (autoFillPlateRef.current === plate) {
+          setEstimate((prev) => ({
+            ...prev,
+            ...(registryMakeModel ? { makeModel: registryMakeModel } : {}),
+            // The registry fills the blanks only. Anything already typed was
+            // typed deliberately for this estimate and is left alone.
+            ...(owner?.name && !prev.ownerName.trim()
+              ? { ownerName: customerDisplayName(owner) }
+              : {}),
+            ...(owner?.phone && !prev.ownerPhone.trim() ? { ownerPhone: owner.phone } : {}),
+            ...(owner?.address && !prev.ownerAddress.trim()
+              ? { ownerAddress: owner.address }
+              : {}),
+          }));
         }
       } catch {
         if (lookupRequestRef.current === requestId) {
@@ -330,17 +400,19 @@ const EstimatePage = () => {
     ...estimate,
     sections: ESTIMATE_SECTIONS.reduce((acc, s) => {
       const rows = (estimate.sections[s.key] || []).filter(
-        (r) => r.description.trim() || parseFloat(r.rate) > 0
+        (r) => r.description.trim() || parseFloat(r.rate) > 0 || isPendingQuotation(r)
       );
       return { ...acc, [s.key]: rows };
     }, {}),
   };
 
   const hasAnyTask = ESTIMATE_SECTIONS.some((s) => printableEstimate.sections[s.key].length > 0);
+  const pendingQuotation = hasPendingQuotation(estimate.sections);
 
+  // Every claim detail is optional — an estimate is often written before the
+  // plate or insurer is known. The task lines are the one thing it can't do
+  // without: there would be nothing on the page to price.
   const validate = () => {
-    if (!estimate.vehicleNumber.trim()) return "Enter the vehicle number first.";
-    if (!estimate.insuranceCompany.trim()) return "Enter the insurance company first.";
     if (!hasAnyTask) return "Add at least one task first.";
     return null;
   };
@@ -489,9 +561,12 @@ const EstimatePage = () => {
 
           {/* ── CLAIM DETAILS ─────────────────────────────────────────── */}
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
-            <h2 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <h2 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
               <FileText size={18} className="text-red-700" /> Claim Details
             </h2>
+            <p className="text-xs text-gray-400 mb-4">
+              All optional — anything left blank is simply left off the printed estimate.
+            </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -560,6 +635,51 @@ const EstimatePage = () => {
             </div>
           </div>
 
+          {/* ── VEHICLE OWNER ─────────────────────────────────────────── */}
+          {/* Filled in from the vehicle registry when the plate is on file —
+              see the lookup effect, which only ever fills blanks. */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
+            <h2 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
+              <UserCheck size={18} className="text-red-700" /> Vehicle Owner
+            </h2>
+            <p className="text-xs text-gray-400 mb-4">
+              Optional. Filled in from the vehicle registry when the plate is already on file.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Owner Name</label>
+                <input
+                  value={estimate.ownerName}
+                  onChange={(e) => setField("ownerName", e.target.value)}
+                  placeholder="e.g. Jehan Silva"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Phone</label>
+                <input
+                  value={estimate.ownerPhone}
+                  onChange={(e) => setField("ownerPhone", e.target.value)}
+                  placeholder="e.g. 071 618 8187"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Address</label>
+                <textarea
+                  value={estimate.ownerAddress}
+                  onChange={(e) => setField("ownerAddress", e.target.value)}
+                  rows={2}
+                  placeholder="e.g. No. 272, Negombo Road, Ja-ela"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* ── TASK SECTIONS ─────────────────────────────────────────── */}
           {ESTIMATE_SECTIONS.map((section) => (
             <SectionEditor
@@ -571,11 +691,25 @@ const EstimatePage = () => {
           ))}
 
           {/* ── TOTAL ─────────────────────────────────────────────────── */}
-          <div className="bg-gray-900 text-white rounded-2xl px-6 py-5 flex items-center justify-between mb-8">
-            <span className="font-bold uppercase tracking-wide">Estimate Total</span>
-            <span className="text-2xl font-black">
-              LKR {formatAmount(estimateTotal(estimate.sections))}
-            </span>
+          {/* Pending items carry no price, so the figure is only the repairs
+              quoted so far — say so here and on the printed estimate rather
+              than letting it read as the final bill. */}
+          <div className="bg-gray-900 text-white rounded-2xl px-6 py-5 mb-8">
+            <div className="flex items-center justify-between gap-4">
+              <span className="font-bold uppercase tracking-wide">
+                {pendingQuotation ? "Estimate Total (priced work)" : "Estimate Total"}
+              </span>
+              <span className="text-2xl font-black whitespace-nowrap">
+                LKR {formatAmount(estimateTotal(estimate.sections))}
+              </span>
+            </div>
+            {pendingQuotation && (
+              <p className="mt-3 pt-3 border-t border-white/15 text-xs text-amber-300 flex items-start gap-1.5">
+                <Clock size={13} className="shrink-0 mt-0.5" />
+                This is the total of the other repairs — the part quotation is still pending, so the
+                final amount will rise once the supplier quotes it.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 mb-10">

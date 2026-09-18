@@ -28,18 +28,30 @@ import {
 } from "lucide-react";
 
 // --- Edit Sale Modal Component ---
+// The date is stored as a full timestamp; the picker only deals in days, so
+// read it back in local time rather than slicing the UTC ISO string, which
+// would show the previous day for anything billed after 5:30am Colombo time.
+const toDateInput = (iso) => (iso ? new Date(iso).toLocaleDateString("en-CA") : "");
+
 const EditSaleModal = ({ isOpen, sale, onClose, onSave }) => {
   const [customerName, setCustomerName] = useState("");
   const [vehicleNumber, setVehicleNumber] = useState("");
+  const [saleDate, setSaleDate] = useState("");
 
   useEffect(() => {
     if (sale) {
       setCustomerName(sale.customer_name);
       setVehicleNumber(sale.vehicle_number || "");
+      setSaleDate(toDateInput(sale.created_at));
     }
   }, [sale]);
 
   if (!isOpen) return null;
+
+  const todayISO = new Date().toLocaleDateString("en-CA");
+  // Only send the date when it actually changed: an unchanged field would
+  // otherwise re-stamp the sale's time of day on every save.
+  const dateChanged = sale && saleDate && saleDate !== toDateInput(sale.created_at);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
@@ -67,10 +79,29 @@ const EditSaleModal = ({ isOpen, sale, onClose, onSave }) => {
               placeholder="e.g. CAS-1234"
             />
           </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Sale Date</label>
+            <input
+              type="date"
+              value={saleDate}
+              max={todayISO}
+              onChange={(e) => setSaleDate(e.target.value)}
+              className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 outline-none"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              {dateChanged
+                ? "This sale will move to the new date — it leaves the old day's report and counts on the new one."
+                : "The day this sale counts towards in the reports."}
+            </p>
+          </div>
           <div className="flex gap-3 pt-4">
             <button onClick={onClose} className="flex-1 py-2.5 border border-gray-300 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition">Cancel</button>
             <button 
-              onClick={() => onSave({ customer_name: customerName, vehicle_number: vehicleNumber })}
+              onClick={() => onSave({
+                customer_name: customerName,
+                vehicle_number: vehicleNumber,
+                ...(dateChanged ? { created_at: saleDate } : {}),
+              })}
               className="flex-1 py-2.5 bg-red-700 text-white rounded-xl font-bold hover:bg-red-800 transition shadow-lg shadow-red-200"
             >
               Save Changes
@@ -467,11 +498,20 @@ const SalesHistoryPage = () => {
   const handleUpdateSale = async (updatedData) => {
     try {
       const result = await updateSale(saleToEdit.id, updatedData);
-      setSales(sales.map(s => s.id === result.id ? result : s));
+      // Re-sorted, not just swapped in place: moving a sale's date moves where
+      // it belongs in the newest-first list the server hands back.
+      setSales(
+        sales
+          .map((s) => (s.id === result.id ? result : s))
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      );
       setIsEditModalOpen(false);
       setAlertInfo({ type: "success", message: "Sale updated successfully!" });
     } catch (error) {
-      setAlertInfo({ type: "error", message: "Failed to update sale." });
+      setAlertInfo({
+        type: "error",
+        message: error.response?.data?.error || "Failed to update sale.",
+      });
     }
   };
 

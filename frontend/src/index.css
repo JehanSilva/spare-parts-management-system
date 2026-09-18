@@ -135,8 +135,17 @@
   }
 
   /* Repair estimate — same page geometry handling as the invoice: the sheet
-     carries its own A4 size on screen, the printed page supplies the margins. */
+     carries its own A4 size on screen, the printed page supplies the margins.
+     Estimates are kept as compact as possible (they are letters, not reports,
+     and a second sheet carrying only a total and a signature looks careless),
+     so they claim a narrower page box than the shared @page above. */
+  @page estimate {
+    size: A4 portrait;
+    margin: 9mm 10mm;
+  }
+
   .estimate-doc {
+    page: estimate;
     width: 100% !important;
     min-height: 0 !important;
     padding: 0 !important;
@@ -149,6 +158,11 @@
 
   .estimate-doc thead {
     display: table-header-group !important;
+  }
+
+  /* A section's own total must never be stranded from its last line. */
+  .estimate-doc tfoot {
+    page-break-inside: avoid !important;
   }
 
   /* Daily report container — fill page width, no extra spacing */

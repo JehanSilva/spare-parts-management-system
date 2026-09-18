@@ -7,6 +7,8 @@ from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
+from django.utils import timezone
+from datetime import timedelta
 from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService
 
 class PartMinimalAPITest(TestCase):
@@ -745,6 +747,133 @@ class SalePaymentAPITest(TestCase):
         self.assertIsNotNone(sale.credit_settled_at)
 
 
+class BackdatedSaleAPITest(TestCase):
+    """A job billed days late has to be recorded on the day it happened."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="backdateuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.part = Part.objects.create(
+            name="Brake Pad", part_number="BP-100", buy_price=500, sell_price=1000, stock_qty=10,
+        )
+
+    def _payload(self, **overrides):
+        payload = {
+            "customer_name": "John Doe",
+            "vehicle_number": "ABC-1234",
+            "items": [
+                {"part_id": str(self.part.id), "quantity": 2, "unit_price": 1000, "discount": 0}
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def _create(self, **overrides):
+        return self.client.post(reverse('create_sale'), self._payload(**overrides), format='json')
+
+    def test_sale_defaults_to_now(self):
+        response = self._create()
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertLess((timezone.now() - sale.created_at).total_seconds(), 60)
+
+    def test_a_plain_date_backdates_the_sale(self):
+        target = (timezone.localtime() - timedelta(days=9)).date()
+        response = self._create(created_at=target.isoformat())
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertEqual(timezone.localtime(sale.created_at).date(), target)
+
+    def test_a_bare_date_keeps_the_current_time_of_day(self):
+        """Midnight would both mis-sort the sale and dent the busiest-hours chart."""
+        target = (timezone.localtime() - timedelta(days=3)).date()
+        response = self._create(created_at=target.isoformat())
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertEqual(
+            timezone.localtime(sale.created_at).hour, timezone.localtime().hour
+        )
+
+    def test_a_full_timestamp_is_accepted(self):
+        stamp = timezone.now() - timedelta(days=2, hours=4)
+        response = self._create(created_at=stamp.isoformat())
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertLess(abs((sale.created_at - stamp).total_seconds()), 2)
+
+    def test_a_future_date_is_rejected(self):
+        tomorrow = (timezone.localtime() + timedelta(days=1)).date()
+        response = self._create(created_at=tomorrow.isoformat())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Sale.objects.count(), 0)
+        # Nothing half-done: the stock check runs before the sale is written.
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 10)
+
+    def test_rubbish_date_is_rejected(self):
+        response = self._create(created_at="last tuesday")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Sale.objects.count(), 0)
+
+    def test_blank_date_falls_back_to_now(self):
+        response = self._create(created_at="")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertLess((timezone.now() - sale.created_at).total_seconds(), 60)
+
+    def test_an_existing_sale_can_be_moved_to_another_day(self):
+        sale = Sale.objects.get(pk=self._create().data['id'])
+        target = (timezone.localtime() - timedelta(days=5)).date()
+        response = self.client.patch(
+            reverse('update_sale', args=[sale.id]),
+            {"created_at": target.isoformat()},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        sale.refresh_from_db()
+        self.assertEqual(timezone.localtime(sale.created_at).date(), target)
+
+    def test_editing_other_fields_leaves_the_date_alone(self):
+        sale = Sale.objects.get(pk=self._create().data['id'])
+        original = sale.created_at
+        response = self.client.patch(
+            reverse('update_sale', args=[sale.id]),
+            {"customer_name": "Jane Doe"},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        sale.refresh_from_db()
+        self.assertEqual(sale.created_at, original)
+        self.assertEqual(sale.customer_name, "Jane Doe")
+
+    def test_a_sale_cannot_be_moved_into_the_future(self):
+        sale = Sale.objects.get(pk=self._create().data['id'])
+        original = sale.created_at
+        response = self.client.patch(
+            reverse('update_sale', args=[sale.id]),
+            {"created_at": (timezone.localtime() + timedelta(days=2)).date().isoformat()},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        sale.refresh_from_db()
+        self.assertEqual(sale.created_at, original)
+
+    def test_a_backdated_sale_lands_in_that_day_report(self):
+        """The whole point: the daily figures follow the sale to its real date."""
+        target = timezone.localtime() - timedelta(days=4)
+        self._create(created_at=target.date().isoformat())
+        response = self.client.get(
+            reverse('daily_report'), {"date": target.date().isoformat()}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(float(response.data['today_revenue']), 2000.0)
+        self.assertEqual(response.data['today_sales_count'], 1)
+
+        # ...and correspondingly is absent from today's.
+        today = self.client.get(reverse('daily_report'))
+        self.assertEqual(today.data['today_sales_count'], 0)
+
+
 class SaleMileageSyncAPITest(TestCase):
     """
     Completing a POS sale should keep CustomerVehicle.current_mileage in sync:
@@ -958,6 +1087,81 @@ class RestockPrimarySupplierTest(TestCase):
         self.assertEqual(float(self.part.buy_price), 800.00)
 
 
+class EditRestockRecordSupplierTest(TestCase):
+    """A batch booked against the wrong supplier can be re-pointed in place."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="editrestockuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.wrong_supplier = Supplier.objects.create(name="Wrong Supplier")
+        self.right_supplier = Supplier.objects.create(name="Right Supplier")
+        self.part = Part.objects.create(
+            name="Radiator Cap", part_number="DN-RC004", brand="Denso",
+            buy_price=750.00, sell_price=1100.00, stock_qty=10,
+            supplier=self.wrong_supplier,
+        )
+        self.record = RestockRecord.objects.create(
+            part=self.part, supplier=self.wrong_supplier, quantity=10, buy_price=750.00,
+        )
+        self.url = reverse('edit_restock_record', args=[self.part.id, self.record.id])
+
+    def test_supplier_can_be_corrected(self):
+        response = self.client.put(self.url, {
+            "supplier_id": self.right_supplier.id, "quantity": 10, "buy_price": "750.00",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.supplier, self.right_supplier)
+        self.assertEqual(response.data['supplier_name'], "Right Supplier")
+
+    def test_correcting_the_supplier_leaves_stock_and_cost_alone(self):
+        self.client.put(self.url, {
+            "supplier_id": self.right_supplier.id, "quantity": 10, "buy_price": "750.00",
+        }, format='json')
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 10)
+        self.assertEqual(float(self.part.buy_price), 750.00)
+        # The part's own default source is a separate decision — untouched.
+        self.assertEqual(self.part.supplier, self.wrong_supplier)
+
+    def test_supplier_can_be_cleared(self):
+        response = self.client.put(self.url, {
+            "supplier_id": "", "quantity": 10, "buy_price": "750.00",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.record.refresh_from_db()
+        self.assertIsNone(self.record.supplier)
+        self.assertEqual(response.data['supplier_name'], "Unknown / No Supplier")
+
+    def test_omitting_the_key_leaves_the_supplier_intact(self):
+        """An edit of only the price must not wipe the supplier."""
+        response = self.client.put(self.url, {"buy_price": "800.00"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.supplier, self.wrong_supplier)
+        self.assertEqual(float(self.record.buy_price), 800.00)
+
+    def test_unknown_supplier_id_is_rejected(self):
+        response = self.client.put(self.url, {
+            "supplier_id": 999999, "quantity": 10, "buy_price": "750.00",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.supplier, self.wrong_supplier)
+
+    def test_supplier_and_quantity_can_change_together(self):
+        response = self.client.put(self.url, {
+            "supplier_id": self.right_supplier.id, "quantity": 15, "buy_price": "800.00",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.record.refresh_from_db()
+        self.part.refresh_from_db()
+        self.assertEqual(self.record.supplier, self.right_supplier)
+        self.assertEqual(self.part.stock_qty, 15)
+        self.assertEqual(float(self.part.buy_price), 800.00)
+
+
 class SupplierPrimaryPhoneTest(TestCase):
     """The default call number is stored on the supplier and survives edits."""
 
@@ -1057,6 +1261,80 @@ class EstimateAPITest(TestCase):
         response = self.client.post(self.create_url, self._payload(), format='json')
         # 3000 (2 x 1500) + 5000 (flat) + 16000 (2 x 8000)
         self.assertEqual(Estimate.objects.get(pk=response.data['id']).total_amount, 24000)
+
+    def test_pending_quotation_lines_are_left_out_of_the_total(self):
+        """A part the supplier hasn't quoted yet carries no price."""
+        payload = self._payload(sections={
+            "removing": [],
+            "repair": [{"description": "Panel beating", "hours": "", "rate": "5000"}],
+            "paint": [],
+            "replacing": [
+                # Still awaiting a quotation — any stray rate is ignored too.
+                {"description": "Front bonnet", "hours": "1", "rate": "9999",
+                 "quotationPending": True},
+                {"description": "Headlamp", "hours": "2", "rate": "8000"},
+            ],
+        })
+        response = self.client.post(self.create_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # 5000 (flat) + 16000 (2 x 8000); the pending bonnet adds nothing.
+        self.assertEqual(Estimate.objects.get(pk=response.data['id']).total_amount, 21000)
+        self.assertTrue(response.data['has_pending_quotation'])
+
+    def test_estimate_without_pending_lines_is_not_flagged(self):
+        response = self.client.post(self.create_url, self._payload(), format='json')
+        self.assertFalse(response.data['has_pending_quotation'])
+
+    def test_claim_details_are_all_optional(self):
+        """An estimate for a walk-in has no insurer, no plate and no date."""
+        response = self.client.post(self.create_url, {
+            "insurance_company": "",
+            "vehicle_number": "",
+            "make_model": "",
+            "date": None,
+            "sections": {"repair": [{"description": "Panel beating", "hours": "", "rate": "5000"}]},
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        estimate = Estimate.objects.get(pk=response.data['id'])
+        self.assertEqual(estimate.vehicle_number, "")
+        self.assertIsNone(estimate.vehicle)
+        self.assertIsNone(estimate.date)
+        self.assertEqual(estimate.total_amount, 5000)
+        # Nothing to register, so the registry must not have grown a blank row.
+        self.assertEqual(CustomerVehicle.objects.count(), 1)
+
+    def test_owner_details_round_trip(self):
+        response = self.client.post(self.create_url, self._payload(
+            owner_name="Jehan Silva",
+            owner_phone="0716188187",
+            owner_address="No. 272, Negombo Road\nJa-ela",
+        ), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['owner_name'], "Jehan Silva")
+
+        fetched = self.client.get(reverse('get_estimate', kwargs={'pk': response.data['id']}))
+        self.assertEqual(fetched.data['owner_phone'], "0716188187")
+        self.assertIn("Negombo Road", fetched.data['owner_address'])
+
+    def test_owner_details_can_be_edited_and_cleared(self):
+        created = self.client.post(
+            self.create_url, self._payload(owner_name="Jehan Silva"), format='json'
+        )
+        url = reverse('update_estimate', kwargs={'pk': created.data['id']})
+        response = self.client.patch(url, {"owner_name": "", "owner_phone": "0771234567"},
+                                     format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        estimate = Estimate.objects.get(pk=created.data['id'])
+        self.assertEqual(estimate.owner_name, "")
+        self.assertEqual(estimate.owner_phone, "0771234567")
+
+    def test_owner_details_default_to_blank(self):
+        response = self.client.post(self.create_url, self._payload(), format='json')
+        estimate = Estimate.objects.get(pk=response.data['id'])
+        self.assertEqual(estimate.owner_name, "")
+        self.assertEqual(estimate.owner_phone, "")
+        self.assertEqual(estimate.owner_address, "")
 
     def test_existing_plate_is_reused_not_duplicated(self):
         response = self.client.post(
@@ -1296,6 +1574,68 @@ class CustomerRenameTest(TestCase):
         self.sale.refresh_from_db()
         self.assertEqual(self.customer.name, "Jehan Silva")
         self.assertEqual(self.sale.customer_name, "Jehan Silva")
+
+
+class CustomerNamePrefixTest(TestCase):
+    """The honorific is stored apart from the name but shown joined to it."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="prefixuser", password="password")
+        self.client.force_authenticate(user=self.user)
+
+    def test_prefix_is_optional(self):
+        response = self.client.post(reverse('add_customer'), {"name": "Jehan Silva"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['name_prefix'], "")
+        self.assertEqual(response.data['display_name'], "Jehan Silva")
+
+    def test_display_name_joins_prefix_and_name(self):
+        response = self.client.post(
+            reverse('add_customer'), {"name_prefix": "Mr.", "name": "Jehan Silva"}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['display_name'], "Mr. Jehan Silva")
+        # The bare name is kept intact — search, sorting and initials use it.
+        self.assertEqual(response.data['name'], "Jehan Silva")
+
+    def test_a_free_text_prefix_is_accepted(self):
+        response = self.client.post(
+            reverse('add_customer'), {"name_prefix": "Ven.", "name": "Rathanapala Thero"},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['display_name'], "Ven. Rathanapala Thero")
+
+    def test_searching_by_name_still_matches(self):
+        Customer.objects.create(name_prefix="Dr.", name="Jehan Silva")
+        response = self.client.get(reverse('get_customers'), {"search": "silva"})
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['display_name'], "Dr. Jehan Silva")
+
+    def test_adding_a_prefix_follows_through_to_linked_sales(self):
+        """Adding "Dr." is a correction like any other rename."""
+        customer = Customer.objects.create(name="Jehan Silva")
+        sale = Sale.objects.create(customer=customer, customer_name="Jehan Silva", total_amount=5150)
+        cart = ActiveCart.objects.create(id="cart-prefix", customer=customer, customer_name="Jehan Silva")
+
+        response = self.client.put(
+            reverse('update_customer', kwargs={'pk': customer.pk}),
+            {"name_prefix": "Dr."}, format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        sale.refresh_from_db()
+        cart.refresh_from_db()
+        self.assertEqual(sale.customer_name, "Dr. Jehan Silva")
+        self.assertEqual(cart.customer_name, "Dr. Jehan Silva")
+
+    def test_prefix_is_carried_on_the_nested_vehicle_owner(self):
+        customer = Customer.objects.create(name_prefix="Mr.", name="Jehan Silva")
+        CustomerVehicle.objects.create(vehicle_number="KT-8352", customer=customer)
+        response = self.client.get(reverse('lookup_vehicle'), {"vehicle_number": "KT-8352"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['vehicle']['customer_details']['display_name'], "Mr. Jehan Silva")
 
 
 class SupplierBankDetailsTest(TestCase):

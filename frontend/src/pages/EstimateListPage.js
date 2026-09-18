@@ -15,6 +15,7 @@ import {
   Building2,
   Link2,
   Link2Off,
+  Clock,
 } from "lucide-react";
 
 const formatLKR = (amount) =>
@@ -32,6 +33,17 @@ const formatDate = (value) =>
         day: "numeric",
       })
     : "—";
+
+// A total that stops short of the job: one of the replacing items is still
+// waiting on a supplier quotation, so the figure beside it will grow.
+const PendingQuotationBadge = () => (
+  <span
+    title="A replacing item is still awaiting a supplier quotation — the total covers only the priced work"
+    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap"
+  >
+    <Clock size={10} /> Quote pending
+  </span>
+);
 
 const EstimateListPage = () => {
   const navigate = useNavigate();
@@ -78,7 +90,7 @@ const EstimateListPage = () => {
   // The plate is auto-registered on save, so an unlinked estimate only happens
   // when the vehicle was later removed from the registry.
   const VehicleLink = ({ estimate }) =>
-    estimate.vehicle ? (
+    !estimate.vehicle_number ? null : estimate.vehicle ? (
       <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
         <Link2 size={9} /> Linked
       </span>
@@ -203,18 +215,27 @@ const EstimateListPage = () => {
                         <VehicleLink estimate={estimate} />
                       </div>
                       <h3 className="text-lg font-bold text-gray-900 tracking-wide mt-1 truncate">
-                        {estimate.vehicle_number}
+                        {estimate.vehicle_number || (
+                          <span className="text-gray-400 font-semibold">No vehicle</span>
+                        )}
                       </h3>
                       <p className="text-xs text-gray-500">{estimate.make_model || "—"}</p>
                     </div>
-                    <span className="text-sm font-bold text-gray-900 shrink-0">
-                      {formatLKR(estimate.total_amount)}
-                    </span>
+                    <div className="shrink-0 text-right">
+                      <span className="text-sm font-bold text-gray-900">
+                        {formatLKR(estimate.total_amount)}
+                      </span>
+                      {estimate.has_pending_quotation && (
+                        <div className="mt-1">
+                          <PendingQuotationBadge />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2 mt-3 text-xs text-gray-600">
                     <Building2 size={12} className="text-gray-400 shrink-0" />
-                    <span className="truncate">{estimate.insurance_company}</span>
+                    <span className="truncate">{estimate.insurance_company || "No insurer"}</span>
                   </div>
                   <p className="text-xs text-gray-400 mt-1">{formatDate(estimate.date)}</p>
 
@@ -266,7 +287,9 @@ const EstimateListPage = () => {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-gray-900 tracking-wide">
-                                {estimate.vehicle_number}
+                                {estimate.vehicle_number || (
+                                  <span className="text-gray-400 font-semibold">No vehicle</span>
+                                )}
                               </span>
                               <VehicleLink estimate={estimate} />
                             </div>
@@ -276,12 +299,19 @@ const EstimateListPage = () => {
                           </div>
                         </div>
                       </td>
-                      <td className="px-5 py-4 text-gray-700">{estimate.insurance_company}</td>
+                      <td className="px-5 py-4 text-gray-700">
+                        {estimate.insurance_company || <span className="text-gray-400">—</span>}
+                      </td>
                       <td className="px-5 py-4 text-gray-500 whitespace-nowrap">
                         {formatDate(estimate.date)}
                       </td>
                       <td className="px-5 py-4 text-right font-bold text-gray-900 whitespace-nowrap">
                         {formatLKR(estimate.total_amount)}
+                        {estimate.has_pending_quotation && (
+                          <div className="mt-1">
+                            <PendingQuotationBadge />
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex items-center justify-end gap-1.5">

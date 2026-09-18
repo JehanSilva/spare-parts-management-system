@@ -2,6 +2,15 @@ import React, { forwardRef } from "react";
 import logo from "../assets/logo.png";
 import { getVehicleInfo } from "./billingVehicle";
 
+// Where a customer transferring the money should send it. Printed on every
+// invoice, so this is the one place to edit if the shop ever changes banks.
+const BANK_DETAILS = [
+  ["Bank", "Commercial Bank"],
+  ["Branch", "Ja-ela"],
+  ["Account Name", "NSS Auto Engineers"],
+  ["Account No.", "1000956014"],
+];
+
 // Right-aligned "Label : value" row used in the invoice meta column.
 const MetaRow = ({ label, value }) => (
   <div className="flex justify-end gap-3">
@@ -206,10 +215,42 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
         </tbody>
       </table>
 
-      {/* ── TOTALS ──────────────────────────────────────────────────────── */}
-      {/* Small enough that keeping it whole can't push a page, but it looks
-          broken if Sub Total and Balance Due land on different sheets. */}
-      <div className="flex justify-end mt-4 break-inside-avoid">
+      {/* ── BANK DETAILS + TOTALS ───────────────────────────────────────── */}
+      {/* The totals block only ever fills the right half, so the payment
+          details ride in the space beside it rather than costing the invoice
+          another band of its own. Kept whole: it looks broken if Sub Total and
+          Balance Due — or the bank and its account number — land on different
+          sheets. */}
+      <div className="flex justify-between items-start gap-6 mt-4 break-inside-avoid">
+        <div className="w-[45%]">
+          <div className="font-bold text-gray-900 uppercase tracking-wide text-[9px] pb-1 border-b border-gray-300">
+            Bank Transfer Details
+          </div>
+          <table className="w-full border-collapse mt-1.5">
+            <tbody>
+              {BANK_DETAILS.map(([label, value]) => (
+                <tr key={label}>
+                  <td className="py-0.5 pr-3 text-gray-600 align-top whitespace-nowrap">{label}</td>
+                  {/* The number is what gets copied into a banking app, so it
+                      is the one line set solid and spaced out. */}
+                  <td
+                    className={`py-0.5 align-top ${
+                      label === "Account No."
+                        ? "font-bold text-gray-900 tracking-wider"
+                        : "text-gray-900"
+                    }`}
+                  >
+                    {value}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="text-[9px] text-gray-500 mt-1.5">
+            Please quote invoice # {invoiceId} as the payment reference.
+          </div>
+        </div>
+
         <div className="w-[45%]">
           <div className="flex justify-between px-3 py-1.5">
             <span className="text-gray-600">Sub Total</span>

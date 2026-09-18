@@ -12,6 +12,7 @@ import EstimateDocument, {
 } from "../components/EstimateDocument";
 import AlertComponent from "../components/AlertComponent";
 import { fetchEstimate, createEstimate, updateEstimate, lookupVehicle } from "../services/api";
+import { customerDisplayName } from "../components/customerName";
 import {
   ArrowLeft,
   Plus,
@@ -236,7 +237,7 @@ const VehicleLookupStatus = ({ lookup }) => {
       </span>
       {owner && (
         <span className="inline-flex items-center gap-1.5 text-gray-500">
-          <UserCheck size={12} className="shrink-0 text-gray-400" /> {owner.name}
+          <UserCheck size={12} className="shrink-0 text-gray-400" /> {customerDisplayName(owner)}
         </span>
       )}
     </div>
@@ -257,6 +258,9 @@ const EstimatePage = () => {
       vehicleNumber: "",
       makeModel: "",
       validityDays: 30,
+      ownerName: "",
+      ownerPhone: "",
+      ownerAddress: "",
       sections: blankSections(),
     }),
     [today]
@@ -355,9 +359,22 @@ const EstimatePage = () => {
         const registryMakeModel = [result.vehicle.make, result.vehicle.model]
           .filter(Boolean)
           .join(" ");
+        const owner = result.vehicle.customer_details;
         // Only for a plate the user just typed — see autoFillPlateRef.
-        if (registryMakeModel && autoFillPlateRef.current === plate) {
-          setEstimate((prev) => ({ ...prev, makeModel: registryMakeModel }));
+        if (autoFillPlateRef.current === plate) {
+          setEstimate((prev) => ({
+            ...prev,
+            ...(registryMakeModel ? { makeModel: registryMakeModel } : {}),
+            // The registry fills the blanks only. Anything already typed was
+            // typed deliberately for this estimate and is left alone.
+            ...(owner?.name && !prev.ownerName.trim()
+              ? { ownerName: customerDisplayName(owner) }
+              : {}),
+            ...(owner?.phone && !prev.ownerPhone.trim() ? { ownerPhone: owner.phone } : {}),
+            ...(owner?.address && !prev.ownerAddress.trim()
+              ? { ownerAddress: owner.address }
+              : {}),
+          }));
         }
       } catch {
         if (lookupRequestRef.current === requestId) {
@@ -392,9 +409,10 @@ const EstimatePage = () => {
   const hasAnyTask = ESTIMATE_SECTIONS.some((s) => printableEstimate.sections[s.key].length > 0);
   const pendingQuotation = hasPendingQuotation(estimate.sections);
 
+  // Every claim detail is optional — an estimate is often written before the
+  // plate or insurer is known. The task lines are the one thing it can't do
+  // without: there would be nothing on the page to price.
   const validate = () => {
-    if (!estimate.vehicleNumber.trim()) return "Enter the vehicle number first.";
-    if (!estimate.insuranceCompany.trim()) return "Enter the insurance company first.";
     if (!hasAnyTask) return "Add at least one task first.";
     return null;
   };
@@ -543,9 +561,12 @@ const EstimatePage = () => {
 
           {/* ── CLAIM DETAILS ─────────────────────────────────────────── */}
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
-            <h2 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <h2 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
               <FileText size={18} className="text-red-700" /> Claim Details
             </h2>
+            <p className="text-xs text-gray-400 mb-4">
+              All optional — anything left blank is simply left off the printed estimate.
+            </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -609,6 +630,51 @@ const EstimatePage = () => {
                   onChange={(e) => setField("validityDays", e.target.value)}
                   inputMode="numeric"
                   className="w-full md:w-40 p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ── VEHICLE OWNER ─────────────────────────────────────────── */}
+          {/* Filled in from the vehicle registry when the plate is on file —
+              see the lookup effect, which only ever fills blanks. */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
+            <h2 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
+              <UserCheck size={18} className="text-red-700" /> Vehicle Owner
+            </h2>
+            <p className="text-xs text-gray-400 mb-4">
+              Optional. Filled in from the vehicle registry when the plate is already on file.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Owner Name</label>
+                <input
+                  value={estimate.ownerName}
+                  onChange={(e) => setField("ownerName", e.target.value)}
+                  placeholder="e.g. Jehan Silva"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Phone</label>
+                <input
+                  value={estimate.ownerPhone}
+                  onChange={(e) => setField("ownerPhone", e.target.value)}
+                  placeholder="e.g. 071 618 8187"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Address</label>
+                <textarea
+                  value={estimate.ownerAddress}
+                  onChange={(e) => setField("ownerAddress", e.target.value)}
+                  rows={2}
+                  placeholder="e.g. No. 272, Negombo Road, Ja-ela"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
                 />
               </div>
             </div>

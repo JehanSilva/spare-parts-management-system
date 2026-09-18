@@ -19,9 +19,13 @@ class VehicleSerializer(serializers.ModelSerializer):
 class CustomerBasicSerializer(serializers.ModelSerializer):
     """Lightweight Customer view for nesting — avoids circular nesting with
     CustomerSerializer.vehicles (which nests CustomerVehicleSerializer)."""
+    # Prefix and name travel separately (initials, sorting and search all want
+    # the bare name); display_name is the joined form to show and print.
+    display_name = serializers.ReadOnlyField()
+
     class Meta:
         model = Customer
-        fields = ['id', 'name', 'phone', 'email', 'address']
+        fields = ['id', 'name_prefix', 'name', 'display_name', 'phone', 'email', 'address']
 
 
 class CustomerVehicleSerializer(serializers.ModelSerializer):
@@ -36,10 +40,11 @@ class CustomerVehicleSerializer(serializers.ModelSerializer):
 class CustomerSerializer(serializers.ModelSerializer):
     vehicles = CustomerVehicleSerializer(many=True, read_only=True)
     total_sales = serializers.SerializerMethodField()
+    display_name = serializers.ReadOnlyField()
 
     class Meta:
         model = Customer
-        fields = ['id', 'name', 'phone', 'email', 'address', 'created_at', 'updated_at', 'vehicles', 'total_sales']
+        fields = ['id', 'name_prefix', 'name', 'display_name', 'phone', 'email', 'address', 'created_at', 'updated_at', 'vehicles', 'total_sales']
 
     def get_total_sales(self, obj):
         return obj.sales.filter(status='COMPLETED').count()
@@ -233,7 +238,8 @@ class EstimateSerializer(serializers.ModelSerializer):
         model = Estimate
         fields = [
             'id', 'estimate_number', 'vehicle', 'vehicle_details', 'vehicle_number',
-            'make_model', 'insurance_company', 'date', 'validity_days', 'sections',
+            'make_model', 'insurance_company', 'date', 'validity_days',
+            'owner_name', 'owner_phone', 'owner_address', 'sections',
             'total_amount', 'has_pending_quotation', 'created_at', 'updated_at',
         ]
         # All derived server-side: the reference number is allocated on create,

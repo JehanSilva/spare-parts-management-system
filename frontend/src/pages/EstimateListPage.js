@@ -90,7 +90,7 @@ const EstimateListPage = () => {
   // The plate is auto-registered on save, so an unlinked estimate only happens
   // when the vehicle was later removed from the registry.
   const VehicleLink = ({ estimate }) =>
-    estimate.vehicle ? (
+    !estimate.vehicle_number ? null : estimate.vehicle ? (
       <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
         <Link2 size={9} /> Linked
       </span>
@@ -215,7 +215,9 @@ const EstimateListPage = () => {
                         <VehicleLink estimate={estimate} />
                       </div>
                       <h3 className="text-lg font-bold text-gray-900 tracking-wide mt-1 truncate">
-                        {estimate.vehicle_number}
+                        {estimate.vehicle_number || (
+                          <span className="text-gray-400 font-semibold">No vehicle</span>
+                        )}
                       </h3>
                       <p className="text-xs text-gray-500">{estimate.make_model || "—"}</p>
                     </div>
@@ -233,7 +235,7 @@ const EstimateListPage = () => {
 
                   <div className="flex items-center gap-2 mt-3 text-xs text-gray-600">
                     <Building2 size={12} className="text-gray-400 shrink-0" />
-                    <span className="truncate">{estimate.insurance_company}</span>
+                    <span className="truncate">{estimate.insurance_company || "No insurer"}</span>
                   </div>
                   <p className="text-xs text-gray-400 mt-1">{formatDate(estimate.date)}</p>
 
@@ -285,7 +287,9 @@ const EstimateListPage = () => {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-gray-900 tracking-wide">
-                                {estimate.vehicle_number}
+                                {estimate.vehicle_number || (
+                                  <span className="text-gray-400 font-semibold">No vehicle</span>
+                                )}
                               </span>
                               <VehicleLink estimate={estimate} />
                             </div>
@@ -295,7 +299,9 @@ const EstimateListPage = () => {
                           </div>
                         </div>
                       </td>
-                      <td className="px-5 py-4 text-gray-700">{estimate.insurance_company}</td>
+                      <td className="px-5 py-4 text-gray-700">
+                        {estimate.insurance_company || <span className="text-gray-400">—</span>}
+                      </td>
                       <td className="px-5 py-4 text-gray-500 whitespace-nowrap">
                         {formatDate(estimate.date)}
                       </td>

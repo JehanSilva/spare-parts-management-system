@@ -52,20 +52,28 @@ const formatAmount = (amount) =>
 // the saved-estimates list go through these, so the shape is defined once.
 
 export const toEstimatePayload = (estimate) => ({
-  date: estimate.date,
+  // A cleared date has to go as null, not "" — the column is nullable, but an
+  // empty string is not a date and the serializer rejects it.
+  date: estimate.date || null,
   insurance_company: estimate.insuranceCompany,
   vehicle_number: estimate.vehicleNumber,
   make_model: estimate.makeModel,
   validity_days: parseInt(estimate.validityDays, 10) || 30,
+  owner_name: estimate.ownerName,
+  owner_phone: estimate.ownerPhone,
+  owner_address: estimate.ownerAddress,
   sections: estimate.sections,
 });
 
 export const fromEstimateRecord = (record) => ({
-  date: record.date,
+  date: record.date || "",
   insuranceCompany: record.insurance_company || "",
   vehicleNumber: record.vehicle_number || "",
   makeModel: record.make_model || "",
   validityDays: record.validity_days ?? 30,
+  ownerName: record.owner_name || "",
+  ownerPhone: record.owner_phone || "",
+  ownerAddress: record.owner_address || "",
   // A section the estimate never used comes back missing or empty; the editor
   // always needs at least one row to render, so backfill a blank one.
   sections: ESTIMATE_SECTIONS.reduce((acc, s) => {
@@ -172,17 +180,34 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
     vehicleNumber,
     makeModel,
     validityDays = 30,
+    ownerName,
+    ownerPhone,
+    ownerAddress,
     sections = {},
   } = estimate || {};
 
   const pendingQuotation = hasPendingQuotation(sections);
 
-  const issuedDate = date ? new Date(date) : new Date();
-  const dateLabel = issuedDate.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
+  const dateLabel = date
+    ? new Date(date).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      })
+    : "";
+
+  // Every claim detail is optional, so the document is built from whichever
+  // facts were actually filled in — a blank one prints no label at all rather
+  // than a dangling "Owner: —".
+  const factLines = [
+    ["Vehicle Number", vehicleNumber],
+    ["Make & Model", makeModel],
+    ["Owner", ownerName],
+    ["Phone", ownerPhone],
+    // A typed address keeps its line breaks; they'd otherwise collapse into one
+    // run-on line on the printed page.
+    ["Address", (ownerAddress || "").trim().replace(/\s*\n\s*/g, ", ")],
+  ].filter(([, value]) => (value || "").trim());
 
   return (
     <div
@@ -250,23 +275,27 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
         <span className="w-1/4" />
       </div>
 
-      <div className="mt-3 text-[10.5px] text-gray-800">
-        <div>The Manager,</div>
-        <div>Claims Department,</div>
-        <div>{insuranceCompany || "Insurance Company"},</div>
-        <div>Sri Lanka.</div>
-      </div>
+      {/* Addressed to the insurer only when there is one — an estimate written
+          for a walk-in must not be headed to a claims department. */}
+      {insuranceCompany && (
+        <div className="mt-3 text-[10.5px] text-gray-800">
+          <div>The Manager,</div>
+          <div>Claims Department,</div>
+          <div>{insuranceCompany},</div>
+          <div>Sri Lanka.</div>
+        </div>
+      )}
 
-      <div className="mt-2 flex flex-wrap gap-x-10 gap-y-0.5 text-[10.5px]">
-        <div>
-          <span className="font-bold">Vehicle Number:</span>{" "}
-          <span className="text-gray-800">{vehicleNumber || "—"}</span>
+      {factLines.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-x-10 gap-y-0.5 text-[10.5px]">
+          {factLines.map(([label, value]) => (
+            <div key={label}>
+              <span className="font-bold">{label}:</span>{" "}
+              <span className="text-gray-800">{value}</span>
+            </div>
+          ))}
         </div>
-        <div>
-          <span className="font-bold">Make &amp; Model:</span>{" "}
-          <span className="text-gray-800">{makeModel || "—"}</span>
-        </div>
-      </div>
+      )}
 
       {/* ── TASK SECTIONS ───────────────────────────────────────────────── */}
       {ESTIMATE_SECTIONS.map((section) => (
@@ -301,8 +330,10 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
       )}
 
       <p className="mt-2 text-[9.5px] text-gray-700">
-        *This estimate is valid for {validityDays} days and applies only to the Insurance company:{" "}
-        {insuranceCompany || "—"}
+        *This estimate is valid for {validityDays} days
+        {insuranceCompany
+          ? ` and applies only to the Insurance company: ${insuranceCompany}`
+          : ""}
       </p>
 
       {/* ── SIGNATURE (applied automatically) ───────────────────────────── */}

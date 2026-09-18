@@ -4,6 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 from datetime import timedelta
 from django.db.models.functions import TruncDate, Coalesce
 from rest_framework import status
@@ -71,10 +72,11 @@ def update_customer(request, pk):
     have no customer FK at all, so the column can't just be dropped), which
     means a corrected name would otherwise leave the sales history reading as a
     different person. So a rename follows through to the sales — and any open
-    POS cart — actually linked to this customer.
+    POS cart — actually linked to this customer. The honorific counts as part
+    of that name: adding "Dr." is a correction like any other.
     """
     customer = get_object_or_404(Customer, pk=pk)
-    old_name = customer.name
+    old_name = customer.display_name
 
     serializer = CustomerSerializer(customer, data=request.data, partial=True)
     if not serializer.is_valid():
@@ -82,7 +84,7 @@ def update_customer(request, pk):
 
     with transaction.atomic():
         serializer.save()
-        new_name = customer.name
+        new_name = customer.display_name
         if new_name != old_name:
             # Matched on the FK, never on the old text: an unlinked walk-in that
             # happens to share the name may well be somebody else.
@@ -700,13 +702,33 @@ def return_restock_record(request, part_pk, record_pk):
 @transaction.atomic
 def edit_restock_record(request, part_pk, record_pk):
     """
-    Edit the quantity and/or buy_price on a restock record.
+    Edit the supplier, quantity and/or buy_price on a restock record.
     Adjusts part.stock_qty and recalculates the weighted average buy price.
 
-    Payload: { "quantity": <int>, "buy_price": "<decimal>" }
+    Payload: { "supplier_id": <int|null>, "quantity": <int>, "buy_price": "<decimal>" }
+
+    Re-pointing the supplier only corrects who this batch was bought from — it
+    is deliberately left out of the stock and average-price maths below, and
+    never touches Part.supplier (the part's default source, which is a separate
+    decision from where one batch happened to come from).
     """
     part = get_object_or_404(Part, pk=part_pk)
     record = get_object_or_404(RestockRecord, pk=record_pk, part=part)
+
+    # Absent key = leave the supplier alone; an explicit blank clears it back to
+    # "Unknown / No Supplier", the same option the restock form offers.
+    new_supplier = record.supplier
+    if 'supplier_id' in request.data:
+        supplier_id = request.data.get('supplier_id')
+        if supplier_id in (None, '', 'null'):
+            new_supplier = None
+        else:
+            new_supplier = Supplier.objects.filter(pk=supplier_id).first()
+            if new_supplier is None:
+                return Response(
+                    {"error": "That supplier no longer exists."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
     new_quantity = int(request.data.get('quantity', record.quantity))
     new_buy_price = Decimal(str(request.data.get('buy_price', record.buy_price)))
@@ -744,6 +766,7 @@ def edit_restock_record(request, part_pk, record_pk):
     part.stock_qty = new_stock_qty
     part.save()
 
+    record.supplier = new_supplier
     record.quantity = new_quantity
     record.buy_price = new_buy_price
     # Refresh status based on updated quantity
@@ -759,6 +782,48 @@ def edit_restock_record(request, part_pk, record_pk):
 
 
 # --- SALES & BILLING VIEWS ---
+def _resolve_sale_datetime(value):
+    """
+    Turn a client-supplied sale date into a timestamp for Sale.created_at.
+
+    Accepts a plain date ("2026-09-01") or a full ISO datetime. A bare date is
+    stamped with the current time of day rather than midnight: the sale then
+    sorts naturally among that day's others, and the dashboard's busiest-hours
+    chart isn't handed a fake midnight spike.
+
+    Returns (datetime, None) or (None, error message). A blank value yields
+    (None, None) — the caller keeps the default of "now".
+    """
+    if value in (None, ''):
+        return None, None
+
+    text = value.strip() if isinstance(value, str) else ''
+    if not text:
+        return None, None
+
+    # Shape first, then parse: parse_datetime happily reads a bare "2026-09-01"
+    # as midnight, which is exactly the timestamp this function exists to avoid.
+    if 'T' not in text and ':' not in text:
+        day = parse_date(text)
+        if day is None:
+            return None, "Sale date must be a date like 2026-09-01."
+        parsed = timezone.localtime().replace(
+            year=day.year, month=day.month, day=day.day, microsecond=0
+        )
+    else:
+        parsed = parse_datetime(text)
+        if parsed is None:
+            return None, "Sale date must be a date like 2026-09-01."
+
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+
+    if parsed > timezone.now():
+        return None, "Sale date cannot be in the future."
+
+    return parsed, None
+
+
 @api_view(['POST'])
 @transaction.atomic # <--- 1. This Decorator makes the entire function safe
 def create_sale(request):
@@ -770,6 +835,12 @@ def create_sale(request):
     mileage = data.get('mileage') or None
     force_mileage_update = bool(data.get('force_mileage_update', False))
     notes = data.get('notes', '')
+
+    # Optional backdate, for a job being billed days after it was done. Blank
+    # (the normal case) leaves Sale.created_at on its "now" default.
+    created_at, date_error = _resolve_sale_datetime(data.get('created_at'))
+    if date_error:
+        return Response({"error": date_error}, status=status.HTTP_400_BAD_REQUEST)
 
     payment_status = data.get('payment_status', 'PAID')
     if payment_status not in ('PAID', 'PARTIAL', 'CREDIT'):
@@ -839,6 +910,7 @@ def create_sale(request):
         credit_note=credit_note,
         mileage=mileage,
         notes=notes,
+        **({'created_at': created_at} if created_at else {}),
     )
 
     # 3b. Keep the vehicle registry's "current mileage" in sync with the
@@ -907,16 +979,25 @@ def get_all_sales(request):
 @api_view(['PATCH'])
 def update_sale(request, pk):
     """
-    Update Sale header details (Customer Name, Vehicle Number)
+    Update Sale header details (Customer Name, Vehicle Number, sale date).
+
+    Moving created_at moves the sale itself — it leaves today's daily report
+    and lands on the date given, which is the point: a sale entered on the
+    wrong day should count on the right one.
     """
     sale = get_object_or_404(Sale, pk=pk)
     
-    # We only allow updating customer_name and vehicle_number
+    # We only allow updating customer_name, vehicle_number and created_at
     data = request.data
     if 'customer_name' in data:
         sale.customer_name = data['customer_name']
     if 'vehicle_number' in data:
         sale.vehicle_number = data['vehicle_number']
+    if data.get('created_at'):
+        created_at, date_error = _resolve_sale_datetime(data['created_at'])
+        if date_error:
+            return Response({"error": date_error}, status=status.HTTP_400_BAD_REQUEST)
+        sale.created_at = created_at
         
     sale.save()
     return Response(SaleSerializer(sale).data)
@@ -2419,4 +2500,4 @@ def pay_payroll_record(request, pk):
     payroll.paid_date = timezone.now().date()
     payroll.save()
     
-    return Response(PayrollSerializer(payroll).data)
+    return Response(PayrollSerializer(payroll).data)

@@ -8,6 +8,7 @@ import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
 import CustomerLinkPicker from "../components/CustomerLinkPicker";
+import { customerDisplayName } from "../components/customerName";
 import {
   Search,
   ShoppingCart,
@@ -34,6 +35,7 @@ import {
   StickyNote,
   Pencil,
   MessageCircle,
+  CalendarDays,
   X,
 } from "lucide-react";
 
@@ -331,7 +333,7 @@ const VehicleCustomerModal = ({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider mb-0.5">Linked Customer</p>
-                      <p className="text-xs font-bold text-blue-900 truncate">{linkedCustomer.name}</p>
+                      <p className="text-xs font-bold text-blue-900 truncate">{customerDisplayName(linkedCustomer)}</p>
                       {(linkedCustomer.phone || linkedCustomer.email) && (
                         <p className="text-[10px] text-blue-600 truncate">
                           {[linkedCustomer.phone, linkedCustomer.email].filter(Boolean).join(" · ")}
@@ -476,11 +478,16 @@ const PaymentModal = ({
   setPartialAmountPaid,
   creditNote,
   setCreditNote,
+  saleDate,
+  setSaleDate,
   totalAmount,
   isCredit,
   partialAmountInputRef,
 }) => {
   if (!isOpen) return null;
+
+  // A sale can be dated back to a job finished earlier, but never forward.
+  const todayISO = new Date().toLocaleDateString("en-CA");
 
   return (
     <div
@@ -554,6 +561,39 @@ const PaymentModal = ({
               className="w-full px-2.5 py-2 text-xs bg-amber-50 border border-amber-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400 resize-none placeholder-amber-400/70"
             />
           )}
+
+          {/* Backdating, for a job finished days ago and only being billed
+              now. Blank means today, which is the normal case — the whole sale
+              moves with this date, daily report included. */}
+          <div className="pt-1 border-t border-gray-100">
+            <label className="text-[11px] font-semibold text-gray-600 mb-1 flex items-center gap-1.5">
+              <CalendarDays size={12} className="text-gray-400" /> Sale Date
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={saleDate}
+                max={todayISO}
+                onChange={(e) => setSaleDate(e.target.value)}
+                className="flex-1 px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-400"
+              />
+              {saleDate && (
+                <button
+                  type="button"
+                  onClick={() => setSaleDate("")}
+                  className="px-2.5 py-2 text-[11px] font-bold text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
+                  title="Back to today"
+                >
+                  Today
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">
+              {saleDate
+                ? "This bill will be recorded — and reported — on the date above."
+                : "Leave blank to record this sale now."}
+            </p>
+          </div>
 
           {paymentMode !== "PAID" && (
             <button
@@ -1158,6 +1198,8 @@ const POSPage = () => {
   // --- Payment Mode State: PAID (full) | PARTIAL (part now, part on credit) | CREDIT (pay later) ---
   const [paymentMode, setPaymentMode] = useState("PAID");
   const [creditNote, setCreditNote] = useState("");
+  // Blank = record the sale now; a YYYY-MM-DD backdates the whole sale.
+  const [saleDate, setSaleDate] = useState("");
   const [partialAmountPaid, setPartialAmountPaid] = useState("");
   const isCredit = paymentMode !== "PAID";
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -1301,7 +1343,9 @@ const POSPage = () => {
             if (result.vehicle.customer_details) {
               setCarts((prev) =>
                 prev.map((c) =>
-                  c.id === activeCartId ? { ...c, customerName: result.vehicle.customer_details.name } : c
+                  c.id === activeCartId
+                    ? { ...c, customerName: customerDisplayName(result.vehicle.customer_details) }
+                    : c
                 )
               );
             }
@@ -1344,7 +1388,9 @@ const POSPage = () => {
       if (linkedVehicle) {
         setLinkedVehicle(await updateCustomerVehicle(linkedVehicle.id, { customer: customer.id }));
         setCarts((prev) =>
-          prev.map((c) => (c.id === activeCartId ? { ...c, customerName: customer.name } : c))
+          prev.map((c) =>
+            c.id === activeCartId ? { ...c, customerName: customerDisplayName(customer) } : c
+          )
         );
       } else if (customer.vehicles?.length) {
         // Known customer, no plate yet — ask which of their vehicles this job
@@ -1360,7 +1406,7 @@ const POSPage = () => {
         setCarts((prev) =>
           prev.map((c) =>
             c.id === activeCartId
-              ? { ...c, customerName: customer.name, customerId: customer.id, customerDetails: customer }
+              ? { ...c, customerName: customerDisplayName(customer), customerId: customer.id, customerDetails: customer }
               : c
           )
         );
@@ -1383,7 +1429,7 @@ const POSPage = () => {
     setSelectedCustomer(null);
     setCarts((prev) =>
       prev.map((c) =>
-        c.id === activeCartId ? { ...c, vehicleNumber: plate, customerName: customer.name } : c
+        c.id === activeCartId ? { ...c, vehicleNumber: plate, customerName: customerDisplayName(customer) } : c
       )
     );
     setVehicleChoiceCustomer(null);
@@ -1397,7 +1443,7 @@ const POSPage = () => {
     setCarts((prev) =>
       prev.map((c) =>
         c.id === activeCartId
-          ? { ...c, customerName: customer.name, customerId: customer.id, customerDetails: customer }
+          ? { ...c, customerName: customerDisplayName(customer), customerId: customer.id, customerDetails: customer }
           : c
       )
     );
@@ -1439,6 +1485,7 @@ const POSPage = () => {
     setPaymentMode("PAID");
     setCreditNote("");
     setPartialAmountPaid("");
+    setSaleDate("");
     setPaymentModalOpen(false);
 
     setLinkedVehicle(null);
@@ -1841,6 +1888,7 @@ const POSPage = () => {
       notes: notes.trim(),
       ...(linkedCustomer ? { customer: linkedCustomer.id } : {}),
       payment_status: paymentMode,
+      ...(saleDate ? { created_at: saleDate } : {}),
       ...(isCredit ? { credit_note: creditNote.trim() } : {}),
       ...(paymentMode === "PARTIAL" ? { amount_paid: partialPaidNow } : {}),
       items: cart.map((item) => {
@@ -2247,6 +2295,8 @@ const POSPage = () => {
         setPartialAmountPaid={setPartialAmountPaid}
         creditNote={creditNote}
         setCreditNote={setCreditNote}
+        saleDate={saleDate}
+        setSaleDate={setSaleDate}
         totalAmount={totalAmount}
         isCredit={isCredit}
         partialAmountInputRef={partialAmountInputRef}
@@ -2618,7 +2668,9 @@ const POSPage = () => {
                         {[vehicleNumber, vehicleLabel].filter(Boolean).join(" · ")}
                       </p>
                       <p className={`text-[10px] truncate ${linkedCustomer ? "text-green-600" : "text-gray-400"}`}>
-                        {linkedCustomer ? [linkedCustomer.name, linkedCustomer.phone].filter(Boolean).join(" · ") : "No customer linked"}
+                        {linkedCustomer
+                          ? [customerDisplayName(linkedCustomer), linkedCustomer.phone].filter(Boolean).join(" · ")
+                          : "No customer linked"}
                       </p>
                     </>
                   ) : vehicleLookupStatus === "not_found" ? (
@@ -2673,6 +2725,18 @@ const POSPage = () => {
                         : "Pay in full at checkout"}
                   </p>
                 </div>
+                {/* A backdate is easy to set and then forget, and it decides
+                    which day's report this bill lands in — so it stays visible
+                    on the summary, not just inside the modal. */}
+                {saleDate && (
+                  <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-900 text-white text-[10px] font-bold">
+                    <CalendarDays size={10} />
+                    {new Date(`${saleDate}T00:00:00`).toLocaleDateString("en-GB", {
+                      day: "2-digit",
+                      month: "short",
+                    })}
+                  </span>
+                )}
                 <ChevronUp size={13} className="text-gray-400 -rotate-90 shrink-0" />
               </button>
 

@@ -10,6 +10,8 @@ import {
   updateCustomerVehicle,
   fetchCustomerHistory,
 } from "../services/api";
+import NamePrefixSelect from "../components/forms/NamePrefixSelect";
+import { customerDisplayName } from "../components/customerName";
 import {
   User,
   Phone,
@@ -53,6 +55,7 @@ const Field = ({ label, id, ...props }) => (
 const CustomerModal = ({ customer, onClose, onSaved }) => {
   const isEdit = !!customer;
   const [form, setForm] = useState({
+    name_prefix: customer?.name_prefix || "",
     name: customer?.name || "",
     phone: customer?.phone || "",
     email: customer?.email || "",
@@ -95,7 +98,7 @@ const CustomerModal = ({ customer, onClose, onSaved }) => {
                 {isEdit ? "Editing customer" : "New customer"}
               </p>
               <h2 className="text-lg font-bold text-gray-900 truncate">
-                {form.name.trim() || (isEdit ? "Edit Customer" : "Add New Customer")}
+                {customerDisplayName(form) || (isEdit ? "Edit Customer" : "Add New Customer")}
               </h2>
             </div>
           </div>
@@ -108,7 +111,21 @@ const CustomerModal = ({ customer, onClose, onSaved }) => {
         </div>
         <form onSubmit={handleSubmit} className="px-6 pb-6 space-y-4">
           {error && <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">{error}</p>}
-          <Field label="Full Name *" id="cust-name" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. John Doe" />
+          <div className="flex gap-3">
+            <div className="w-24 shrink-0">
+              <label htmlFor="cust-prefix" className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">
+                Title
+              </label>
+              <NamePrefixSelect
+                value={form.name_prefix}
+                onChange={(name_prefix) => setForm(p => ({ ...p, name_prefix }))}
+                selectClassName="px-3 py-2.5 bg-gray-50 border-gray-200 rounded-xl"
+              />
+            </div>
+            <div className="flex-1 min-w-0">
+              <Field label="Full Name *" id="cust-name" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. John Doe" />
+            </div>
+          </div>
           <Field label="Phone" id="cust-phone" value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} placeholder="e.g. 077 123 4567" />
           <Field label="Email" id="cust-email" type="email" value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))} placeholder="e.g. john@email.com" />
           <div>
@@ -258,7 +275,7 @@ const CustomerHistoryModal = ({ customer, onClose }) => {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-900 text-white shrink-0">
-          <h2 className="font-bold text-lg flex items-center gap-2"><History size={18} /> {customer.name} — Purchase History</h2>
+          <h2 className="font-bold text-lg flex items-center gap-2"><History size={18} /> {customerDisplayName(customer)} — Purchase History</h2>
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-white/20 transition-colors"><X size={18} /></button>
         </div>
         <div className="p-6 overflow-y-auto space-y-4">
@@ -364,7 +381,7 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
     <>
       {showAddVehicle && <VehicleModal customerId={customer.id} onClose={() => setShowAddVehicle(false)} onSaved={onRefresh} />}
       {editVehicle && <VehicleModal vehicle={editVehicle} onClose={() => setEditVehicle(null)} onSaved={onRefresh} />}
-      <ConfirmModal isOpen={!!vehicleToDelete} title="Remove Vehicle?" message={`Remove ${vehicleToDelete?.vehicle_number} from ${customer.name}?`} onConfirm={handleDeleteVehicle} onCancel={() => setVehicleToDelete(null)} />
+      <ConfirmModal isOpen={!!vehicleToDelete} title="Remove Vehicle?" message={`Remove ${vehicleToDelete?.vehicle_number} from ${customerDisplayName(customer)}?`} onConfirm={handleDeleteVehicle} onCancel={() => setVehicleToDelete(null)} />
 
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-xl transition-shadow duration-300 overflow-hidden">
         <div className="p-5">
@@ -406,7 +423,7 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
               ` · ${customer.vehicles.length} vehicle${customer.vehicles.length > 1 ? "s" : ""}`}
           </p>
           <h3 className="text-lg font-bold text-gray-900 leading-snug mt-0.5 truncate">
-            {customer.name}
+            {customerDisplayName(customer)}
           </h3>
 
           {/* Chips */}
@@ -589,7 +606,7 @@ const CustomerPage = () => {
       {showAddModal && <CustomerModal onClose={() => setShowAddModal(false)} onSaved={load} />}
       {editCustomer && <CustomerModal customer={editCustomer} onClose={() => setEditCustomer(null)} onSaved={load} />}
       {historyCustomer && <CustomerHistoryModal customer={historyCustomer} onClose={() => setHistoryCustomer(null)} />}
-      <ConfirmModal isOpen={!!deleteTarget} title="Delete Customer?" message={`This will permanently delete ${deleteTarget?.name} and all their vehicles. This cannot be undone.`} onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} />
+      <ConfirmModal isOpen={!!deleteTarget} title="Delete Customer?" message={`This will permanently delete ${customerDisplayName(deleteTarget)} and all their vehicles. This cannot be undone.`} onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} />
 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>

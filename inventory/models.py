@@ -1,5 +1,6 @@
 from django.db import models
 from django.db.models.functions import Lower
+from django.utils import timezone
 import uuid
 
 class Supplier(models.Model):
@@ -61,6 +62,9 @@ class Customer(models.Model):
     Represents a real-world customer who brings their vehicle in for service.
     A customer can have multiple registered vehicles (CustomerVehicle).
     """
+    # Kept apart from the name so it never lands in the middle of a search for
+    # "silva", and so initials/sorting stay on the real name.
+    name_prefix = models.CharField(max_length=20, blank=True, help_text="Honorific shown before the name, e.g. Mr., Dr., Ven.")
     name = models.CharField(max_length=100)
     phone = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
@@ -68,8 +72,13 @@ class Customer(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def display_name(self):
+        """The name as it should be shown and printed, e.g. "Mr. Jehan Silva"."""
+        return f"{self.name_prefix} {self.name}".strip()
+
     def __str__(self):
-        return self.name
+        return self.display_name
 
 
 class CustomerVehicle(models.Model):
@@ -132,7 +141,12 @@ class Sale(models.Model):
     customer = models.ForeignKey('Customer', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     customer_name = models.CharField(max_length=100)
     vehicle_number = models.CharField(max_length=20, blank=True, null=True, help_text="Optional vehicle reg number")
-    created_at = models.DateTimeField(auto_now_add=True)
+    # Defaults to now, but writable: a job done last week and only billed today
+    # has to be recorded on the day it happened, or the daily report and the
+    # invoice the customer holds disagree. auto_now_add would make the column
+    # unwritable, so the "now" is a default instead. See create_sale/update_sale,
+    # which are the only places allowed to set it, and never to a future date.
+    created_at = models.DateTimeField(default=timezone.now)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='COMPLETED')
     cancel_reason = models.TextField(blank=True, null=True, help_text="Reason why this sale was cancelled")
@@ -257,11 +271,20 @@ class Estimate(models.Model):
     # SET_NULL, like CustomerVehicle.customer: removing a vehicle from the
     # registry must not destroy the estimates quoted against it.
     vehicle = models.ForeignKey(CustomerVehicle, on_delete=models.SET_NULL, null=True, blank=True, related_name='estimates')
-    vehicle_number = models.CharField(max_length=20, help_text="Plate as printed; kept in sync with the linked vehicle")
+    # Everything describing the claim is optional: an estimate is often written
+    # for a walk-in with no insurer involved, or before the plate is known. The
+    # printed document drops whatever is blank rather than leaving empty labels.
+    vehicle_number = models.CharField(max_length=20, blank=True, help_text="Plate as printed; kept in sync with the linked vehicle")
     make_model = models.CharField(max_length=100, blank=True)
-    insurance_company = models.CharField(max_length=150)
-    date = models.DateField()
+    insurance_company = models.CharField(max_length=150, blank=True)
+    date = models.DateField(null=True, blank=True)
     validity_days = models.PositiveIntegerField(default=30)
+    # Whoever owns the vehicle. Copied onto the estimate rather than read
+    # through the vehicle FK, so the document still prints what it was written
+    # with after the registry entry is edited or the vehicle is removed.
+    owner_name = models.CharField(max_length=100, blank=True)
+    owner_phone = models.CharField(max_length=20, blank=True)
+    owner_address = models.TextField(blank=True)
     sections = models.JSONField(default=dict, blank=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)

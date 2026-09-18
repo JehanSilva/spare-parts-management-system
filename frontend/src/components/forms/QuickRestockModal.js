@@ -12,6 +12,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { fetchParts, restockPart, fetchRestockHistory, fetchSuppliers } from "../../services/api";
+import SupplierSelect from "./SupplierSelect";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const formatLKR = (val) =>
@@ -458,16 +459,13 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
                             <label className="block text-xs font-semibold text-gray-600 mb-1">
                               Supplier <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
-                            <select
-                              className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none bg-white text-sm"
+                            <SupplierSelect
+                              suppliers={suppliers}
                               value={entry.supplier_id}
-                              onChange={(e) => updateEntry(entry.id, "supplier_id", e.target.value)}
-                            >
-                              <option value="">— Unknown / No Supplier —</option>
-                              {suppliers.map((s) => (
-                                <option key={s.id} value={s.id}>{s.name}</option>
-                              ))}
-                            </select>
+                              onChange={(id) => updateEntry(entry.id, "supplier_id", id)}
+                              placeholder="— Unknown / No Supplier —"
+                              triggerClassName="w-full p-2 border border-gray-300 rounded-lg bg-white text-sm"
+                            />
                           </div>
 
                           {/* Quantity */}

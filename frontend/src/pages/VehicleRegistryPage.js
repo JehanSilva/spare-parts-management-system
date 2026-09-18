@@ -31,6 +31,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import AlertComponent from "../components/AlertComponent";
+import { customerDisplayName } from "../components/customerName";
 import ConfirmModal from "../components/ConfirmModal";
 import CustomerLinkPicker from "../components/CustomerLinkPicker";
 import AvatarBadge from "../components/AvatarBadge";
@@ -221,7 +222,7 @@ const LinkCustomerModal = ({ vehicle, onClose, onSaved }) => {
           {vehicle.customer_details ? (
             <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-1">
               <p className="text-[10px] font-bold text-green-700 uppercase tracking-wider">Currently Linked</p>
-              <p className="font-bold text-green-900">{vehicle.customer_details.name}</p>
+              <p className="font-bold text-green-900">{customerDisplayName(vehicle.customer_details)}</p>
               {vehicle.customer_details.phone && <p className="text-sm text-green-700">{vehicle.customer_details.phone}</p>}
               {vehicle.customer_details.email && <p className="text-sm text-green-700">{vehicle.customer_details.email}</p>}
               <button
@@ -461,7 +462,7 @@ const VehicleCard = ({ vehicle, onEdit, onDelete, onLink, onHistory }) => (
         {vehicle.customer_details ? (
           <>
             <p className="text-base font-bold text-gray-900 leading-none truncate">
-              {vehicle.customer_details.name}
+              {customerDisplayName(vehicle.customer_details)}
             </p>
             <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5">
               {vehicle.customer_details.phone && (

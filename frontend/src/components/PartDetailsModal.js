@@ -19,7 +19,13 @@ import {
   PackagePlus,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { fetchRestockHistory, returnRestockRecord, editRestockRecord } from "../services/api";
+import {
+  fetchRestockHistory,
+  returnRestockRecord,
+  editRestockRecord,
+  fetchSuppliers,
+} from "../services/api";
+import SupplierSelect from "./forms/SupplierSelect";
 
 const formatLKR = (val) =>
   `LKR ${parseFloat(val || 0).toLocaleString("en-LK", {
@@ -63,6 +69,9 @@ const STATUS = {
 const RestockHistorySection = ({ partId, onRefresh }) => {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  // For the edit panel's supplier dropdown. Loaded once for the whole section
+  // rather than per card — a part can have a long purchase history.
+  const [suppliers, setSuppliers] = useState([]);
 
   // Which record has an open panel: { id, type: 'return' | 'edit' }
   const [activePanel, setActivePanel] = useState(null);
@@ -74,6 +83,7 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
   const [returnError, setReturnError] = useState("");
 
   // Edit form state
+  const [editSupplierId, setEditSupplierId] = useState("");
   const [editQty, setEditQty] = useState("");
   const [editPrice, setEditPrice] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
@@ -90,6 +100,10 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    fetchSuppliers().then(setSuppliers).catch(console.error);
+  }, []);
+
   const openReturn = (record) => {
     const available = record.quantity - record.returned_quantity;
     setActivePanel({ id: record.id, type: "return" });
@@ -100,6 +114,9 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
 
   const openEdit = (record) => {
     setActivePanel({ id: record.id, type: "edit" });
+    // The <select> compares strings; a record with no supplier opens on the
+    // blank "Unknown" option.
+    setEditSupplierId(record.supplier ? String(record.supplier) : "");
     setEditQty(record.quantity);
     setEditPrice(record.buy_price);
     setEditError("");
@@ -127,7 +144,11 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
     setEditSubmitting(true);
     setEditError("");
     try {
-      await editRestockRecord(partId, record.id, { quantity: editQty, buy_price: editPrice });
+      await editRestockRecord(partId, record.id, {
+        supplier_id: editSupplierId === "" ? null : editSupplierId,
+        quantity: editQty,
+        buy_price: editPrice,
+      });
       closePanel();
       load();
       onRefresh?.();
@@ -314,6 +335,21 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
                   <Edit2 size={12} /> Edit Record
                 </p>
                 <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600 block mb-1">
+                      Supplier
+                    </label>
+                    {/* Same picker as the restock form, so a batch recorded
+                        against the wrong supplier can be re-pointed here
+                        instead of being returned and re-entered. */}
+                    <SupplierSelect
+                      suppliers={suppliers}
+                      value={editSupplierId}
+                      onChange={(id) => { setEditSupplierId(id); setEditError(""); }}
+                      placeholder="— Unknown / No Supplier —"
+                      triggerClassName="w-full bg-white border border-blue-300 rounded-lg px-3 py-1.5 text-sm font-bold"
+                    />
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-xs font-semibold text-gray-600 block mb-1">

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Search, UserPlus, UserCheck, Loader2 } from "lucide-react";
 import { fetchCustomers, createCustomer } from "../services/api";
+import NamePrefixSelect from "./forms/NamePrefixSelect";
+import { customerDisplayName } from "./customerName";
 
 // Pure "find-or-create a Customer" picker — has no knowledge of vehicles.
 // The caller decides what to do with the selected/created Customer via
@@ -12,7 +14,7 @@ const CustomerLinkPicker = ({ onSelect, onCancel }) => {
   const [results, setResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [linkingId, setLinkingId] = useState(null);
-  const [newForm, setNewForm] = useState({ name: "", phone: "" });
+  const [newForm, setNewForm] = useState({ namePrefix: "", name: "", phone: "" });
   const [creating, setCreating] = useState(false);
   const searchTimer = useRef(null);
 
@@ -52,7 +54,11 @@ const CustomerLinkPicker = ({ onSelect, onCancel }) => {
     if (!newForm.name.trim()) return;
     setCreating(true);
     try {
-      const newCustomer = await createCustomer({ name: newForm.name.trim(), phone: newForm.phone.trim() });
+      const newCustomer = await createCustomer({
+        name_prefix: newForm.namePrefix.trim(),
+        name: newForm.name.trim(),
+        phone: newForm.phone.trim(),
+      });
       await onSelect(newCustomer);
     } finally {
       setCreating(false);
@@ -65,13 +71,21 @@ const CustomerLinkPicker = ({ onSelect, onCancel }) => {
         <p className="text-[10px] font-bold text-blue-700 uppercase tracking-wider flex items-center gap-1">
           <UserPlus size={11} /> New Customer
         </p>
-        <input
-          type="text"
-          placeholder="Customer Name *"
-          value={newForm.name}
-          onChange={(e) => setNewForm((p) => ({ ...p, name: e.target.value }))}
-          className="w-full px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
-        />
+        <div className="flex gap-2">
+          <NamePrefixSelect
+            value={newForm.namePrefix}
+            onChange={(namePrefix) => setNewForm((p) => ({ ...p, namePrefix }))}
+            className="w-24 shrink-0"
+            selectClassName="border-blue-200"
+          />
+          <input
+            type="text"
+            placeholder="Customer Name *"
+            value={newForm.name}
+            onChange={(e) => setNewForm((p) => ({ ...p, name: e.target.value }))}
+            className="flex-1 min-w-0 px-2.5 py-2 text-sm bg-white border border-blue-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+        </div>
         <input
           type="text"
           placeholder="Phone (optional)"
@@ -148,7 +162,7 @@ const CustomerLinkPicker = ({ onSelect, onCancel }) => {
               className="w-full flex items-center justify-between gap-2 bg-white border border-gray-200 hover:border-blue-300 hover:bg-blue-50/60 rounded-lg px-2.5 py-1.5 transition-colors disabled:opacity-60 text-left"
             >
               <div className="min-w-0">
-                <p className="text-xs font-bold text-gray-800 truncate">{c.name}</p>
+                <p className="text-xs font-bold text-gray-800 truncate">{customerDisplayName(c)}</p>
                 {c.phone && <p className="text-[10px] text-gray-500">{c.phone}</p>}
               </div>
               <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full shrink-0">

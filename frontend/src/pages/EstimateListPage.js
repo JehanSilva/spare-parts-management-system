@@ -15,6 +15,7 @@ import {
   Building2,
   Link2,
   Link2Off,
+  Clock,
 } from "lucide-react";
 
 const formatLKR = (amount) =>
@@ -32,6 +33,17 @@ const formatDate = (value) =>
         day: "numeric",
       })
     : "—";
+
+// A total that stops short of the job: one of the replacing items is still
+// waiting on a supplier quotation, so the figure beside it will grow.
+const PendingQuotationBadge = () => (
+  <span
+    title="A replacing item is still awaiting a supplier quotation — the total covers only the priced work"
+    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wide whitespace-nowrap"
+  >
+    <Clock size={10} /> Quote pending
+  </span>
+);
 
 const EstimateListPage = () => {
   const navigate = useNavigate();
@@ -207,9 +219,16 @@ const EstimateListPage = () => {
                       </h3>
                       <p className="text-xs text-gray-500">{estimate.make_model || "—"}</p>
                     </div>
-                    <span className="text-sm font-bold text-gray-900 shrink-0">
-                      {formatLKR(estimate.total_amount)}
-                    </span>
+                    <div className="shrink-0 text-right">
+                      <span className="text-sm font-bold text-gray-900">
+                        {formatLKR(estimate.total_amount)}
+                      </span>
+                      {estimate.has_pending_quotation && (
+                        <div className="mt-1">
+                          <PendingQuotationBadge />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2 mt-3 text-xs text-gray-600">
@@ -282,6 +301,11 @@ const EstimateListPage = () => {
                       </td>
                       <td className="px-5 py-4 text-right font-bold text-gray-900 whitespace-nowrap">
                         {formatLKR(estimate.total_amount)}
+                        {estimate.has_pending_quotation && (
+                          <div className="mt-1">
+                            <PendingQuotationBadge />
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex items-center justify-end gap-1.5">

@@ -1058,6 +1058,29 @@ class EstimateAPITest(TestCase):
         # 3000 (2 x 1500) + 5000 (flat) + 16000 (2 x 8000)
         self.assertEqual(Estimate.objects.get(pk=response.data['id']).total_amount, 24000)
 
+    def test_pending_quotation_lines_are_left_out_of_the_total(self):
+        """A part the supplier hasn't quoted yet carries no price."""
+        payload = self._payload(sections={
+            "removing": [],
+            "repair": [{"description": "Panel beating", "hours": "", "rate": "5000"}],
+            "paint": [],
+            "replacing": [
+                # Still awaiting a quotation — any stray rate is ignored too.
+                {"description": "Front bonnet", "hours": "1", "rate": "9999",
+                 "quotationPending": True},
+                {"description": "Headlamp", "hours": "2", "rate": "8000"},
+            ],
+        })
+        response = self.client.post(self.create_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # 5000 (flat) + 16000 (2 x 8000); the pending bonnet adds nothing.
+        self.assertEqual(Estimate.objects.get(pk=response.data['id']).total_amount, 21000)
+        self.assertTrue(response.data['has_pending_quotation'])
+
+    def test_estimate_without_pending_lines_is_not_flagged(self):
+        response = self.client.post(self.create_url, self._payload(), format='json')
+        self.assertFalse(response.data['has_pending_quotation'])
+
     def test_existing_plate_is_reused_not_duplicated(self):
         response = self.client.post(
             self.create_url, self._payload(vehicle_number="cab-1122"), format='json'

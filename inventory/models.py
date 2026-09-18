@@ -197,11 +197,34 @@ def normalize_repair_description(text):
 ESTIMATE_SECTION_KEYS = ['removing', 'repair', 'paint', 'replacing']
 
 
+def is_quotation_pending(row):
+    """
+    True for a line whose price isn't known yet — a replacing item the shop is
+    still waiting on a supplier quotation for. Such a line carries no money, so
+    it is left out of every total and printed as "pending" instead.
+    """
+    return bool(row.get('quotationPending') or row.get('quotation_pending'))
+
+
+def estimate_rows(sections):
+    """Every line of an estimate's section dict, skipping malformed entries."""
+    for key in ESTIMATE_SECTION_KEYS:
+        for row in (sections or {}).get(key) or []:
+            if isinstance(row, dict):
+                yield row
+
+
+def has_pending_quotation(sections):
+    """True if any line is still awaiting a supplier quotation."""
+    return any(is_quotation_pending(row) for row in estimate_rows(sections))
+
+
 def estimate_total(sections):
     """
     Grand total of an estimate's section dict. Mirrors rowTotal/estimateTotal in
     EstimateDocument.js: a line's total is its rate multiplied by hours (or
     quantity), and a blank/zero hours figure prices the line as a flat amount.
+    Lines awaiting a quotation are excluded — see is_quotation_pending.
     """
     from decimal import Decimal, InvalidOperation
 
@@ -212,13 +235,12 @@ def estimate_total(sections):
             return Decimal('0')
 
     total = Decimal('0')
-    for key in ESTIMATE_SECTION_KEYS:
-        for row in (sections or {}).get(key) or []:
-            if not isinstance(row, dict):
-                continue
-            rate = to_decimal(row.get('rate'))
-            units = to_decimal(row.get('hours'))
-            total += rate * units if units > 0 else rate
+    for row in estimate_rows(sections):
+        if is_quotation_pending(row):
+            continue
+        rate = to_decimal(row.get('rate'))
+        units = to_decimal(row.get('hours'))
+        total += rate * units if units > 0 else rate
     return total
 
 
@@ -252,6 +274,14 @@ class Estimate(models.Model):
         # Always derived from the lines, never accepted from the client.
         self.total_amount = estimate_total(self.sections)
         super().save(*args, **kwargs)
+
+    @property
+    def has_pending_quotation(self):
+        """
+        True while a line is still awaiting a supplier quotation, which means
+        total_amount covers only the priced work.
+        """
+        return has_pending_quotation(self.sections)
 
     def __str__(self):
         return f"{self.estimate_number or 'Estimate'} - {self.vehicle_number} ({self.insurance_company})"

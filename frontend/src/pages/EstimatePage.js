@@ -5,6 +5,8 @@ import EstimateDocument, {
   rowTotal,
   sectionTotal,
   estimateTotal,
+  isPendingQuotation,
+  hasPendingQuotation,
   toEstimatePayload,
   fromEstimateRecord,
 } from "../components/EstimateDocument";
@@ -23,6 +25,7 @@ import {
   ClipboardList,
   Save,
   Loader2,
+  Clock,
   Link2,
   UserCheck,
   PlusCircle,
@@ -33,7 +36,7 @@ const formatAmount = (amount) =>
     amount || 0
   );
 
-const emptyRow = () => ({ description: "", hours: "", rate: "" });
+const emptyRow = () => ({ description: "", hours: "", rate: "", quotationPending: false });
 
 const blankSections = () =>
   ESTIMATE_SECTIONS.reduce((acc, s) => ({ ...acc, [s.key]: [emptyRow()] }), {});
@@ -46,6 +49,16 @@ const SectionEditor = ({ section, rows, onChange }) => {
   const updateRow = (index, field, value) =>
     onChange(rows.map((r, i) => (i === index ? { ...r, [field]: value } : r)));
 
+  // Marking a line pending drops whatever rate was typed: the line is quoted at
+  // nothing until the supplier comes back, and a stale figure sitting behind a
+  // disabled field would reappear if the flag were cleared again.
+  const togglePending = (index, pending) =>
+    onChange(
+      rows.map((r, i) =>
+        i === index ? { ...r, quotationPending: pending, rate: pending ? "" : r.rate } : r
+      )
+    );
+
   const addRow = () => onChange([...rows, emptyRow()]);
   const removeRow = (index) =>
     onChange(rows.length === 1 ? [emptyRow()] : rows.filter((_, i) => i !== index));
@@ -54,9 +67,16 @@ const SectionEditor = ({ section, rows, onChange }) => {
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-5">
       <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100">
         <h3 className="font-bold text-gray-800 uppercase tracking-wide text-sm">{section.title}</h3>
-        <span className="text-sm font-bold text-gray-700">
-          LKR {formatAmount(sectionTotal(rows))}
-        </span>
+        <div className="flex items-center gap-2">
+          {rows.some(isPendingQuotation) && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wide">
+              <Clock size={10} /> Quotation pending
+            </span>
+          )}
+          <span className="text-sm font-bold text-gray-700">
+            LKR {formatAmount(sectionTotal(rows))}
+          </span>
+        </div>
       </div>
 
       <div className="p-4">
@@ -81,6 +101,25 @@ const SectionEditor = ({ section, rows, onChange }) => {
                 placeholder={isQty ? `Item ${index + 1} description` : `Task ${index + 1} description`}
                 className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
               />
+              {/* Parts often can't be priced until the spare-part seller quotes
+                  them — the line still belongs on the estimate, just without a
+                  figure. */}
+              {section.allowPending && (
+                <label
+                  className={`mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer select-none ${
+                    isPendingQuotation(row) ? "text-amber-600" : "text-gray-400 hover:text-gray-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isPendingQuotation(row)}
+                    onChange={(e) => togglePending(index, e.target.checked)}
+                    className="rounded border-gray-300 text-amber-500 focus:ring-amber-400"
+                  />
+                  <Clock size={12} className="shrink-0" />
+                  Quotation pending — price not known yet
+                </label>
+              )}
             </div>
             {/* Grid while stacked on small screens; from lg it switches to a
                 flex row whose widths match the caption row above it exactly —
@@ -109,11 +148,17 @@ const SectionEditor = ({ section, rows, onChange }) => {
                   Rate
                 </span>
                 <input
-                  value={row.rate}
+                  value={isPendingQuotation(row) ? "" : row.rate}
                   onChange={(e) => updateRow(index, "rate", e.target.value)}
+                  disabled={isPendingQuotation(row)}
                   inputMode="decimal"
-                  placeholder="0.00"
-                  className="w-full p-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                  placeholder={isPendingQuotation(row) ? "Pending" : "0.00"}
+                  title={
+                    isPendingQuotation(row)
+                      ? "Waiting on the supplier's quotation — untick to price this item"
+                      : undefined
+                  }
+                  className="w-full p-2 border border-gray-300 rounded-lg text-sm text-right focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none disabled:bg-amber-50 disabled:border-amber-200 disabled:placeholder-amber-500 disabled:cursor-not-allowed"
                 />
               </div>
               {/* Calculated, never typed into — styled as a read-only value
@@ -123,10 +168,18 @@ const SectionEditor = ({ section, rows, onChange }) => {
                   Total
                 </span>
                 <div
-                  title="Calculated automatically from rate and quantity"
-                  className="w-full p-2 text-sm text-right font-bold text-gray-900 bg-gray-100 rounded-lg border border-dashed border-gray-300 truncate"
+                  title={
+                    isPendingQuotation(row)
+                      ? "Left out of the totals until the supplier quotes this item"
+                      : "Calculated automatically from rate and quantity"
+                  }
+                  className={`w-full p-2 text-sm text-right font-bold rounded-lg border border-dashed truncate ${
+                    isPendingQuotation(row)
+                      ? "text-amber-600 bg-amber-50 border-amber-300"
+                      : "text-gray-900 bg-gray-100 border-gray-300"
+                  }`}
                 >
-                  {formatAmount(rowTotal(row))}
+                  {isPendingQuotation(row) ? "Pending" : formatAmount(rowTotal(row))}
                 </div>
               </div>
               <div className="lg:w-8 flex justify-center pb-1">
@@ -330,13 +383,14 @@ const EstimatePage = () => {
     ...estimate,
     sections: ESTIMATE_SECTIONS.reduce((acc, s) => {
       const rows = (estimate.sections[s.key] || []).filter(
-        (r) => r.description.trim() || parseFloat(r.rate) > 0
+        (r) => r.description.trim() || parseFloat(r.rate) > 0 || isPendingQuotation(r)
       );
       return { ...acc, [s.key]: rows };
     }, {}),
   };
 
   const hasAnyTask = ESTIMATE_SECTIONS.some((s) => printableEstimate.sections[s.key].length > 0);
+  const pendingQuotation = hasPendingQuotation(estimate.sections);
 
   const validate = () => {
     if (!estimate.vehicleNumber.trim()) return "Enter the vehicle number first.";
@@ -571,11 +625,25 @@ const EstimatePage = () => {
           ))}
 
           {/* ── TOTAL ─────────────────────────────────────────────────── */}
-          <div className="bg-gray-900 text-white rounded-2xl px-6 py-5 flex items-center justify-between mb-8">
-            <span className="font-bold uppercase tracking-wide">Estimate Total</span>
-            <span className="text-2xl font-black">
-              LKR {formatAmount(estimateTotal(estimate.sections))}
-            </span>
+          {/* Pending items carry no price, so the figure is only the repairs
+              quoted so far — say so here and on the printed estimate rather
+              than letting it read as the final bill. */}
+          <div className="bg-gray-900 text-white rounded-2xl px-6 py-5 mb-8">
+            <div className="flex items-center justify-between gap-4">
+              <span className="font-bold uppercase tracking-wide">
+                {pendingQuotation ? "Estimate Total (priced work)" : "Estimate Total"}
+              </span>
+              <span className="text-2xl font-black whitespace-nowrap">
+                LKR {formatAmount(estimateTotal(estimate.sections))}
+              </span>
+            </div>
+            {pendingQuotation && (
+              <p className="mt-3 pt-3 border-t border-white/15 text-xs text-amber-300 flex items-start gap-1.5">
+                <Clock size={13} className="shrink-0 mt-0.5" />
+                This is the total of the other repairs — the part quotation is still pending, so the
+                final amount will rise once the supplier quotes it.
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 mb-10">

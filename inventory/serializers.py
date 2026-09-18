@@ -234,12 +234,14 @@ class EstimateSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'estimate_number', 'vehicle', 'vehicle_details', 'vehicle_number',
             'make_model', 'insurance_company', 'date', 'validity_days', 'sections',
-            'total_amount', 'created_at', 'updated_at',
+            'total_amount', 'has_pending_quotation', 'created_at', 'updated_at',
         ]
-        # All three are derived server-side: the reference number is allocated on
-        # create, the vehicle link is resolved from the plate, and the total is
-        # recomputed from the lines in Estimate.save().
-        read_only_fields = ['estimate_number', 'vehicle', 'total_amount']
+        # All derived server-side: the reference number is allocated on create,
+        # the vehicle link is resolved from the plate, and the total (plus the
+        # flag saying it's still partial) comes from the lines in Estimate.save().
+        read_only_fields = [
+            'estimate_number', 'vehicle', 'total_amount', 'has_pending_quotation',
+        ]
 
 
 class RepairServiceSerializer(serializers.ModelSerializer):

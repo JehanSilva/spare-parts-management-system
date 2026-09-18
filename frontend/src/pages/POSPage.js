@@ -1166,6 +1166,11 @@ const POSPage = () => {
   const [linkedVehicle, setLinkedVehicle] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const linkedCustomer = linkedVehicle?.customer_details || selectedCustomer;
+  // A cart can be linked to a customer with no vehicle at all (a walk-in
+  // bringing parts, or a job whose plate isn't known yet). That's a complete
+  // link, so the cart summary has to read as linked rather than as missing
+  // something — the vehicle branches below all key off the plate.
+  const customerOnlyLink = !vehicleNumber.trim() && Boolean(linkedCustomer);
   const [vehicleForm, setVehicleForm] = useState({ make: "", model: "" });
   const [vehicleSaving, setVehicleSaving] = useState(false);
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
@@ -2646,7 +2651,9 @@ const POSPage = () => {
                       ? "bg-red-50 border-red-200 hover:bg-red-100"
                       : vehicleNumber.trim()
                         ? "bg-gray-50 border-gray-200 hover:bg-gray-100"
-                        : "bg-red-50 border-red-200 hover:bg-red-100"
+                        : customerOnlyLink
+                          ? "bg-green-50 border-green-200 hover:bg-green-100"
+                          : "bg-red-50 border-red-200 hover:bg-red-100"
                   }`}
               >
                 <Car
@@ -2658,7 +2665,9 @@ const POSPage = () => {
                         ? "text-red-500 shrink-0"
                         : vehicleNumber.trim()
                           ? "text-gray-400 shrink-0"
-                          : "text-red-500 shrink-0"
+                          : customerOnlyLink
+                            ? "text-green-600 shrink-0"
+                            : "text-red-500 shrink-0"
                   }
                 />
                 <div className="flex-1 min-w-0">
@@ -2685,13 +2694,22 @@ const POSPage = () => {
                         {vehicleLookupStatus === "searching" ? "Searching..." : "No customer linked"}
                       </p>
                     </>
+                  ) : customerOnlyLink ? (
+                    <>
+                      <p className="text-xs font-bold text-green-800 truncate">
+                        {customerDisplayName(linkedCustomer)}
+                      </p>
+                      <p className="text-[10px] text-green-600 truncate">
+                        {[linkedCustomer.phone, "No vehicle — tap to add"].filter(Boolean).join(" · ")}
+                      </p>
+                    </>
                   ) : (
                     <p className="text-xs font-bold text-red-600">
                       + Add Vehicle / Customer <span className="font-normal text-red-400">(Required)</span>
                     </p>
                   )}
                 </div>
-                {vehicleLookupStatus === "found" && linkedCustomer && (
+                {linkedCustomer && (vehicleLookupStatus === "found" || customerOnlyLink) && (
                   <span className="text-[9px] font-bold text-green-600 bg-green-100 px-1.5 py-0.5 rounded-full shrink-0">Linked</span>
                 )}
                 <ChevronUp size={13} className="text-gray-400 -rotate-90 shrink-0" />

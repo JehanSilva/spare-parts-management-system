@@ -1,5 +1,6 @@
 import io
 import pandas as pd
+from django.core.management import call_command
 from django.test import TestCase
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
@@ -1574,6 +1575,94 @@ class CustomerRenameTest(TestCase):
         self.sale.refresh_from_db()
         self.assertEqual(self.customer.name, "Jehan Silva")
         self.assertEqual(self.sale.customer_name, "Jehan Silva")
+
+
+class SaleCustomerNameSnapshotTest(TestCase):
+    """
+    A linked sale prints the customer as they are now. The POS cart keeps its
+    own copy of the name for the repair tabs, and that copy can predate a
+    rename — so the customer record, not the posted text, settles the name of
+    any sale that names an actual customer.
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+
+        self.customer = Customer.objects.create(name_prefix="Mr.", name="Kalpana", phone="0768987543")
+        self.part = Part.objects.create(
+            name="Brake Pad", part_number="BP-200", buy_price=500, sell_price=1000, stock_qty=10,
+        )
+
+    def _payload(self, **overrides):
+        payload = {
+            "customer_name": "Mr. Damsara",  # the stale copy a POS cart would send
+            "vehicle_number": "KS-6360",
+            "items": [
+                {"part_id": str(self.part.id), "quantity": 1, "unit_price": 1000, "discount": 0}
+            ],
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_a_linked_sale_takes_the_customers_current_name(self):
+        response = self.client.post(
+            reverse('create_sale'), self._payload(customer=str(self.customer.pk)), format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertEqual(sale.customer, self.customer)
+        self.assertEqual(sale.customer_name, "Mr. Kalpana")
+        # And the invoice reads it straight off the response it was handed.
+        self.assertEqual(response.data['customer_name'], "Mr. Kalpana")
+
+    def test_an_unlinked_walkin_keeps_the_typed_name(self):
+        response = self.client.post(reverse('create_sale'), self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        sale = Sale.objects.get(pk=response.data['id'])
+        self.assertIsNone(sale.customer)
+        self.assertEqual(sale.customer_name, "Mr. Damsara")
+
+    def test_an_unknown_customer_id_does_not_fail_the_checkout(self):
+        for bad_id in (self.customer.pk + 9999, "not-an-id"):
+            with self.subTest(customer=bad_id):
+                response = self.client.post(
+                    reverse('create_sale'), self._payload(customer=bad_id), format='json'
+                )
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+                sale = Sale.objects.get(pk=response.data['id'])
+                self.assertIsNone(sale.customer)
+                self.assertEqual(sale.customer_name, "Mr. Damsara")
+
+
+class ResyncSaleCustomerNamesCommandTest(TestCase):
+    """The one-off repair for sales saved before this rule existed."""
+    def setUp(self):
+        self.customer = Customer.objects.create(name_prefix="Mr.", name="Kalpana")
+        self.stale = Sale.objects.create(
+            customer=self.customer, customer_name="Mr. Damsara", total_amount=11300,
+        )
+        self.walkin = Sale.objects.create(customer_name="Mr. Damsara", total_amount=5000)
+
+    def test_a_linked_sale_is_restamped(self):
+        call_command('resync_sale_customer_names', stdout=io.StringIO())
+        self.stale.refresh_from_db()
+        self.assertEqual(self.stale.customer_name, "Mr. Kalpana")
+
+    def test_an_unlinked_walkin_is_left_alone(self):
+        call_command('resync_sale_customer_names', stdout=io.StringIO())
+        self.walkin.refresh_from_db()
+        self.assertEqual(self.walkin.customer_name, "Mr. Damsara")
+
+    def test_dry_run_writes_nothing(self):
+        out = io.StringIO()
+        call_command('resync_sale_customer_names', '--dry-run', stdout=out)
+        self.stale.refresh_from_db()
+        self.assertEqual(self.stale.customer_name, "Mr. Damsara")
+        self.assertIn("Mr. Kalpana", out.getvalue())
 
 
 class CustomerNamePrefixTest(TestCase):

@@ -54,6 +54,16 @@ const toCartPayload = (cart) => ({
   notes: cart.notes || "",
 });
 
+// The cart's own copy of the linked customer. The name is denormalized (the
+// repair tabs and the checkout payload both read it without the customer
+// object to hand), so the id rides along with it: it's what lets a later
+// rename find this cart and repair the copy. Written as one unit, always, or
+// the two drift apart.
+const cartCustomerFields = (customer) => ({
+  customerName: customerDisplayName(customer),
+  customerId: customer.id,
+});
+
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
 const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
@@ -1328,7 +1338,9 @@ const POSPage = () => {
     // state below — otherwise a stale name lingers after switching to an
     // unregistered/different plate.
     setCarts((prev) =>
-      prev.map((c) => (c.id === activeCartId ? { ...c, vehicleNumber: upperVeh, customerName: "" } : c))
+      prev.map((c) =>
+        c.id === activeCartId ? { ...c, vehicleNumber: upperVeh, customerName: "", customerId: null } : c
+      )
     );
     // Reset lookup state
     setLinkedVehicle(null);
@@ -1361,7 +1373,7 @@ const POSPage = () => {
               setCarts((prev) =>
                 prev.map((c) =>
                   c.id === activeCartId
-                    ? { ...c, customerName: customerDisplayName(result.vehicle.customer_details) }
+                    ? { ...c, ...cartCustomerFields(result.vehicle.customer_details) }
                     : c
                 )
               );
@@ -1439,9 +1451,7 @@ const POSPage = () => {
       if (linkedVehicle) {
         setLinkedVehicle(await updateCustomerVehicle(linkedVehicle.id, { customer: customer.id }));
         setCarts((prev) =>
-          prev.map((c) =>
-            c.id === activeCartId ? { ...c, customerName: customerDisplayName(customer) } : c
-          )
+          prev.map((c) => (c.id === activeCartId ? { ...c, ...cartCustomerFields(customer) } : c))
         );
       } else if (customer.vehicles?.length) {
         // Known customer, no plate yet — ask which of their vehicles this job
@@ -1457,7 +1467,7 @@ const POSPage = () => {
         setCarts((prev) =>
           prev.map((c) =>
             c.id === activeCartId
-              ? { ...c, customerName: customerDisplayName(customer), customerId: customer.id, customerDetails: customer }
+              ? { ...c, ...cartCustomerFields(customer), customerDetails: customer }
               : c
           )
         );
@@ -1480,7 +1490,7 @@ const POSPage = () => {
     setSelectedCustomer(null);
     setCarts((prev) =>
       prev.map((c) =>
-        c.id === activeCartId ? { ...c, vehicleNumber: plate, customerName: customerDisplayName(customer) } : c
+        c.id === activeCartId ? { ...c, vehicleNumber: plate, ...cartCustomerFields(customer) } : c
       )
     );
     setVehicleChoiceCustomer(null);
@@ -1494,7 +1504,7 @@ const POSPage = () => {
     setCarts((prev) =>
       prev.map((c) =>
         c.id === activeCartId
-          ? { ...c, customerName: customerDisplayName(customer), customerId: customer.id, customerDetails: customer }
+          ? { ...c, ...cartCustomerFields(customer), customerDetails: customer }
           : c
       )
     );
@@ -1508,7 +1518,7 @@ const POSPage = () => {
       if (linkedVehicle) {
         setLinkedVehicle(await updateCustomerVehicle(linkedVehicle.id, { customer: null }));
         setCarts((prev) =>
-          prev.map((c) => (c.id === activeCartId ? { ...c, customerName: "" } : c))
+          prev.map((c) => (c.id === activeCartId ? { ...c, customerName: "", customerId: null } : c))
         );
       } else {
         setSelectedCustomer(null);
@@ -1561,6 +1571,23 @@ const POSPage = () => {
             setLinkedVehicle(result.vehicle);
             cacheVehicleInfo(veh, result.vehicle);
             setVehicleLookupStatus("found");
+            // The lookup is the freshest view of who owns this vehicle, so it
+            // also settles the cart's stored copy — otherwise a customer
+            // renamed while this page was open keeps the old name on the
+            // repair tab, and the debounced sync writes it back over the row
+            // the server already corrected.
+            const owner = result.vehicle.customer_details;
+            if (owner) {
+              const fresh = cartCustomerFields(owner);
+              setCarts((prev) =>
+                prev.map((c) =>
+                  c.id === activeCartId &&
+                  (c.customerName !== fresh.customerName || c.customerId !== fresh.customerId)
+                    ? { ...c, ...fresh }
+                    : c
+                )
+              );
+            }
           } else {
             setVehicleLookupStatus("not_found");
           }
@@ -1932,7 +1959,11 @@ const POSPage = () => {
     const fallbackCustomerName = vehicleLabel || vehicleNumber || "Walk-in Customer";
 
     const salePayload = {
-      customer_name: customerName || fallbackCustomerName,
+      // The cart's copy of the name can predate a rename; the linked customer
+      // record is who they are now, and that's what gets printed.
+      customer_name: linkedCustomer
+        ? customerDisplayName(linkedCustomer)
+        : customerName || fallbackCustomerName,
       vehicle_number: vehicleNumber,
       mileage: mileage ? parseInt(mileage) : null,
       force_mileage_update: forceMileageUpdate,

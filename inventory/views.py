@@ -831,6 +831,23 @@ def create_sale(request):
     customer_name = data.get('customer_name')
     vehicle_number = data.get('vehicle_number', '')
     customer_id = data.get('customer') or None
+
+    # The name is stored on the sale as free text (walk-ins have no customer
+    # record at all), but when the sale IS linked to one, that record is the
+    # authority: a POS cart can be holding a name captured before the customer
+    # was renamed, and the invoice must print who they are now. Same rule the
+    # rename cascade in update_customer applies from the other direction.
+    if customer_id:
+        try:
+            linked_customer = Customer.objects.filter(pk=customer_id).first()
+        except (ValueError, TypeError):
+            linked_customer = None
+        if linked_customer:
+            customer_name = linked_customer.display_name
+        else:
+            # Unknown or malformed id — keep the typed name and drop the
+            # dangling link rather than failing the checkout over it.
+            customer_id = None
     items_data = data.get('items', [])
     mileage = data.get('mileage') or None
     force_mileage_update = bool(data.get('force_mileage_update', False))

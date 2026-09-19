@@ -533,10 +533,14 @@ const EstimatePage = () => {
               </div>
             </div>
 
-            <div className="flex flex-wrap sm:flex-nowrap gap-3 w-full sm:w-auto">
+            {/* Two columns on a phone with the primary action spanning both —
+                three buttons across one narrow row wrapped every long label
+                onto a second line and left the heights uneven. From sm: up it
+                is the plain row it has always been. */}
+            <div className="grid grid-cols-2 gap-2.5 w-full sm:flex sm:w-auto sm:gap-3">
               <button
                 onClick={() => setShowPreview((v) => !v)}
-                className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition flex items-center gap-2"
+                className="sm:flex-none justify-center whitespace-nowrap px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition flex items-center gap-2"
               >
                 {showPreview ? <EyeOff size={16} /> : <Eye size={16} />}
                 <span>{showPreview ? "Hide" : "Show"} preview</span>
@@ -544,7 +548,7 @@ const EstimatePage = () => {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 sm:flex-none justify-center px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition flex items-center gap-2 disabled:opacity-60"
+                className="sm:flex-none justify-center whitespace-nowrap px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition flex items-center gap-2 disabled:opacity-60"
               >
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
                 <span>Save</span>
@@ -552,7 +556,7 @@ const EstimatePage = () => {
               <button
                 onClick={handlePrint}
                 disabled={saving}
-                className="flex-1 sm:flex-none justify-center px-5 py-2.5 bg-red-700 text-white rounded-xl font-bold text-sm hover:bg-red-800 transition shadow-lg shadow-red-200 flex items-center gap-2 disabled:opacity-60"
+                className="col-span-2 sm:col-span-1 sm:flex-none justify-center whitespace-nowrap px-4 sm:px-5 py-2.5 bg-red-700 text-white rounded-xl font-bold text-sm hover:bg-red-800 transition shadow-lg shadow-red-200 flex items-center gap-2 disabled:opacity-60"
               >
                 <Printer size={16} /> <span>Generate Estimate</span>
               </button>

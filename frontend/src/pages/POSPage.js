@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle, fetchRepairSuggestions, createRepairService } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import { useSettings } from "../context/SettingsContext";
@@ -36,8 +37,22 @@ import {
   Pencil,
   MessageCircle,
   CalendarDays,
+  ArrowUpRight,
   X,
 } from "lucide-react";
+
+// The row shape ActiveCart stores. Defined once because every path that
+// persists a cart — the debounced sync, the first-cart bootstrap, and leaving
+// the page — has to send exactly the same fields.
+const toCartPayload = (cart) => ({
+  id: cart.id,
+  customer_name: cart.customerName,
+  vehicle_number: cart.vehicleNumber,
+  customer: cart.customerId || null,
+  items: cart.items,
+  mileage: cart.mileage ? parseInt(cart.mileage) : null,
+  notes: cart.notes || "",
+});
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
 const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => {
@@ -172,6 +187,8 @@ const VehicleCustomerModal = ({
   onCancelVehicleChoice,
   onUnlinkCustomer,
   unlinkingCustomer,
+  onOpenVehiclePage,
+  onOpenCustomerPage,
   vehicleNumberInputRef,
   mileage,
   onMileageChange,
@@ -314,6 +331,16 @@ const VehicleCustomerModal = ({
                     >
                       Change Vehicle
                     </button>
+                    {/* Everything else this vehicle needs — editing its
+                        details, its service history, changing the owner —
+                        lives on the Vehicles page. */}
+                    <button
+                      type="button"
+                      onClick={onOpenVehiclePage}
+                      className="w-full py-1.5 text-[11px] font-bold text-green-700 bg-white border border-green-300 rounded-lg hover:bg-green-100 flex items-center justify-center gap-1"
+                    >
+                      View Vehicle Details <ArrowUpRight size={12} />
+                    </button>
                   </div>
                 )}
               </div>
@@ -351,6 +378,15 @@ const VehicleCustomerModal = ({
                       {unlinkingCustomer ? "..." : "Unlink"}
                     </button>
                   </div>
+                  {/* Their other vehicles, contact details and purchase
+                      history all live on the Customers page. */}
+                  <button
+                    type="button"
+                    onClick={onOpenCustomerPage}
+                    className="w-full mt-2 py-1.5 text-[11px] font-bold text-blue-700 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 flex items-center justify-center gap-1"
+                  >
+                    View Customer Details <ArrowUpRight size={12} />
+                  </button>
                 </div>
               ) : vehicleChoiceCustomer ? (
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 space-y-2">
@@ -944,6 +980,7 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
 };
 
 const POSPage = () => {
+  const navigate = useNavigate();
   // ── Parts cache ──────────────────────────────────────────────────────────
   const { allParts, partsLoading, invalidateParts } = useParts();
   // Billing method (Home → Options): "Receipt" or "Invoice".
@@ -1003,15 +1040,7 @@ const POSPage = () => {
           setActiveCartId(newId);
 
           // Sync this initial cart to the backend immediately
-          await syncActiveCarts(initialCarts.map((c) => ({
-            id: c.id,
-            customer_name: c.customerName,
-            vehicle_number: c.vehicleNumber,
-            customer: c.customerId || null,
-            items: c.items,
-            mileage: c.mileage ? parseInt(c.mileage) : null,
-            notes: c.notes || "",
-          })));
+          await syncActiveCarts(initialCarts.map(toCartPayload));
         }
         // Only mark load as complete on success to prevent sync of empty state on failure
         isInitialLoadCompleted.current = true;
@@ -1037,16 +1066,7 @@ const POSPage = () => {
 
     syncTimer.current = setTimeout(async () => {
       try {
-        const payload = carts.map((c) => ({
-          id: c.id,
-          customer_name: c.customerName,
-          vehicle_number: c.vehicleNumber,
-          customer: c.customerId || null,
-          items: c.items,
-          mileage: c.mileage ? parseInt(c.mileage) : null,
-          notes: c.notes || "",
-        }));
-        await syncActiveCarts(payload);
+        await syncActiveCarts(carts.map(toCartPayload));
       } catch (error) {
         console.error("Failed to sync carts to database", error);
       }
@@ -1096,15 +1116,7 @@ const POSPage = () => {
         ];
         setCarts(initialCarts);
         setActiveCartId(newId);
-        await syncActiveCarts(initialCarts.map((c) => ({
-          id: c.id,
-          customer_name: c.customerName,
-          vehicle_number: c.vehicleNumber,
-          customer: c.customerId || null,
-          items: c.items,
-          mileage: c.mileage ? parseInt(c.mileage) : null,
-          notes: c.notes || "",
-        })));
+        await syncActiveCarts(initialCarts.map(toCartPayload));
       }
       // Only mark load as complete on success to prevent sync of empty state on failure
       isInitialLoadCompleted.current = true;
@@ -1383,6 +1395,40 @@ const POSPage = () => {
     } finally {
       setVehicleSaving(false);
     }
+  };
+
+  // Leave POS for this vehicle's entry in the registry, where it can be
+  // edited, re-linked or its history read. The Vehicles page has no per-vehicle
+  // route — it seeds its search box from router state, the same way
+  // CustomerPage opens one — and a single match renders the full card.
+  const handleOpenVehiclePage = async () => {
+    const plate = (linkedVehicle?.vehicle_number || vehicleNumber).trim();
+    if (!plate) return;
+    setVehicleModalOpen(false);
+    // Cart changes sync on a 500ms debounce whose timer this unmount would
+    // cancel, so a mileage or note typed seconds ago has to be flushed first.
+    try {
+      await syncActiveCarts(carts.map(toCartPayload));
+    } catch (error) {
+      console.error("Failed to sync carts before leaving POS", error);
+    }
+    navigate("/vehicles", { state: { search: plate } });
+  };
+
+  // The customer's own page, for their other vehicles, contact details and
+  // purchase history. Searched by phone where there is one — it identifies a
+  // person far better than a name — and by the bare name otherwise, never the
+  // display name, since the stored name carries no honorific to match against.
+  const handleOpenCustomerPage = async () => {
+    const term = (linkedCustomer?.phone || linkedCustomer?.name || "").trim();
+    if (!term) return;
+    setVehicleModalOpen(false);
+    try {
+      await syncActiveCarts(carts.map(toCartPayload));
+    } catch (error) {
+      console.error("Failed to sync carts before leaving POS", error);
+    }
+    navigate("/customers", { state: { search: term } });
   };
 
   // Link (or, if there's no vehicle yet, simply select) a customer — chosen
@@ -2284,6 +2330,8 @@ const POSPage = () => {
         onCancelVehicleChoice={() => setVehicleChoiceCustomer(null)}
         onUnlinkCustomer={handleUnlinkCustomer}
         unlinkingCustomer={unlinkingCustomer}
+        onOpenVehiclePage={handleOpenVehiclePage}
+        onOpenCustomerPage={handleOpenCustomerPage}
         vehicleNumberInputRef={vehicleNumberInputRef}
         mileage={mileage}
         onMileageChange={handleMileageChange}

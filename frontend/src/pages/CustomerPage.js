@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   fetchCustomers,
   createCustomer,
@@ -562,9 +562,13 @@ const CustomerCard = ({ customer, onEdit, onDelete, onHistory, onRefresh, autoEx
 };
 
 const CustomerPage = () => {
+  // Arriving from elsewhere (the POS "View Customer Details" button) with a
+  // customer to show: the page has no per-customer route, so the search box is
+  // seeded and the list filters down to them — same as VehicleRegistryPage.
+  const location = useLocation();
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(location.state?.search || "");
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const [showAddModal, setShowAddModal] = useState(false);
   const [editCustomer, setEditCustomer] = useState(null);

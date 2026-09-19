@@ -168,6 +168,13 @@ const TaskSection = ({ title, totalLabel, unitLabel = "Hours", rows }) => {
   );
 };
 
+/** One "Label: value" claim detail, as printed under the addressee block. */
+const Fact = ({ label, value }) => (
+  <div>
+    <span className="font-bold">{label}:</span> <span className="text-gray-800">{value}</span>
+  </div>
+);
+
 /**
  * Printable insurance repair estimate on the NSS Auto Engineers letterhead.
  * Rendered from the form on the Estimates page; the proprietor's signature is
@@ -198,16 +205,25 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
 
   // Every claim detail is optional, so the document is built from whichever
   // facts were actually filled in — a blank one prints no label at all rather
-  // than a dangling "Owner: —".
-  const factLines = [
+  // than a dangling "Owner: —". The vehicle and the owner are kept as separate
+  // groups so they can be printed side by side.
+  const filled = (facts) => facts.filter(([, value]) => (value || "").trim());
+
+  const vehicleFacts = filled([
     ["Vehicle Number", vehicleNumber],
     ["Make & Model", makeModel],
+  ]);
+
+  const customerFacts = filled([
     ["Owner", ownerName],
     ["Phone", ownerPhone],
     // A typed address keeps its line breaks; they'd otherwise collapse into one
     // run-on line on the printed page.
     ["Address", (ownerAddress || "").trim().replace(/\s*\n\s*/g, ", ")],
-  ].filter(([, value]) => (value || "").trim());
+  ]);
+
+  // Only one group filled in: it prints as a plain row, not a lone column.
+  const allFacts = [...vehicleFacts, ...customerFacts];
 
   return (
     <div
@@ -264,9 +280,9 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
       <div className="border-b-2 border-black mt-1.5" />
 
       {/* ── ADDRESSEE ───────────────────────────────────────────────────── */}
-      {/* The date rides in the heading's row and the two vehicle fields share
-          one line: both are short, and every line saved here is a line the
-          task tables get to keep on the first sheet. */}
+      {/* The date rides in the heading's row rather than claiming one of its
+          own: every line saved here is a line the task tables get to keep on
+          the first sheet. */}
       <div className="flex items-baseline justify-between mt-4">
         <span className="text-[10.5px] text-gray-800 w-1/4">{dateLabel}</span>
         <h2 className="flex-1 text-center font-bold uppercase tracking-[0.2em] text-[12px] text-gray-700">
@@ -286,15 +302,32 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
         </div>
       )}
 
-      {factLines.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-x-10 gap-y-0.5 text-[10.5px]">
-          {factLines.map(([label, value]) => (
-            <div key={label}>
-              <span className="font-bold">{label}:</span>{" "}
-              <span className="text-gray-800">{value}</span>
-            </div>
-          ))}
+      {/* Vehicle on the left, owner on the right — but only once there is an
+          owner to fill the second column; a lone group reads better as a single
+          row than as a half-empty pair of columns. */}
+      {vehicleFacts.length > 0 && customerFacts.length > 0 ? (
+        <div className="mt-2 flex items-start gap-x-10 text-[10.5px]">
+          {/* flex-1 rather than w-1/2: two halves plus the gap would overrun
+              the sheet. */}
+          <div className="flex-1 min-w-0 space-y-0.5">
+            {vehicleFacts.map(([label, value]) => (
+              <Fact key={label} label={label} value={value} />
+            ))}
+          </div>
+          <div className="flex-1 min-w-0 space-y-0.5">
+            {customerFacts.map(([label, value]) => (
+              <Fact key={label} label={label} value={value} />
+            ))}
+          </div>
         </div>
+      ) : (
+        allFacts.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-x-10 gap-y-0.5 text-[10.5px]">
+            {allFacts.map(([label, value]) => (
+              <Fact key={label} label={label} value={value} />
+            ))}
+          </div>
+        )
       )}
 
       {/* ── TASK SECTIONS ───────────────────────────────────────────────── */}

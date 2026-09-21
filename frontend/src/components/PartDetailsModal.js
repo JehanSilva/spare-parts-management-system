@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronUp,
   PackagePlus,
+  Wallet,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -474,11 +475,27 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
 
   const sellPrice = parseFloat(part.sell_price || 0);
   const buyPrice = parseFloat(part.buy_price || 0);
+
+  // Lifetime money put into this part, from the purchase history at the prices
+  // actually paid (net of returns). The sold/in-stock split underneath it is a
+  // different basis — there's no cost snapshot on a sale, so those two are
+  // priced at the current average buy price and won't add up to the lifetime
+  // figure exactly once the buy price has moved.
+  const totalInvested = parseFloat(part.total_invested || 0);
+  const totalPurchased = part.total_purchased || 0;
+  const stockValue = buyPrice * (part.stock_qty || 0);
   const unitProfit = sellPrice - buyPrice;
   const unitMarkup =
     buyPrice > 0 ? ((unitProfit / buyPrice) * 100).toFixed(1) : "0.0";
   const unitMargin =
     sellPrice > 0 ? ((unitProfit / sellPrice) * 100).toFixed(1) : "0.0";
+
+  // Discount headroom the POS enforces advisorily, from the part's floor price.
+  const hasMinSellPrice =
+    part.min_sell_price !== null && part.min_sell_price !== undefined && part.min_sell_price !== "";
+  const maxUnitDiscount = hasMinSellPrice
+    ? Math.max(0, sellPrice - parseFloat(part.min_sell_price))
+    : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -609,6 +626,18 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
               <p className="text-lg font-bold text-red-700 break-words">{formatLKR(part.sell_price)}</p>
             </div>
 
+            <div className="bg-sky-50 p-3 rounded-xl border border-sky-100">
+              <p className="text-xs text-sky-600 mb-1 font-semibold shrink-0">Min Sell Price</p>
+              <p className="text-lg font-bold text-sky-800 break-words">
+                {hasMinSellPrice ? formatLKR(part.min_sell_price) : "No limit"}
+              </p>
+              {maxUnitDiscount !== null && (
+                <p className="text-[10px] text-sky-600 mt-0.5">
+                  Max discount {formatLKR(maxUnitDiscount)} / unit
+                </p>
+              )}
+            </div>
+
             <div 
               className="bg-gray-50 p-3 rounded-xl border border-gray-100 col-span-2 sm:col-span-1 cursor-pointer select-none active:bg-gray-200 transition-colors"
               onMouseDown={startSupplierPress}
@@ -643,6 +672,40 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
                 <TrendingUp size={11} /> Profit Margin (Sales)
               </p>
               <p className="text-xl font-bold text-green-800 break-words">{profitMargin}%</p>
+            </div>
+
+            <div
+              className="bg-amber-50 p-3 rounded-xl border border-amber-100 flex flex-col"
+              title={`Everything bought of this part across ${totalPurchased} unit(s), at the price paid on each restock and net of returns. The split below is priced at the current average buy price, so it may not add up exactly.`}
+            >
+              <p className="text-xs text-amber-600 mb-1 shrink-0 font-semibold flex items-center gap-1">
+                <Wallet size={11} /> Total Invested
+              </p>
+              <p className="text-xl font-bold text-amber-800 break-words">{formatLKR(totalInvested)}</p>
+              <p className="text-[10px] text-amber-600 mt-0.5 break-words">
+                Sold {formatLKR(totalCost).replace("LKR ", "")} · In stock {formatLKR(stockValue).replace("LKR ", "")}
+              </p>
+            </div>
+
+            <div
+              className={`p-3 rounded-xl border flex flex-col ${totalProfit < 0
+                ? "bg-red-50 border-red-100"
+                : "bg-green-50 border-green-100"
+                }`}
+              title="Revenue from completed sales of this part, less what those units cost at the current average buy price."
+            >
+              <p className={`text-xs mb-1 shrink-0 font-semibold flex items-center gap-1 ${totalProfit < 0 ? "text-red-500" : "text-green-600"
+                }`}>
+                <TrendingUp size={11} /> Total Profit
+              </p>
+              <p className={`text-xl font-bold break-words ${totalProfit < 0 ? "text-red-700" : "text-green-800"
+                }`}>
+                {formatLKR(totalProfit)}
+              </p>
+              <p className={`text-[10px] mt-0.5 break-words ${totalProfit < 0 ? "text-red-500" : "text-green-600"
+                }`}>
+                from {totalSold} unit{totalSold === 1 ? "" : "s"} sold
+              </p>
             </div>
 
             <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100 flex flex-col">

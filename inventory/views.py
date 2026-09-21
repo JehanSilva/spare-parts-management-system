@@ -383,10 +383,35 @@ def get_parts(request):
         ))
     ).values('total')
     
+    # Subquery to calculate total_invested: lifetime purchase spend for this
+    # part, at the price actually paid on each restock. RestockRecord.quantity
+    # is never decremented on a return — the returned units live in
+    # returned_quantity — so the units kept (and therefore paid for) are the
+    # difference. This is the only historical cost data in the system:
+    # SaleItem has no cost snapshot, so every other cost figure here is
+    # re-priced at the part's current weighted-average buy_price.
+    invested_subquery = RestockRecord.objects.filter(
+        part=OuterRef('pk')
+    ).values('part').annotate(
+        total=Sum(ExpressionWrapper(
+            (F('quantity') - F('returned_quantity')) * F('buy_price'),
+            output_field=FloatField()
+        ))
+    ).values('total')
+
+    # Units bought and kept, so the modal can say what the spend bought.
+    purchased_subquery = RestockRecord.objects.filter(
+        part=OuterRef('pk')
+    ).values('part').annotate(
+        total=Sum(F('quantity') - F('returned_quantity'))
+    ).values('total')
+
     parts = Part.objects.all().annotate(
         total_sold=Coalesce(Subquery(sold_subquery), 0),
         total_revenue=Coalesce(Subquery(revenue_subquery, output_field=FloatField()), 0.0),
-        total_cost=Coalesce(Subquery(cost_subquery, output_field=FloatField()), 0.0)
+        total_cost=Coalesce(Subquery(cost_subquery, output_field=FloatField()), 0.0),
+        total_invested=Coalesce(Subquery(invested_subquery, output_field=FloatField()), 0.0),
+        total_purchased=Coalesce(Subquery(purchased_subquery), 0)
     ).order_by('-id')
 
     # 3. Apply Search Filter — split into keywords, ALL must match (AND logic)
@@ -474,6 +499,12 @@ def add_part(request):
             buy_price_for_record = Decimal(str(data['buy_price']))
         if 'sell_price' in data:
             existing_part.sell_price = data['sell_price']
+        if 'min_sell_price' in data:
+            # Blank input clears the discount limit rather than erroring.
+            raw_min = data['min_sell_price']
+            existing_part.min_sell_price = (
+                Decimal(str(raw_min)) if raw_min not in (None, '') else None
+            )
 
         existing_part.save()
 
@@ -2214,6 +2245,7 @@ def sync_active_carts(request):
                 'items': cart.get('items', []),
                 'mileage': cart.get('mileage'),
                 'notes': cart.get('notes', ''),
+                'sale_date': cart.get('sale_date') or None,
             }
         )
 

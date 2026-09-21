@@ -58,6 +58,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
     supplier: "",
     buy_price: "",
     sell_price: "",
+    min_sell_price: "",
     stock_qty: "",
     min_stock_level: 5,
     rack_location: "",
@@ -94,6 +95,8 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
       setFormData({
         ...editingPart,
         supplier: editingPart.supplier || "",
+        // Null (no limit) would make the number input uncontrolled.
+        min_sell_price: editingPart.min_sell_price ?? "",
         compatible_vehicles: editingPart.compatible_vehicles
           ? editingPart.compatible_vehicles.map((v) =>
               typeof v === "object" ? v.id : v
@@ -208,6 +211,12 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
         value = 0;
       }
 
+      // min_sell_price is optional — an empty value is sent as "" so the
+      // serializer clears any existing limit (see BlankableDecimalField).
+      if (key === "min_sell_price" && (value === null || value === undefined)) {
+        value = "";
+      }
+
       if (key === "compatible_vehicles") {
         formData[key].forEach((id) =>
           dataToSend.append("compatible_vehicles", id)
@@ -230,6 +239,18 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
       setIsSubmitting(false);
     }
   };
+
+  // Discount-limit preview: min_sell_price is the floor the POS uses to work
+  // out how much a cashier may knock off this part.
+  const sellPriceNum = parseFloat(formData.sell_price);
+  const minPriceNum = parseFloat(formData.min_sell_price);
+  const hasMinPrice = formData.min_sell_price !== "" && !isNaN(minPriceNum);
+  const minPriceInvalid =
+    hasMinPrice && !isNaN(sellPriceNum) && minPriceNum > sellPriceNum;
+  const maxDiscountHint =
+    hasMinPrice && !isNaN(sellPriceNum) && !minPriceInvalid
+      ? `Cashiers can discount up to LKR ${(sellPriceNum - minPriceNum).toLocaleString()} per unit.`
+      : "The lowest price a cashier may sell this at. Blank means no discount limit.";
 
   const inputClass =
     "w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors";
@@ -398,6 +419,29 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                     onChange={handleChange}
                     className="w-full p-2.5 bg-white border border-gray-200 rounded-xl text-sm font-mono font-bold text-gray-900 focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                   />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-semibold text-gray-500 mb-1">
+                    Minimum selling price (LKR){" "}
+                    <span className="font-normal text-gray-400">— optional</span>
+                  </label>
+                  <input
+                    type="number"
+                    name="min_sell_price"
+                    value={formData.min_sell_price}
+                    onChange={handleChange}
+                    placeholder="Leave blank for no discount limit"
+                    className={`w-full p-2.5 bg-white border rounded-xl text-sm font-mono focus:ring-0 focus:outline-none transition-colors ${
+                      minPriceInvalid
+                        ? "border-red-300 text-red-700 focus:border-red-500"
+                        : "border-gray-200 focus:border-gray-900"
+                    }`}
+                  />
+                  <p className={`text-[10px] mt-1 ${minPriceInvalid ? "text-red-500" : "text-gray-400"}`}>
+                    {minPriceInvalid
+                      ? "Minimum selling price can't be above the selling price."
+                      : maxDiscountHint}
+                  </p>
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-gray-500 mb-1">Current stock</label>

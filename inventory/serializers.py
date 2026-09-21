@@ -50,12 +50,33 @@ class CustomerSerializer(serializers.ModelSerializer):
         return obj.sales.filter(status='COMPLETED').count()
 
 # --- 3. PART ---
+class BlankableDecimalField(serializers.DecimalField):
+    """
+    DecimalField that treats an empty string as NULL.
+
+    The add/edit part form posts multipart FormData, where an empty number
+    input arrives as "" rather than being omitted — plain DecimalField would
+    reject that with "A valid number is required."
+    """
+    def to_internal_value(self, data):
+        if data in ("", None):
+            return None
+        return super().to_internal_value(data)
+
+
 class PartSerializer(serializers.ModelSerializer):
     # Read-only nested supplier details for display
     supplier_details = SupplierSerializer(source='supplier', read_only=True)
+    # Declared explicitly (rather than relying on '__all__') so a cleared input
+    # posted as "" clears the limit instead of erroring.
+    min_sell_price = BlankableDecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
     total_sold = serializers.IntegerField(read_only=True)
     total_revenue = serializers.FloatField(read_only=True)
     total_cost = serializers.FloatField(read_only=True)
+    total_invested = serializers.FloatField(read_only=True)
+    total_purchased = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Part
@@ -76,7 +97,7 @@ class PartMinimalSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Part
-        fields = ['id', 'part_number', 'image', 'compatible_vehicles', 'name', 'stock_qty']
+        fields = ['id', 'part_number', 'image', 'compatible_vehicles', 'name', 'stock_qty', 'sell_price', 'min_sell_price']
 
     def to_representation(self, instance):
         """

@@ -47,6 +47,13 @@ class Part(models.Model):
     description = models.TextField(blank=True)
     buy_price = models.DecimalField(max_digits=10, decimal_places=2)
     sell_price = models.DecimalField(max_digits=10, decimal_places=2)
+    # Lowest price this part may be sold at. The POS turns it into a per-unit
+    # discount cap (sell_price - min_sell_price) so the cashier doesn't have to
+    # remember how far they can go on each part. Blank = no limit.
+    min_sell_price = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Lowest price this part may be sold at. Leave blank for no discount limit."
+    )
     stock_qty = models.PositiveIntegerField(default=0)
     min_stock_level = models.PositiveIntegerField(default=5)
     rack_location = models.CharField(max_length=50, blank=True)
@@ -346,6 +353,10 @@ class ActiveCart(models.Model):
     items = models.JSONField(default=list, blank=True)
     mileage = models.PositiveIntegerField(null=True, blank=True)
     notes = models.TextField(blank=True, default='')
+    # A backdate picked in the Payment modal. Held per cart (not per POS
+    # session) so it survives navigating away and switching repair tabs —
+    # each job card bills on its own date. NULL = record the sale today.
+    sale_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -41,6 +41,28 @@ import {
   X,
 } from "lucide-react";
 
+// How much a cashier may knock off one unit of this part, from the part's
+// min_sell_price floor (set on the part form). Returns null when there's no
+// limit to show — labor lines, or a part with the floor left blank.
+const maxUnitDiscount = (item, livePart) => {
+  if (!item || item.item_type === "LABOR") return null;
+  // Cart lines are JSON snapshots persisted in ActiveCart, so they can predate
+  // the part's current floor (or predate this feature entirely). When the live
+  // catalogue row is to hand it wins outright — including when the floor has
+  // since been cleared back to "no limit".
+  const raw = livePart ? livePart.min_sell_price : item.min_sell_price;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const floor = parseFloat(raw);
+  if (isNaN(floor)) return null;
+  const sell = parseFloat(item.sell_price) || 0;
+  return Math.max(0, sell - floor);
+};
+
+// A discount is "over the limit" only past a cent, so 200 vs 199.999999 from
+// the percent input doesn't light up as a violation.
+const isOverDiscountLimit = (discount, limit) =>
+  limit !== null && discount > limit + 0.01;
+
 // The row shape ActiveCart stores. Defined once because every path that
 // persists a cart — the debounced sync, the first-cart bootstrap, and leaving
 // the page — has to send exactly the same fields.
@@ -52,6 +74,7 @@ const toCartPayload = (cart) => ({
   items: cart.items,
   mileage: cart.mileage ? parseInt(cart.mileage) : null,
   notes: cart.notes || "",
+  sale_date: cart.saleDate || null,
 });
 
 // The cart's own copy of the linked customer. The name is denormalized (the
@@ -91,6 +114,8 @@ const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => 
     }
     onAddToCart(part);
   };
+
+  const tileMaxDiscount = maxUnitDiscount(part);
 
   return (
     <div
@@ -169,6 +194,19 @@ const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => 
             {parseFloat(part.sell_price).toLocaleString()}
           </p>
         </div>
+        {/* Discount headroom, so the cashier knows before adding the line. */}
+        {tileMaxDiscount !== null && (
+          <p
+            title={`Lowest allowed price: LKR ${parseFloat(part.min_sell_price).toLocaleString()}`}
+            className={`text-[9px] font-semibold mt-0.5 flex items-center gap-0.5 ${tileMaxDiscount > 0 ? "text-amber-600" : "text-gray-400"
+              }`}
+          >
+            <Tag size={9} className="shrink-0" />
+            {tileMaxDiscount > 0
+              ? `Max −${tileMaxDiscount.toLocaleString()}`
+              : "No discount"}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1019,6 +1057,7 @@ const POSPage = () => {
           items: c.items,
           mileage: c.mileage != null ? String(c.mileage) : "",
           notes: c.notes || "",
+          saleDate: c.sale_date || "",
         }));
 
         if (mapped.length > 0) {
@@ -1044,6 +1083,7 @@ const POSPage = () => {
               items: [],
               mileage: "",
               notes: "",
+              saleDate: "",
             },
           ];
           setCarts(initialCarts);
@@ -1103,6 +1143,7 @@ const POSPage = () => {
         items: c.items,
         mileage: c.mileage != null ? String(c.mileage) : "",
         notes: c.notes || "",
+        saleDate: c.sale_date || "",
       }));
       if (mapped.length > 0) {
         setCarts(mapped);
@@ -1122,6 +1163,7 @@ const POSPage = () => {
             items: [],
             mileage: "",
             notes: "",
+            saleDate: "",
           },
         ];
         setCarts(initialCarts);
@@ -1154,7 +1196,7 @@ const POSPage = () => {
   const activeCart = useMemo(() => {
     return (
       carts.find((c) => c.id === activeCartId) ||
-      carts[0] || { id: "default", customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }
+      carts[0] || { id: "default", customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "", saleDate: "" }
     );
   }, [carts, activeCartId]);
 
@@ -1163,6 +1205,10 @@ const POSPage = () => {
   const vehicleNumber = activeCart.vehicleNumber;
   const mileage = activeCart.mileage || "";
   const notes = activeCart.notes || "";
+  // Blank = record the sale now; a YYYY-MM-DD backdates the whole sale. Like
+  // mileage and notes it belongs to the job card, so it survives leaving the
+  // page and switching repair tabs instead of resetting to today.
+  const saleDate = activeCart.saleDate || "";
 
   // Persist active cart selection locally
   useEffect(() => {
@@ -1225,8 +1271,6 @@ const POSPage = () => {
   // --- Payment Mode State: PAID (full) | PARTIAL (part now, part on credit) | CREDIT (pay later) ---
   const [paymentMode, setPaymentMode] = useState("PAID");
   const [creditNote, setCreditNote] = useState("");
-  // Blank = record the sale now; a YYYY-MM-DD backdates the whole sale.
-  const [saleDate, setSaleDate] = useState("");
   const [partialAmountPaid, setPartialAmountPaid] = useState("");
   const isCredit = paymentMode !== "PAID";
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
@@ -1284,6 +1328,7 @@ const POSPage = () => {
       items: [],
       mileage: "",
       notes: "",
+      saleDate: "",
     };
     // Newest first, right beside the + button — the tab strip scrolls, and the
     // repair you just opened is the one you're about to work in.
@@ -1310,7 +1355,7 @@ const POSPage = () => {
       if (remaining.length === 0) {
         const newId = "cart_" + Date.now();
         setActiveCartId(newId);
-        return [{ id: newId, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }];
+        return [{ id: newId, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "", saleDate: "" }];
       }
       if (activeCartId === cartId) {
         setActiveCartId(remaining[0].id);
@@ -1329,6 +1374,9 @@ const POSPage = () => {
   };
   const handleNotesChange = (value) => {
     setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, notes: value } : c)));
+  };
+  const setSaleDate = (value) => {
+    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, saleDate: value || "" } : c)));
   };
 
   const handleVehicleNumberChange = (veh) => {
@@ -1546,7 +1594,8 @@ const POSPage = () => {
     setPaymentMode("PAID");
     setCreditNote("");
     setPartialAmountPaid("");
-    setSaleDate("");
+    // No setSaleDate("") here — the date is the cart's own, and switching to a
+    // tab must show that tab's date rather than clearing it.
     setPaymentModalOpen(false);
 
     setLinkedVehicle(null);
@@ -1856,7 +1905,7 @@ const POSPage = () => {
     setCarts((prev) =>
       prev.map((c) =>
         c.id === activeCartId
-          ? { ...c, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "" }
+          ? { ...c, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "", saleDate: "" }
           : c
       )
     );
@@ -1887,6 +1936,31 @@ const POSPage = () => {
   const totalItems = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.quantity, 0);
   }, [cart]);
+
+  // Live catalogue rows keyed by part id, so a cart line's discount allowance
+  // reflects the part's current minimum selling price rather than whatever was
+  // snapshotted into the cart.
+  const partsById = useMemo(() => {
+    const map = {};
+    allParts.forEach((p) => { map[p.id] = p; });
+    return map;
+  }, [allParts]);
+
+  const cartLineMaxDiscount = useCallback(
+    (item) => maxUnitDiscount(item, partsById[item.id]),
+    [partsById]
+  );
+
+  // Lines discounted past the part's minimum selling price. Surfaced above the
+  // checkout button as a warning — the sale still goes through, so a manager
+  // can approve a deeper cut without anything being unblocked first.
+  const overLimitLines = useMemo(
+    () =>
+      cart.filter((item) =>
+        isOverDiscountLimit(parseFloat(item.discountAmount) || 0, cartLineMaxDiscount(item))
+      ),
+    [cart, cartLineMaxDiscount]
+  );
 
   const vehicleLabel = useMemo(
     () => [linkedVehicle?.make, linkedVehicle?.model].filter(Boolean).join(" "),
@@ -2025,7 +2099,7 @@ const POSPage = () => {
         if (remaining.length === 0) {
           const newId = "cart_" + Date.now();
           setActiveCartId(newId);
-          return [{ id: newId, customerName: "", vehicleNumber: "", customerId: null, customerDetails: null, items: [], mileage: "", notes: "" }];
+          return [{ id: newId, customerName: "", vehicleNumber: "", customerId: null, customerDetails: null, items: [], mileage: "", notes: "", saleDate: "" }];
         } else {
           setActiveCartId(remaining[0].id);
           return remaining;
@@ -2569,6 +2643,22 @@ const POSPage = () => {
                   ? item.discountPercentInput
                   : (item.discountAmount ? parseFloat(((item.discountAmount / original) * 100).toFixed(2)).toString() : '');
 
+                // Discount allowance from the part's minimum selling price.
+                // Advisory only — an over-limit line is flagged, never blocked.
+                const maxDiscount = cartLineMaxDiscount(item);
+                const overLimit = isOverDiscountLimit(discountVal, maxDiscount);
+                const floorPrice = partsById[item.id]?.min_sell_price ?? item.min_sell_price;
+                const discountBoxClass = overLimit
+                  ? 'border-red-400 bg-red-50'
+                  : item.discountAmount > 0
+                    ? 'border-amber-400 bg-amber-50'
+                    : 'border-gray-200 bg-white';
+                const discountLabelClass = overLimit
+                  ? 'text-red-500'
+                  : item.discountAmount > 0
+                    ? 'text-amber-500'
+                    : 'text-gray-400';
+
                 return (
                   <div
                     key={item.id}
@@ -2653,8 +2743,8 @@ const POSPage = () => {
                       <Tag size={11} className="text-gray-400 shrink-0" />
 
                       {/* Discount — rupee */}
-                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-1 shrink-0 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-                        <span className={`text-[9px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>LKR</span>
+                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-1 shrink-0 transition-all ${discountBoxClass}`}>
+                        <span className={`text-[9px] font-bold ${discountLabelClass}`}>LKR</span>
                         <input
                           type="number"
                           min="0"
@@ -2667,7 +2757,7 @@ const POSPage = () => {
                       </div>
 
                       {/* Discount — percent */}
-                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-0.5 shrink-0 transition-all ${item.discountAmount > 0 ? 'border-amber-400 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+                      <div className={`flex items-center border rounded-lg h-7 px-1.5 gap-0.5 shrink-0 transition-all ${discountBoxClass}`}>
                         <input
                           type="number"
                           min="0"
@@ -2678,8 +2768,28 @@ const POSPage = () => {
                           onChange={(e) => updateDiscountPercent(item.id, e.target.value)}
                           className="w-8 text-center bg-transparent outline-none text-[11px] font-semibold text-gray-700 placeholder-gray-300"
                         />
-                        <span className={`text-[9px] font-bold ${item.discountAmount > 0 ? 'text-amber-500' : 'text-gray-400'}`}>%</span>
+                        <span className={`text-[9px] font-bold ${discountLabelClass}`}>%</span>
                       </div>
+
+                      {/* Discount allowance — the figure the cashier would
+                          otherwise have to remember per part. */}
+                      {maxDiscount !== null && (
+                        <span
+                          title={
+                            overLimit
+                              ? `Over the allowed discount by LKR ${(discountVal - maxDiscount).toLocaleString()} per unit. Lowest allowed price is LKR ${parseFloat(floorPrice).toLocaleString()}.`
+                              : `Lowest allowed price is LKR ${parseFloat(floorPrice).toLocaleString()} — up to LKR ${maxDiscount.toLocaleString()} off per unit.`
+                          }
+                          className={`px-1.5 py-0.5 rounded font-bold text-[9px] border tracking-tight whitespace-nowrap shrink-0 ${overLimit
+                            ? 'bg-red-50 text-red-700 border-red-200 animate-pulse'
+                            : 'bg-sky-50 text-sky-700 border-sky-100'
+                            }`}
+                        >
+                          {overLimit
+                            ? `Over by ${(discountVal - maxDiscount).toLocaleString()}`
+                            : `Max −${maxDiscount.toLocaleString()}`}
+                        </span>
+                      )}
 
                       {/* Profitability — not meaningful for labor (no buy_price/cost) */}
                       {item.item_type !== "LABOR" && (
@@ -2851,6 +2961,19 @@ const POSPage = () => {
                   </span>
                 </div>
               </div>
+
+              {overLimitLines.length > 0 && (
+                <div className="mb-2.5 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+                  <AlertTriangle size={14} className="text-red-500 shrink-0 mt-0.5" />
+                  <p className="text-[11px] leading-snug text-red-700">
+                    <span className="font-bold">
+                      {overLimitLines.length} {overLimitLines.length === 1 ? "item is" : "items are"} discounted below the minimum price
+                    </span>
+                    {" — "}
+                    {overLimitLines.map((i) => i.name).join(", ")}. You can still complete the sale.
+                  </p>
+                </div>
+              )}
 
               <button
                 onClick={handleCheckout}

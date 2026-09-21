@@ -2089,3 +2089,229 @@ class BulkAddRepairServicesTest(TestCase):
         self.assertEqual(len(response.data), 1)
         self.assertTrue(response.data[0]['is_catalog'])
         self.assertEqual(float(response.data[0]['catalog_price']), 400)
+
+
+class MinSellPriceTest(TestCase):
+    """
+    The per-part discount floor: cashiers shouldn't have to remember how far
+    they may go on each part, so the part carries its own minimum selling price
+    and the POS derives the allowance from it.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="minprice", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.part = Part.objects.create(
+            name="Brake Pad", part_number="BP-900",
+            buy_price=500, sell_price=1000, stock_qty=10,
+        )
+
+    def test_min_sell_price_defaults_to_no_limit(self):
+        self.assertIsNone(self.part.min_sell_price)
+
+    def test_min_sell_price_is_set_on_creation_and_returned_by_the_api(self):
+        response = self.client.post(reverse('add_part'), {
+            'name': 'Oil Filter',
+            'part_number': 'OF-900',
+            'buy_price': 600,
+            'sell_price': 1200,
+            'min_sell_price': 1050,
+            'stock_qty': 3,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(float(response.data['min_sell_price']), 1050.00)
+
+        part = Part.objects.get(part_number='OF-900')
+        self.assertEqual(float(part.min_sell_price), 1050.00)
+
+        listed = self.client.get(reverse('get_parts')).data
+        row = next(p for p in listed if p['part_number'] == 'OF-900')
+        self.assertEqual(float(row['min_sell_price']), 1050.00)
+
+    def test_blank_min_sell_price_is_stored_as_no_limit(self):
+        # The add/edit form posts multipart FormData, so an empty number input
+        # arrives as "" rather than being omitted.
+        response = self.client.post(reverse('add_part'), {
+            'name': 'Air Filter',
+            'part_number': 'AF-900',
+            'buy_price': 300,
+            'sell_price': 500,
+            'min_sell_price': '',
+            'stock_qty': 1,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(Part.objects.get(part_number='AF-900').min_sell_price)
+
+    def test_update_part_can_set_and_then_clear_the_limit(self):
+        url = reverse('update_part', args=[self.part.id])
+        payload = {
+            'name': 'Brake Pad', 'part_number': 'BP-900',
+            'buy_price': 500, 'sell_price': 1000, 'stock_qty': 10,
+        }
+
+        response = self.client.put(url, {**payload, 'min_sell_price': 850}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.part.refresh_from_db()
+        self.assertEqual(float(self.part.min_sell_price), 850.00)
+
+        response = self.client.put(url, {**payload, 'min_sell_price': ''}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.part.refresh_from_db()
+        self.assertIsNone(self.part.min_sell_price)
+
+    def test_add_part_with_duplicate_part_number_updates_the_limit(self):
+        # Re-submitting an existing part number takes the "smart update" branch,
+        # which names each price field explicitly.
+        response = self.client.post(reverse('add_part'), {
+            'part_number': 'BP-900',
+            'stock_qty': 5,
+            'min_sell_price': 900,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.part.refresh_from_db()
+        self.assertEqual(float(self.part.min_sell_price), 900.00)
+        self.assertEqual(self.part.stock_qty, 15)
+
+    def test_minimal_parts_endpoint_carries_the_pricing_the_pos_needs(self):
+        self.part.min_sell_price = 800
+        self.part.save()
+        row = self.client.get(reverse('get_parts_minimal')).data[0]
+        self.assertEqual(float(row['sell_price']), 1000.00)
+        self.assertEqual(float(row['min_sell_price']), 800.00)
+
+
+class PartInvestmentAndProfitTest(TestCase):
+    """
+    Per-part lifetime money figures shown in the Part Details modal:
+    `total_invested` (what was actually paid for this part, from purchase
+    history, net of returns) and the profit the sold units produced.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="investuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.supplier = Supplier.objects.create(name="SSA Parts")
+        self.part = Part.objects.create(
+            name="Radiator Cap", part_number="DN-RC004",
+            buy_price=800, sell_price=1200, stock_qty=0,
+        )
+
+    def _row(self):
+        response = self.client.get(reverse('get_parts'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return next(p for p in response.data if p['part_number'] == 'DN-RC004')
+
+    def test_a_part_never_restocked_reports_zero_invested(self):
+        row = self._row()
+        self.assertEqual(float(row['total_invested']), 0.0)
+        self.assertEqual(row['total_purchased'], 0)
+
+    def test_invested_sums_each_restock_at_the_price_paid_at_the_time(self):
+        RestockRecord.objects.create(part=self.part, supplier=self.supplier, quantity=10, buy_price=700)
+        RestockRecord.objects.create(part=self.part, supplier=self.supplier, quantity=5, buy_price=900)
+
+        row = self._row()
+        # 10 * 700 + 5 * 900 — not 15 * the current average buy price.
+        self.assertEqual(float(row['total_invested']), 11500.0)
+        self.assertEqual(row['total_purchased'], 15)
+
+    def test_returned_units_are_not_counted_as_invested(self):
+        RestockRecord.objects.create(
+            part=self.part, supplier=self.supplier, quantity=10, buy_price=700,
+            returned_quantity=4, status=RestockRecord.STATUS_PARTIALLY_RETURNED,
+        )
+        RestockRecord.objects.create(
+            part=self.part, supplier=self.supplier, quantity=5, buy_price=900,
+            returned_quantity=5, status=RestockRecord.STATUS_FULLY_RETURNED,
+        )
+
+        row = self._row()
+        # Only the 6 units kept from the first batch were really paid for.
+        self.assertEqual(float(row['total_invested']), 4200.0)
+        self.assertEqual(row['total_purchased'], 6)
+
+    def test_profit_counts_completed_sales_and_ignores_cancelled_ones(self):
+        RestockRecord.objects.create(part=self.part, supplier=self.supplier, quantity=20, buy_price=800)
+
+        completed = Sale.objects.create(total_amount=0)
+        SaleItem.objects.create(sale=completed, part=self.part, quantity=3, unit_price=1200, discount=100)
+
+        cancelled = Sale.objects.create(total_amount=0, status='CANCELLED')
+        SaleItem.objects.create(sale=cancelled, part=self.part, quantity=7, unit_price=1200, discount=0)
+
+        row = self._row()
+        self.assertEqual(row['total_sold'], 3)
+        # (1200 - 100) * 3 revenue, against 800 * 3 cost -> 900 profit.
+        self.assertEqual(float(row['total_revenue']), 3300.0)
+        self.assertEqual(float(row['total_cost']), 2400.0)
+        self.assertEqual(float(row['total_revenue']) - float(row['total_cost']), 900.0)
+        # The cancelled sale's 7 units touch none of it.
+        self.assertEqual(float(row['total_invested']), 16000.0)
+
+    def test_restocking_through_the_api_builds_up_the_invested_total(self):
+        url = reverse('restock_part', args=[self.part.id])
+        response = self.client.post(url, {
+            'entries': [{'supplier_id': self.supplier.id, 'quantity': 6, 'buy_price': 750}],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        row = self._row()
+        self.assertEqual(float(row['total_invested']), 4500.0)
+        self.assertEqual(row['total_purchased'], 6)
+
+
+class ActiveCartSaleDateTest(TestCase):
+    """
+    A backdate picked in the POS Payment modal belongs to the job card, so it
+    has to survive leaving the page, a reload, and switching repair tabs.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="cartdate", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.sync_url = reverse('sync_active_carts')
+        self.list_url = reverse('get_active_carts')
+
+    def _sync(self, carts):
+        response = self.client.post(self.sync_url, carts, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_a_backdate_survives_a_round_trip(self):
+        self._sync([{
+            "id": "cart_a", "customer_name": "Nimal", "vehicle_number": "WP-1234",
+            "items": [], "mileage": None, "notes": "", "sale_date": "2026-09-09",
+        }])
+
+        cart = ActiveCart.objects.get(id="cart_a")
+        self.assertEqual(str(cart.sale_date), "2026-09-09")
+
+        # What the POS reads back when the page is revisited.
+        listed = self.client.get(self.list_url).data
+        self.assertEqual(listed[0]['sale_date'], "2026-09-09")
+
+    def test_each_repair_tab_keeps_its_own_date(self):
+        self._sync([
+            {"id": "cart_a", "items": [], "sale_date": "2026-09-09"},
+            {"id": "cart_b", "items": [], "sale_date": "2026-08-01"},
+            {"id": "cart_c", "items": [], "sale_date": None},
+        ])
+
+        by_id = {c['id']: c['sale_date'] for c in self.client.get(self.list_url).data}
+        self.assertEqual(by_id["cart_a"], "2026-09-09")
+        self.assertEqual(by_id["cart_b"], "2026-08-01")
+        self.assertIsNone(by_id["cart_c"])
+
+    def test_no_date_and_a_cleared_date_both_mean_today(self):
+        # Omitted entirely by an older client...
+        self._sync([{"id": "cart_a", "items": []}])
+        self.assertIsNone(ActiveCart.objects.get(id="cart_a").sale_date)
+
+        # ...and the "Today" button sends "" rather than dropping the key.
+        self._sync([{"id": "cart_a", "items": [], "sale_date": "2026-09-09"}])
+        self.assertIsNotNone(ActiveCart.objects.get(id="cart_a").sale_date)
+        self._sync([{"id": "cart_a", "items": [], "sale_date": ""}])
+        self.assertIsNone(ActiveCart.objects.get(id="cart_a").sale_date)

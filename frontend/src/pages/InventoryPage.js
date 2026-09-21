@@ -22,6 +22,7 @@ import {
 } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import AddPartForm from "../components/forms/AddPartForm";
+import { apiErrorMessage } from "../components/apiErrorMessage";
 import QuickRestockModal from "../components/forms/QuickRestockModal";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
@@ -938,13 +939,7 @@ const InventoryPage = () => {
       handleFormClose();
     } catch (error) {
       console.error("Save Error:", error);
-      if (error.response && error.response.data) {
-        const errorData = error.response.data;
-        const errorMessages = Object.values(errorData).flat().join("\n");
-        setAlertInfo({ type: "error", message: `Failed to save:\n${errorMessages}` });
-      } else {
-        setAlertInfo({ type: "error", message: "Network error. Please check connection." });
-      }
+      setAlertInfo({ type: "error", message: `Failed to save:\n${apiErrorMessage(error)}` });
     }
   };
 

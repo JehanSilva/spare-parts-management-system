@@ -165,6 +165,72 @@
     page-break-inside: avoid !important;
   }
 
+  /* Vehicle inspection report. This one runs to several sheets, and the
+     temptation is to decide where each ends — but a forced break wastes
+     whatever room was left on the sheet before it, and the waste compounds
+     over a long document. So nothing here forces a break. The blocks below
+     are marked atomic instead, and the browser packs each page as full as it
+     will go. Same geometry handling as the invoice and the estimate: the
+     on-screen sheet carries its own 210x297mm box, the printed page supplies
+     the margins. */
+  @page inspection {
+    size: A4 portrait;
+    /* Tighter than the shared 12mm/10mm: this is a dense checklist, not a
+       letter, and every millimetre back is another row that fits. */
+    margin: 8mm 8mm;
+  }
+
+  /* The app shell wraps every page in Tailwind's `container`, which caps at a
+     breakpoint width (768px at print's effective viewport) — wider than the
+     ~740px of printable A4, so the sheet was overflowing horizontally and
+     being clipped, and narrower than the page it should be filling. Let the
+     document have the whole sheet. */
+  .container {
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .inspection-doc {
+    page: inspection;
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* A category, a scan block or a recommendation is kept whole, so its rows
+     are never split away from the heading above them. Anything taller than a
+     page is broken by the browser regardless, which is the correct fallback. */
+  .inspection-doc .inspection-block {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* A heading stranded at the foot of a sheet with its rows overleaf reads as
+     an empty section. */
+  .inspection-doc h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* Any margin left hanging after the final block spills past the last line
+     of content and Chrome answers it with another, empty, sheet. */
+  .inspection-doc > *:last-child,
+  .inspection-doc > *:last-child > *:last-child {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  .inspection-doc tr {
+    page-break-inside: avoid !important;
+  }
+
+  .inspection-doc thead {
+    display: table-header-group !important;
+  }
+
   /* Daily report container — fill page width, no extra spacing */
   .print-report-container {
     max-width: 100% !important;

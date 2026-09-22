@@ -55,6 +55,13 @@ urlpatterns = [
     path('estimates/<uuid:pk>/update/', views.update_estimate, name='update_estimate'),
     path('estimates/<uuid:pk>/delete/', views.delete_estimate, name='delete_estimate'),
 
+    # Vehicle inspections (multi-page inspection sheet and its printed report)
+    path('inspections/', views.get_inspections, name='get_inspections'),
+    path('inspections/create/', views.create_inspection, name='create_inspection'),
+    path('inspections/<uuid:pk>/', views.get_inspection, name='get_inspection'),
+    path('inspections/<uuid:pk>/update/', views.update_inspection, name='update_inspection'),
+    path('inspections/<uuid:pk>/delete/', views.delete_inspection, name='delete_inspection'),
+
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),
 
@@ -70,6 +77,7 @@ urlpatterns = [
     path('vehicles/registry/lookup/', views.lookup_vehicle, name='lookup_vehicle'),
     path('vehicles/registry/<int:pk>/history/', views.get_vehicle_history, name='get_vehicle_history'),
     path('vehicles/registry/<int:pk>/estimates/', views.get_vehicle_estimates, name='get_vehicle_estimates'),
+    path('vehicles/registry/<int:pk>/inspections/', views.get_vehicle_inspections, name='get_vehicle_inspections'),
 
     # Dashboard Stats
     path('dashboard/stats/', views.get_dashboard_stats, name='dashboard_stats'),

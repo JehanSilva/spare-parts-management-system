@@ -1,7 +1,11 @@
 import io
+import json
+import tempfile
 import pandas as pd
 from django.core.management import call_command
 from django.test import TestCase
+from django.test import override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 from django.contrib.auth.models import User
@@ -10,7 +14,7 @@ from rest_framework import status
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, inspection_overall_rating
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -2315,3 +2319,413 @@ class ActiveCartSaleDateTest(TestCase):
         self.assertIsNotNone(ActiveCart.objects.get(id="cart_a").sale_date)
         self._sync([{"id": "cart_a", "items": [], "sale_date": ""}])
         self.assertIsNone(ActiveCart.objects.get(id="cart_a").sale_date)
+
+
+# --- VEHICLE INSPECTION ---
+
+# A one-pixel PNG, enough for ImageField's dimension check to accept the upload.
+TINY_PNG = (
+    b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06'
+    b'\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05'
+    b'\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+)
+
+
+class InspectionRatingTest(TestCase):
+    """inspection_overall_rating is a pure function over the ratings blob, so
+    it is tested without touching the database at all."""
+
+    def test_the_overall_figure_is_the_mean_of_the_categories(self):
+        self.assertEqual(inspection_overall_rating({'engine': 80, 'braking': 90}), 85.0)
+
+    def test_a_category_left_unrated_is_skipped_not_counted_as_zero(self):
+        # Three systems at 90 and one never looked at is a 90, not a 67.5.
+        rated = inspection_overall_rating({'a': 90, 'b': 90, 'c': 90, 'd': ''})
+        self.assertEqual(rated, 90.0)
+
+    def test_an_empty_sheet_rates_zero_rather_than_dividing_by_zero(self):
+        self.assertEqual(inspection_overall_rating({}), 0)
+        self.assertEqual(inspection_overall_rating(None), 0)
+
+    def test_out_of_range_and_junk_figures_are_clamped_or_ignored(self):
+        self.assertEqual(inspection_overall_rating({'a': 150, 'b': -20}), 50.0)
+        self.assertEqual(inspection_overall_rating({'a': 'abc', 'b': 60}), 60.0)
+
+
+class VehicleInspectionAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='inspector', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    def _payload(self, **overrides):
+        payload = {
+            'inspector_name': 'Naveen Nimesh',
+            'customer_name': 'Mr. Nipuni Chandrasena',
+            'date': '2026-07-31',
+            'time': '14:37',
+            'vehicle_number': 'wp cal-3421',
+            'chassis_number': 'GP5-3074330',
+            'make_model': 'Honda Fit',
+            'year': 2014,
+            'fuel_type': 'Hybrid',
+            'mileage': 163710,
+            'checklist': {'engine': {'oil_leaks': 'Yes', 'turbo': 'None'}},
+            'ratings': {'engine': 84, 'braking': 86},
+            'system_scan': {'ecm_cpf': 'Normal', 'abs': 'Fault Detected'},
+            'dtc_codes': [
+                {'code': 'P0300', 'module': 'ECM',
+                 'description': 'Random/Multiple Cylinder Misfire Detected', 'status': 'Active'},
+            ],
+            'recommendations': {'engine': 'Engine tune up service needs to be done.'},
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_registers_an_unknown_plate_and_links_it(self):
+        response = self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # The plate is normalized on the way in, the way every other plate is.
+        self.assertEqual(response.data['vehicle_number'], 'WP CAL-3421')
+        vehicle = CustomerVehicle.objects.get(vehicle_number='WP CAL-3421')
+        self.assertEqual(response.data['vehicle'], vehicle.id)
+        self.assertEqual(vehicle.make, 'Honda')
+        self.assertEqual(vehicle.model, 'Fit')
+
+    def test_create_reuses_a_plate_already_in_the_registry(self):
+        existing = CustomerVehicle.objects.create(vehicle_number='WP CAL-3421', make='Honda')
+        self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        self.assertEqual(CustomerVehicle.objects.filter(vehicle_number='WP CAL-3421').count(), 1)
+        self.assertEqual(existing.inspections.count(), 1)
+
+    def test_the_number_continues_the_paper_series(self):
+        first = self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        self.assertEqual(first.data['inspection_number'], '03795')
+        second = self.client.post(
+            reverse('create_inspection'), self._payload(vehicle_number='WP ABC-1111'), format='json'
+        )
+        self.assertEqual(second.data['inspection_number'], '03796')
+
+    def test_the_overall_rating_is_averaged_and_never_taken_from_the_client(self):
+        response = self.client.post(
+            reverse('create_inspection'),
+            self._payload(overall_rating=100),
+            format='json',
+        )
+        # 84 and 86 average to 85 — the 100 the client asked for is ignored.
+        self.assertEqual(float(response.data['overall_rating']), 85.0)
+
+    def test_the_json_blobs_round_trip_intact(self):
+        created = self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        fetched = self.client.get(reverse('get_inspection', args=[created.data['id']]))
+        self.assertEqual(fetched.data['checklist'], {'engine': {'oil_leaks': 'Yes', 'turbo': 'None'}})
+        self.assertEqual(fetched.data['system_scan'], {'ecm_cpf': 'Normal', 'abs': 'Fault Detected'})
+        self.assertEqual(fetched.data['dtc_codes'][0]['code'], 'P0300')
+
+    def test_blank_dtc_rows_are_dropped_and_extra_columns_stripped(self):
+        response = self.client.post(
+            reverse('create_inspection'),
+            self._payload(dtc_codes=[
+                {'code': 'P0420', 'module': 'ECM', 'description': 'Catalyst', 'status': 'History',
+                 'injected': 'should not persist'},
+                {'code': '', 'module': '', 'description': '', 'status': 'Active'},
+            ]),
+            format='json',
+        )
+        rows = response.data['dtc_codes']
+        # The editor always keeps one empty row on screen; it must not be saved.
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(set(rows[0]), {'code', 'module', 'description', 'status'})
+
+    def test_a_blank_category_rating_is_not_stored_as_zero(self):
+        response = self.client.post(
+            reverse('create_inspection'),
+            self._payload(ratings={'engine': 84, 'braking': ''}),
+            format='json',
+        )
+        self.assertEqual(response.data['ratings'], {'engine': 84})
+        self.assertEqual(float(response.data['overall_rating']), 84.0)
+
+    def test_search_matches_number_plate_customer_and_inspector(self):
+        self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        for term in ('03795', 'CAL-3421', 'Nipuni', 'Naveen', 'GP5-3074330'):
+            found = self.client.get(reverse('get_inspections'), {'search': term})
+            self.assertEqual(len(found.data), 1, f"search failed for {term!r}")
+        self.assertEqual(len(self.client.get(reverse('get_inspections'), {'search': 'zzz'}).data), 0)
+
+    def test_changing_the_plate_repoints_the_vehicle_link(self):
+        created = self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        updated = self.client.patch(
+            reverse('update_inspection', args=[created.data['id']]),
+            {'vehicle_number': 'WP XYZ-9999'},
+            format='json',
+        )
+        self.assertEqual(updated.data['vehicle_number'], 'WP XYZ-9999')
+        self.assertEqual(
+            updated.data['vehicle'],
+            CustomerVehicle.objects.get(vehicle_number='WP XYZ-9999').id,
+        )
+
+    def test_a_higher_reading_refreshes_the_registry_and_a_lower_one_does_not(self):
+        vehicle = CustomerVehicle.objects.create(vehicle_number='WP CAL-3421', current_mileage=150000)
+        self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        vehicle.refresh_from_db()
+        self.assertEqual(vehicle.current_mileage, 163710)
+
+        self.client.post(
+            reverse('create_inspection'),
+            self._payload(mileage=90000, vehicle_number='WP CAL-3421'),
+            format='json',
+        )
+        vehicle.refresh_from_db()
+        # A mistyped lower figure must not rewrite the vehicle's mileage history.
+        self.assertEqual(vehicle.current_mileage, 163710)
+
+    def test_a_vehicle_lists_its_own_inspections(self):
+        self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        vehicle = CustomerVehicle.objects.get(vehicle_number='WP CAL-3421')
+        listed = self.client.get(reverse('get_vehicle_inspections', args=[vehicle.id]))
+        self.assertEqual(len(listed.data), 1)
+
+    def test_deleting_an_inspection_leaves_the_vehicle_registered(self):
+        created = self.client.post(reverse('create_inspection'), self._payload(), format='json')
+        response = self.client.delete(reverse('delete_inspection', args=[created.data['id']]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(VehicleInspection.objects.count(), 0)
+        self.assertTrue(CustomerVehicle.objects.filter(vehicle_number='WP CAL-3421').exists())
+
+
+@override_settings(
+    # settings.py points STORAGES["default"] at Cloudinary and sets no
+    # MEDIA_ROOT, so an unpatched test here would upload to the live media
+    # account over the network — and django_cleanup would then delete from it.
+    # Send the files to a throwaway directory instead.
+    MEDIA_ROOT=tempfile.mkdtemp(),
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.core.files.storage.StaticFilesStorage"},
+    },
+)
+class InspectionMultipartSaveTest(TestCase):
+    """
+    The editor saves the whole sheet in one multipart request: the two photos
+    as files, the five JSON blobs as JSON strings alongside them. These tests
+    pin that contract down, because the entire client design rests on DRF's
+    JSONField parsing a JSON string when the input came from a form.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='inspector', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    def _form(self, **overrides):
+        form = {
+            'inspector_name': 'Naveen Nimesh',
+            'vehicle_number': 'WP CAL-3421',
+            'make_model': 'Honda Fit',
+            'checklist': json.dumps({'engine': {'oil_leaks': 'Yes'}}),
+            'ratings': json.dumps({'engine': 84}),
+            'system_scan': json.dumps({'abs': 'Normal'}),
+            'dtc_codes': json.dumps([{'code': 'P0300', 'module': 'ECM',
+                                      'description': 'Misfire', 'status': 'Active'}]),
+            'recommendations': json.dumps({'engine': 'Tune up.'}),
+        }
+        form.update(overrides)
+        return form
+
+    def _png(self, name):
+        return SimpleUploadedFile(name, TINY_PNG, content_type='image/png')
+
+    def test_json_string_fields_are_parsed_out_of_a_multipart_save(self):
+        response = self.client.post(
+            reverse('create_inspection'), self._form(), format='multipart'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        # Parsed into real structures, not stored as the strings they arrived as.
+        self.assertEqual(response.data['checklist'], {'engine': {'oil_leaks': 'Yes'}})
+        self.assertEqual(response.data['ratings'], {'engine': 84})
+        self.assertEqual(response.data['dtc_codes'][0]['code'], 'P0300')
+        self.assertEqual(float(response.data['overall_rating']), 84.0)
+
+    def test_blank_scalars_in_a_multipart_save_arrive_as_null(self):
+        # Empty date/time/year/mileage inputs post as "" from a form; the
+        # columns are nullable and must not choke on that.
+        response = self.client.post(
+            reverse('create_inspection'),
+            self._form(date='', time='', year='', mileage=''),
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        for field in ('date', 'time', 'year', 'mileage'):
+            self.assertIsNone(response.data[field], f"{field} should be null")
+
+    def test_both_photos_are_stored_from_one_multipart_post(self):
+        response = self.client.post(
+            reverse('create_inspection'),
+            self._form(front_image=self._png('front.png'), rear_image=self._png('rear.png')),
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['front_image'])
+        self.assertTrue(response.data['rear_image'])
+        inspection = VehicleInspection.objects.get(pk=response.data['id'])
+        self.assertIn('inspections/', inspection.front_image.name)
+
+    def test_a_later_save_without_photo_fields_keeps_the_stored_ones(self):
+        """
+        The editor omits a photo field entirely unless the inspector picked a
+        new File — on edit the value in state is a URL string, not a File. This
+        is the server side of that contract: a PATCH that doesn't mention the
+        photos must leave them alone.
+        """
+        created = self.client.post(
+            reverse('create_inspection'),
+            self._form(front_image=self._png('front.png'), rear_image=self._png('rear.png')),
+            format='multipart',
+        )
+        stored_front = VehicleInspection.objects.get(pk=created.data['id']).front_image.name
+
+        updated = self.client.patch(
+            reverse('update_inspection', args=[created.data['id']]),
+            {'inspector_name': 'Someone Else', 'ratings': json.dumps({'engine': 60})},
+            format='multipart',
+        )
+        self.assertEqual(updated.status_code, status.HTTP_200_OK)
+        inspection = VehicleInspection.objects.get(pk=created.data['id'])
+        self.assertEqual(inspection.front_image.name, stored_front)
+        self.assertEqual(inspection.inspector_name, 'Someone Else')
+        # And the blobs still parse on a PATCH, not just on create.
+        self.assertEqual(inspection.ratings, {'engine': 60})
+
+    def test_a_photo_can_be_replaced_by_sending_a_new_file(self):
+        created = self.client.post(
+            reverse('create_inspection'),
+            self._form(front_image=self._png('front.png')),
+            format='multipart',
+        )
+        original = VehicleInspection.objects.get(pk=created.data['id']).front_image.name
+        self.client.patch(
+            reverse('update_inspection', args=[created.data['id']]),
+            {'front_image': self._png('replacement.png')},
+            format='multipart',
+        )
+        inspection = VehicleInspection.objects.get(pk=created.data['id'])
+        self.assertNotEqual(inspection.front_image.name, original)
+        self.assertIn('replacement', inspection.front_image.name)
+
+
+class InspectionCustomFieldTest(TestCase):
+    """Ad-hoc rows the inspector adds for a vehicle the catalog doesn't cover."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='inspector', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    def _create(self, **overrides):
+        payload = {
+            'vehicle_number': 'WP CAL-3421',
+            'checklist': {'engine': {'oil_leaks': 'Yes'}},
+        }
+        payload.update(overrides)
+        return self.client.post(reverse('create_inspection'), payload, format='json')
+
+    def test_custom_fields_round_trip(self):
+        response = self._create(custom_fields={
+            'engine': [
+                {'label': 'Hybrid Battery Health', 'value': '78%', 'free': True},
+                {'label': 'Spare Tyre', 'value': 'Good', 'free': False},
+            ],
+        })
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        fetched = self.client.get(reverse('get_inspection', args=[response.data['id']]))
+        rows = fetched.data['custom_fields']['engine']
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0], {'label': 'Hybrid Battery Health', 'value': '78%', 'free': True})
+        # Order is preserved — the rows print as the inspector added them.
+        self.assertEqual(rows[1]['label'], 'Spare Tyre')
+
+    def test_a_row_with_no_label_is_dropped_but_a_blank_value_survives(self):
+        """
+        The editor keeps an empty row on screen to type into, so an unlabelled
+        row must not be saved. A labelled row whose value isn't filled in yet
+        must survive, or it would vanish from the screen the moment it is saved.
+        """
+        response = self._create(custom_fields={
+            'engine': [
+                {'label': '', 'value': 'Good'},
+                {'label': 'Not Yet Assessed', 'value': ''},
+            ],
+        })
+        rows = response.data['custom_fields']['engine']
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['label'], 'Not Yet Assessed')
+        self.assertEqual(rows[0]['value'], '')
+
+    def test_extra_row_keys_are_stripped(self):
+        response = self._create(custom_fields={
+            'engine': [{'label': 'Spare Tyre', 'value': 'Good', 'injected': 'nope'}],
+        })
+        self.assertEqual(set(response.data['custom_fields']['engine'][0]), {'label', 'value', 'free'})
+
+    def test_a_section_whose_rows_are_all_unlabelled_is_dropped_entirely(self):
+        response = self._create(custom_fields={'engine': [{'label': '', 'value': ''}]})
+        self.assertEqual(response.data['custom_fields'], {})
+
+    def test_custom_fields_do_not_leak_into_the_checklist(self):
+        # The two are separate columns; the checklist stays exactly the catalog.
+        response = self._create(custom_fields={'engine': [{'label': 'Spare Tyre', 'value': 'Good'}]})
+        self.assertEqual(response.data['checklist'], {'engine': {'oil_leaks': 'Yes'}})
+
+
+class InspectionExcludedSectionTest(TestCase):
+    """Sections switched off because they don't apply to this vehicle."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='inspector', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    def _create(self, **overrides):
+        payload = {
+            'vehicle_number': 'WP CAL-3421',
+            'checklist': {'engine': {'oil_leaks': 'Yes'}},
+            'ratings': {'engine': 90, 'braking': 90, 'transmission': 30},
+        }
+        payload.update(overrides)
+        return self.client.post(reverse('create_inspection'), payload, format='json')
+
+    def test_an_excluded_section_is_left_out_of_the_overall_rating(self):
+        # Without the exclusion the average is 70; with it, 90.
+        included = self._create()
+        self.assertEqual(float(included.data['overall_rating']), 70.0)
+
+        excluded = self._create(vehicle_number='WP ABC-1111', excluded_sections=['transmission'])
+        self.assertEqual(float(excluded.data['overall_rating']), 90.0)
+
+    def test_excluding_an_unrated_section_changes_nothing(self):
+        response = self._create(excluded_sections=['exhaust'])
+        self.assertEqual(float(response.data['overall_rating']), 70.0)
+
+    def test_the_excluded_list_round_trips_deduplicated(self):
+        response = self._create(excluded_sections=['transmission', 'scan', 'transmission'])
+        self.assertEqual(response.data['excluded_sections'], ['transmission', 'scan'])
+
+    def test_re_including_a_section_restores_it_to_the_average(self):
+        created = self._create(excluded_sections=['transmission'])
+        self.assertEqual(float(created.data['overall_rating']), 90.0)
+
+        updated = self.client.patch(
+            reverse('update_inspection', args=[created.data['id']]),
+            {'excluded_sections': []},
+            format='json',
+        )
+        # The rating was kept while excluded, so re-including it brings it back.
+        self.assertEqual(float(updated.data['overall_rating']), 70.0)
+        self.assertEqual(updated.data['ratings']['transmission'], 30)
+
+    def test_an_inspection_saved_without_the_field_prints_everything(self):
+        """Backward compatibility: absent means nothing is excluded."""
+        response = self._create()
+        self.assertEqual(response.data['excluded_sections'], [])

@@ -29,7 +29,7 @@ export const OPTIONS = {
   percent: percentScale(),
   count: ["None", "1", "2", "3", "4", "5", "6", "7", "8"],
   accidents: ["None", "None Structural", "Structural"],
-  drive: ["Power", "Manual", "2WD", "4WD", "AWD", "None"],
+  drive: ["Power", "Manual", "Automatic", "2WD", "4WD", "AWD", "None"],
   roof: ["Standard", "Sunroof", "Moonroof", "Panoramic", "None"],
   wheelType: ["Rim Cup", "Alloy Wheel", "Steel Rim", "Sports Rim", "None"],
   alterations: ["Not Present", "Present"],

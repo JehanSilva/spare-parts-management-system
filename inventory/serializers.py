@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db.models.functions import Upper
-from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService
+from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService, VehicleInspection
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -336,3 +336,172 @@ class RestockRecordSerializer(serializers.ModelSerializer):
 
     def get_supplier_name(self, obj):
         return obj.supplier.name if obj.supplier else 'Unknown / No Supplier'
+
+# --- VEHICLE INSPECTION ---
+# The blob validators below are deliberately shallow. The component catalog
+# lives in the frontend (frontend/src/components/inspectionSchema.js) and the
+# server stores what it is given, exactly as Estimate.sections does — so these
+# check shape and bound size, they do not check that a key is one the catalog
+# knows about. Rejecting unknown keys here would mean the catalog existed twice
+# and every sheet revision became a coordinated deploy.
+
+# Wide enough for a sheet several times the current size, narrow enough that a
+# buggy or hostile client can't park megabytes in a JSON column.
+MAX_INSPECTION_CATEGORIES = 40
+MAX_INSPECTION_FIELDS_PER_CATEGORY = 120
+MAX_DTC_ROWS = 100
+MAX_RECOMMENDATION_CHARS = 4000
+MAX_CUSTOM_FIELDS_PER_SECTION = 40
+
+
+def _clean_string_map(value, field_name, max_keys, max_len=120):
+    """A flat {key: "text"} map, trimmed, with anything non-scalar rejected."""
+    if not isinstance(value, dict):
+        raise serializers.ValidationError(f"{field_name} must be an object.")
+    if len(value) > max_keys:
+        raise serializers.ValidationError(f"{field_name} has too many entries.")
+    cleaned = {}
+    for key, raw in value.items():
+        if raw is None or raw == "":
+            continue
+        if isinstance(raw, (dict, list)):
+            raise serializers.ValidationError(f"{field_name}.{key} must be a single value.")
+        cleaned[str(key)[:100]] = str(raw).strip()[:max_len]
+    return cleaned
+
+
+class VehicleInspectionSerializer(serializers.ModelSerializer):
+    vehicle_details = CustomerVehicleSerializer(source='vehicle', read_only=True)
+
+    class Meta:
+        model = VehicleInspection
+        fields = [
+            'id', 'inspection_number', 'inspector_name', 'date', 'time', 'customer_name',
+            'vehicle', 'vehicle_details', 'vehicle_number', 'chassis_number', 'make_model',
+            'year', 'fuel_type', 'mileage', 'front_image', 'rear_image',
+            'checklist', 'ratings', 'system_scan', 'dtc_codes', 'recommendations',
+            'custom_fields', 'excluded_sections',
+            'overall_rating', 'created_at', 'updated_at',
+        ]
+        # All derived server-side: the reference number is allocated on create,
+        # the vehicle link is resolved from the plate, and the headline rating
+        # is averaged from the category figures in VehicleInspection.save().
+        read_only_fields = ['inspection_number', 'vehicle', 'overall_rating']
+
+    # The JSON fields are not declared explicitly — like Estimate.sections they
+    # ride through the field list above, which also means DRF's JSONField
+    # parses them out of a JSON string when the form posts its photos in the
+    # same multipart request (see rest_framework/fields.py JSONField.get_value).
+
+    def validate_checklist(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("checklist must be an object keyed by category.")
+        if len(value) > MAX_INSPECTION_CATEGORIES:
+            raise serializers.ValidationError("checklist has too many categories.")
+        return {
+            str(cat)[:100]: _clean_string_map(
+                fields, f"checklist.{cat}", MAX_INSPECTION_FIELDS_PER_CATEGORY
+            )
+            for cat, fields in value.items()
+        }
+
+    def validate_ratings(self, value):
+        """Percentages, clamped. A blank stays blank so it can be told apart
+        from a deliberate zero — inspection_overall_rating() skips it."""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("ratings must be an object keyed by category.")
+        cleaned = {}
+        for key, raw in value.items():
+            if raw is None or raw == "":
+                continue
+            try:
+                cleaned[str(key)[:100]] = min(100, max(0, round(float(raw), 2)))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(f"ratings.{key} must be a number.")
+        return cleaned
+
+    def validate_system_scan(self, value):
+        return _clean_string_map(value, "system_scan", MAX_INSPECTION_CATEGORIES)
+
+    def validate_recommendations(self, value):
+        return _clean_string_map(
+            value, "recommendations", MAX_INSPECTION_CATEGORIES,
+            max_len=MAX_RECOMMENDATION_CHARS,
+        )
+
+    def validate_custom_fields(self, value):
+        """
+        {section_key: [{label, value, free}]}.
+
+        Deliberately not routed through _clean_string_map: that helper rejects
+        lists and drops empty values, which would delete a custom field the
+        moment its value was left blank — while the inspector could still see
+        the row on screen. Only a row with no label is dropped, because a row
+        with nothing to name it has nothing to print.
+        """
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("custom_fields must be an object keyed by section.")
+        if len(value) > MAX_INSPECTION_CATEGORIES:
+            raise serializers.ValidationError("custom_fields has too many sections.")
+
+        cleaned = {}
+        for section, rows in value.items():
+            if not isinstance(rows, list):
+                raise serializers.ValidationError(f"custom_fields.{section} must be a list.")
+            if len(rows) > MAX_CUSTOM_FIELDS_PER_SECTION:
+                raise serializers.ValidationError(f"custom_fields.{section} has too many rows.")
+            kept = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise serializers.ValidationError(f"Each custom_fields.{section} row must be an object.")
+                label = str(row.get('label') or '').strip()[:100]
+                if not label:
+                    continue
+                kept.append({
+                    'label': label,
+                    'value': str(row.get('value') or '').strip()[:120],
+                    'free': bool(row.get('free')),
+                })
+            if kept:
+                cleaned[str(section)[:100]] = kept
+        return cleaned
+
+    def validate_excluded_sections(self, value):
+        """Section keys held back from the report, deduplicated, order kept."""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("excluded_sections must be a list.")
+        seen = set()
+        cleaned = []
+        for raw in value:
+            if isinstance(raw, (dict, list)):
+                raise serializers.ValidationError("Each excluded_sections entry must be a key.")
+            key = str(raw or '').strip()[:100]
+            if key and key not in seen:
+                seen.add(key)
+                cleaned.append(key)
+        return cleaned
+
+    def validate_dtc_codes(self, value):
+        """
+        Reduce each row to exactly the four columns the report prints, so a
+        client can't smuggle extra keys into the blob. Rows blank in every
+        column are dropped — the editor always keeps one empty row on screen
+        and it must not be saved.
+        """
+        if not isinstance(value, list):
+            raise serializers.ValidationError("dtc_codes must be a list.")
+        if len(value) > MAX_DTC_ROWS:
+            raise serializers.ValidationError("dtc_codes has too many rows.")
+        cleaned = []
+        for row in value:
+            if not isinstance(row, dict):
+                raise serializers.ValidationError("Each dtc_codes row must be an object.")
+            entry = {
+                'code': str(row.get('code') or '').strip()[:30],
+                'module': str(row.get('module') or '').strip()[:40],
+                'description': str(row.get('description') or '').strip()[:300],
+                'status': str(row.get('status') or '').strip()[:20],
+            }
+            if any(entry[k] for k in ('code', 'module', 'description')):
+                cleaned.append(entry)
+        return cleaned

@@ -20,6 +20,8 @@ import DailyReportPage from "./pages/DailyReportPage";
 import OptionsPage from "./pages/OptionsPage";
 import EstimatePage from "./pages/EstimatePage";
 import EstimateListPage from "./pages/EstimateListPage";
+import InspectionPage from "./pages/InspectionPage";
+import InspectionListPage from "./pages/InspectionListPage";
 import RepairServicesPage from "./pages/RepairServicesPage";
 import PrivateRoute from "./components/PrivateRoute";
 import useAutoLogout from "./hooks/useAutoLogout";
@@ -170,6 +172,30 @@ function App() {
             element={
               <PrivateRoute>
                 <EstimatePage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/inspections"
+            element={
+              <PrivateRoute>
+                <InspectionListPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/inspections/new"
+            element={
+              <PrivateRoute>
+                <InspectionPage />
+              </PrivateRoute>
+            }
+          />
+          <Route
+            path="/inspections/:id"
+            element={
+              <PrivateRoute>
+                <InspectionPage />
               </PrivateRoute>
             }
           />

@@ -9,8 +9,8 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate, Coalesce
 from rest_framework import status
 from django.db.models import Sum, F, Value, DecimalField
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, build_vehicle_registry_context
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle, normalize_repair_description
 from .serializers import VehicleSerializer
@@ -2550,3 +2550,145 @@ def pay_payroll_record(request, pk):
     payroll.save()
     
     return Response(PayrollSerializer(payroll).data)
+
+# --- VEHICLE INSPECTION VIEWS ---
+def _resolve_inspection_vehicle(vehicle_number, make_model):
+    """
+    Normalize the plate the way lookup_vehicle does, find it in the registry and
+    register it if it's new — so an inspection's vehicle FK always holds and the
+    vehicle page can list it. Mirrors _resolve_estimate_vehicle.
+    """
+    plate = (vehicle_number or '').strip().upper()
+    if not plate:
+        return None, ''
+
+    vehicle = CustomerVehicle.objects.filter(vehicle_number__iexact=plate).first()
+    if vehicle is None:
+        # "Honda Fit" -> make "Honda", model "Fit"; a single word is all make.
+        make, _, model = (make_model or '').strip().partition(' ')
+        vehicle = CustomerVehicle.objects.create(
+            vehicle_number=plate,
+            make=make[:50],
+            model=model.strip()[:50],
+        )
+    return vehicle, plate
+
+
+def _next_inspection_number():
+    """
+    Sequential 03795, 03796, ... continuing the shop's paper book from
+    INSPECTION_NUMBER_START. Derived from the current maximum the way
+    _next_estimate_number is, so deleting a sheet never reissues its number.
+    """
+    highest = INSPECTION_NUMBER_START
+    for number in VehicleInspection.objects.exclude(inspection_number='').values_list('inspection_number', flat=True):
+        digits = ''.join(ch for ch in number if ch.isdigit())
+        if digits:
+            highest = max(highest, int(digits))
+    return f"{highest + 1:05d}"
+
+
+def _refresh_vehicle_mileage(vehicle, mileage):
+    """
+    An inspection is a real odometer reading, so it updates the registry — but
+    only upwards. A mistyped lower figure must not rewrite a vehicle's mileage
+    history, since CustomerVehicle.save() stamps mileage_updated_at whenever
+    the number moves and bills quote that reading.
+    """
+    if vehicle is None or not mileage:
+        return
+    if (vehicle.current_mileage or 0) < mileage:
+        vehicle.current_mileage = mileage
+        vehicle.save()
+
+
+@api_view(['GET'])
+def get_inspections(request):
+    """List saved inspections, optionally searching by reference, plate, customer or inspector."""
+    search = request.query_params.get('search', '').strip()
+    qs = VehicleInspection.objects.select_related('vehicle__customer')
+    if search:
+        qs = qs.filter(
+            Q(inspection_number__icontains=search) |
+            Q(vehicle_number__icontains=search) |
+            Q(chassis_number__icontains=search) |
+            Q(customer_name__icontains=search) |
+            Q(inspector_name__icontains=search) |
+            Q(make_model__icontains=search)
+        )
+    return Response(VehicleInspectionSerializer(qs, many=True).data)
+
+
+@api_view(['GET'])
+def get_inspection(request, pk):
+    """A single inspection, for loading it back into the editor."""
+    inspection = get_object_or_404(
+        VehicleInspection.objects.select_related('vehicle__customer'), pk=pk
+    )
+    return Response(VehicleInspectionSerializer(inspection).data)
+
+
+@api_view(['POST'])
+@transaction.atomic
+def create_inspection(request):
+    """
+    Save a new inspection. The plate is auto-registered in the vehicle registry
+    if it isn't there yet, so the sheet is always linked to a real vehicle.
+    Photos ride in the same multipart request as the rest of the form.
+    """
+    serializer = VehicleInspectionSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    vehicle, plate = _resolve_inspection_vehicle(
+        serializer.validated_data.get('vehicle_number'),
+        serializer.validated_data.get('make_model'),
+    )
+    inspection = serializer.save(
+        vehicle=vehicle,
+        vehicle_number=plate,
+        inspection_number=_next_inspection_number(),
+    )
+    _refresh_vehicle_mileage(vehicle, inspection.mileage)
+    return Response(VehicleInspectionSerializer(inspection).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['PATCH'])
+@transaction.atomic
+def update_inspection(request, pk):
+    """
+    Update a saved inspection. Photos are only touched when the request
+    actually carries a file — the editor omits the field entirely when the
+    stored image hasn't been changed, so a re-save can't blank it.
+    """
+    inspection = get_object_or_404(VehicleInspection, pk=pk)
+    serializer = VehicleInspectionSerializer(inspection, data=request.data, partial=True)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    extra = {}
+    if 'vehicle_number' in serializer.validated_data:
+        vehicle, plate = _resolve_inspection_vehicle(
+            serializer.validated_data.get('vehicle_number'),
+            serializer.validated_data.get('make_model', inspection.make_model),
+        )
+        extra = {'vehicle': vehicle, 'vehicle_number': plate}
+
+    inspection = serializer.save(**extra)
+    _refresh_vehicle_mileage(inspection.vehicle, inspection.mileage)
+    return Response(VehicleInspectionSerializer(inspection).data)
+
+
+@api_view(['DELETE'])
+def delete_inspection(request, pk):
+    inspection = get_object_or_404(VehicleInspection, pk=pk)
+    inspection.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+def get_vehicle_inspections(request, pk):
+    """Every inspection carried out on one registered vehicle, newest first."""
+    vehicle = get_object_or_404(CustomerVehicle, pk=pk)
+    qs = vehicle.inspections.select_related('vehicle__customer')
+    return Response(VehicleInspectionSerializer(qs, many=True).data)

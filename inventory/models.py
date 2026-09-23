@@ -487,3 +487,138 @@ class RestockRecord(models.Model):
     def __str__(self):
         supplier_name = self.supplier.name if self.supplier else "Unknown"
         return f"{self.part.name} | {supplier_name} | Qty: {self.quantity} @ {self.buy_price}"
+
+# --- VEHICLE INSPECTION (pre-purchase / warranty inspection sheet) ---
+
+# The digital sheet continues the shop's paper book rather than restarting at 1,
+# so the first record issued here can't collide with a number already handed to
+# a customer. Change this only before the first inspection is saved — afterwards
+# the series is derived from the records themselves and a change leaves a gap.
+INSPECTION_NUMBER_START = 3794
+
+# Value and label are deliberately the same string so the picker in
+# frontend/src/components/inspectionSchema.js can list these without a
+# code-to-label map that would have to be kept in step.
+FUEL_TYPE_CHOICES = [
+    ('Petrol', 'Petrol'),
+    ('Diesel', 'Diesel'),
+    ('Hybrid', 'Hybrid'),
+    ('Plug-in Hybrid', 'Plug-in Hybrid'),
+    ('Electric', 'Electric'),
+    ('Other', 'Other'),
+]
+
+
+def inspection_overall_rating(ratings, excluded_sections=None):
+    """
+    The headline percentage: the mean of the category ratings actually entered.
+
+    Two kinds of category are left out of the average. A category the inspector
+    hasn't scored yet is absent, not zero — a sheet with three systems rated 90
+    and eight not yet looked at is a 90, not a 25. And a category switched off
+    for this vehicle is not applicable at all: an EV has no clutch, so a
+    transmission score must not drag the headline figure down.
+
+    `excluded_sections` is optional so the original one-argument form still
+    works. Mirrored by overallRating() in
+    frontend/src/components/inspectionSchema.js, which drives the live preview;
+    this function is the authority and runs on every save.
+    """
+    skipped = set(excluded_sections or [])
+    scores = []
+    for key, value in (ratings or {}).items():
+        if key in skipped:
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        scores.append(min(100.0, max(0.0, number)))
+    if not scores:
+        return 0
+    return round(sum(scores) / len(scores), 2)
+
+
+class VehicleInspection(models.Model):
+    """
+    A completed vehicle inspection, printed as a multi-page A4 report.
+
+    The ~200 component verdicts live in JSON columns rather than 200 real
+    fields. The sheet is a document format, not queryable domain data — nothing
+    will ever ask which cars had a weak front left tyre — and revising the sheet
+    must not mean a migration. Same trade-off as Estimate.sections and
+    ActiveCart.items, and for the same reason there is no child table.
+
+    The component catalog those keys come from lives in
+    frontend/src/components/inspectionSchema.js and is deliberately NOT
+    duplicated here: the server stores the blobs opaquely, so there is one
+    definition of the sheet rather than two that can drift apart.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    inspection_number = models.CharField(max_length=20, unique=True, blank=True, help_text="Sequential reference, e.g. 03795")
+
+    # Session header.
+    inspector_name = models.CharField(max_length=100, blank=True)
+    date = models.DateField(null=True, blank=True)
+    time = models.TimeField(null=True, blank=True)
+    # Copied onto the sheet rather than read back through the vehicle link, so
+    # a report still prints the name it was issued with — the same reasoning as
+    # Estimate.owner_name.
+    customer_name = models.CharField(max_length=100, blank=True)
+
+    # SET_NULL like Estimate.vehicle: retiring a vehicle from the registry must
+    # not destroy the inspections carried out on it.
+    vehicle = models.ForeignKey(CustomerVehicle, on_delete=models.SET_NULL, null=True, blank=True, related_name='inspections')
+    vehicle_number = models.CharField(max_length=20, blank=True, help_text="Plate as printed; kept in sync with the linked vehicle")
+    chassis_number = models.CharField(max_length=40, blank=True)
+    make_model = models.CharField(max_length=100, blank=True)
+    year = models.PositiveIntegerField(null=True, blank=True)
+    fuel_type = models.CharField(max_length=20, blank=True, choices=FUEL_TYPE_CHOICES)
+    mileage = models.PositiveIntegerField(null=True, blank=True, help_text="Odometer reading in km at the time of inspection")
+
+    # Exactly two, printed side by side on the first page. Plain ImageFields —
+    # STORAGES["default"] routes them to Cloudinary and django_cleanup removes
+    # the remote file when one is replaced (see Part.image).
+    front_image = models.ImageField(upload_to='inspections/', blank=True, null=True)
+    rear_image = models.ImageField(upload_to='inspections/', blank=True, null=True)
+
+    # {category_key: {component_key: "option value"}} — nested by category
+    # rather than flat so component keys can't collide across categories
+    # ("hangers" and "hoses" belong to more than one system).
+    checklist = models.JSONField(default=dict, blank=True)
+    # {category_key: 0-100}
+    ratings = models.JSONField(default=dict, blank=True)
+    # {module_key: "Normal" | "Fault Detected" | "Not Equipped"}
+    system_scan = models.JSONField(default=dict, blank=True)
+    # Ordered [{code, module, description, status}] — a list, because the codes
+    # print in the order the scan tool reported them.
+    dtc_codes = models.JSONField(default=list, blank=True)
+    # {category_key: "free text"} — the PDF's per-system "Comments", renamed to
+    # "Required Maintenance & Future Recommendations" on the printed report.
+    recommendations = models.JSONField(default=dict, blank=True)
+    # {section_key: [{label, value, free}]} — components this particular vehicle
+    # needed that the catalog doesn't name. A list, so the rows print in the
+    # order the inspector added them. `free` records that the value was typed
+    # rather than picked, which is why it prints without a verdict colour.
+    custom_fields = models.JSONField(default=dict, blank=True)
+    # Section keys NOT printed on the report, e.g. ["transmission", "scan"] for
+    # a vehicle the section doesn't apply to. Stored as the exclusions rather
+    # than the inclusions so that an inspection saved before this existed — and
+    # any section added to the catalog later — prints by default.
+    excluded_sections = models.JSONField(default=list, blank=True)
+
+    overall_rating = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-date', '-created_at']
+
+    def save(self, *args, **kwargs):
+        # Always averaged from the category ratings, never accepted from the
+        # client — the headline figure on the report can't be typed over.
+        self.overall_rating = inspection_overall_rating(self.ratings, self.excluded_sections)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.inspection_number or 'Inspection'} - {self.vehicle_number}"

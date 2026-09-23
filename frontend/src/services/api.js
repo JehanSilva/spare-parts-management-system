@@ -207,4 +207,18 @@ export const createEstimate = async (data) => (await API.post("/estimates/create
 export const updateEstimate = async (id, data) => (await API.patch(`/estimates/${id}/update/`, data)).data;
 export const deleteEstimate = async (id) => await API.delete(`/estimates/${id}/delete/`);
 
+// --- VEHICLE INSPECTION SERVICES (inspection sheet and its printed report) ---
+// The create/update calls take a FormData built by the caller and set no
+// Content-Type, so axios supplies the multipart boundary itself — the same
+// arrangement as createPart/updatePart. The sheet's JSON blobs travel as
+// JSON strings in that same request, alongside the two photos.
+export const fetchInspections = async (search = '') =>
+  (await API.get("/inspections/", { params: search ? { search } : {} })).data;
+export const fetchInspection = async (id) => (await API.get(`/inspections/${id}/`)).data;
+export const createInspection = async (data) => (await API.post("/inspections/create/", data)).data;
+export const updateInspection = async (id, data) => (await API.patch(`/inspections/${id}/update/`, data)).data;
+export const deleteInspection = async (id) => await API.delete(`/inspections/${id}/delete/`);
+export const fetchVehicleInspections = async (vehicleId) =>
+  (await API.get(`/vehicles/registry/${vehicleId}/inspections/`)).data;
+
 export default API;

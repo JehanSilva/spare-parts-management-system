@@ -11,7 +11,6 @@ import {
   X,
   FileText,
   ClipboardList,
-  ClipboardCheck,
   Power,
 } from "lucide-react";
 import logoImg from "../assets/logo.png";
@@ -27,7 +26,6 @@ const NAV_ITEMS = [
   { path: "/customers", label: "Customers", icon: Users },
   { path: "/vehicles", label: "Vehicles", icon: Car },
   { path: "/estimates", label: "Estimates", icon: ClipboardList },
-  { path: "/inspections", label: "Inspections", icon: ClipboardCheck },
   { path: "/sales-history", label: "Sales", icon: FileText },
 ];
 
@@ -131,7 +129,7 @@ const Navbar = () => {
         className={`lg:hidden overflow-hidden transition-all duration-300 ${isOpen ? "max-h-96 border-t border-white/10" : "max-h-0"
           }`}
       >
-        <div className="grid grid-cols-3 gap-1 p-3">
+        <div className="grid grid-cols-4 gap-1 p-3">
           {NAV_ITEMS.map((item) => {
             const active = isActivePath(location.pathname, item.path);
             return (

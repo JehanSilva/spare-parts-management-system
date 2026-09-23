@@ -165,7 +165,7 @@ const formatImageSrc = (value) => {
 const CheckRow = ({ label, value, optionSet }) => {
   const tone = valueTone(value, optionSet);
   return (
-    <div className="flex items-baseline justify-between gap-2 py-[1.5px] border-b border-gray-100">
+    <div className="flex items-baseline justify-between gap-2 border-b border-gray-100">
       <span className="text-gray-800">{label}</span>
       <span className={`font-bold text-right shrink-0 ${TONE_CLASS[tone]}`}>
         {(value || "").trim() || "—"}
@@ -264,7 +264,7 @@ const InspectionDocument = forwardRef(({ inspection = {}, inspectionNumber = "" 
   return (
     <div
       ref={ref}
-      className="inspection-doc bg-white text-black mx-auto text-[9px] leading-snug"
+      className="inspection-doc bg-white text-black mx-auto text-[9px] leading-[1.2]"
       style={{
         width: "210mm",
         minHeight: "297mm",
@@ -344,7 +344,7 @@ const InspectionDocument = forwardRef(({ inspection = {}, inspectionNumber = "" 
         {/* Photos. A fixed aspect ratio so an unusually tall photo can't push
             the ratings table off the first sheet. */}
         {(frontSrc || rearSrc) && (
-          <div className="mt-2 inspection-block">
+          <div className="mt-2 inspection-block break-inside-avoid">
             <SectionHeading>Visual Images</SectionHeading>
             <div className="grid grid-cols-2 gap-3">
               {[["Front", frontSrc], ["Rear", rearSrc]].map(([caption, src]) => (

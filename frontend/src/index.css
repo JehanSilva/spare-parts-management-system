@@ -200,13 +200,14 @@
     margin: 0 !important;
   }
 
-  /* A category, a scan block or a recommendation is kept whole, so its rows
-     are never split away from the heading above them. Anything taller than a
-     page is broken by the browser regardless, which is the correct fallback. */
-  .inspection-doc .inspection-block {
-    break-inside: avoid;
-    page-break-inside: avoid;
-  }
+  /* Blocks are deliberately NOT kept whole. A category can run to 34 rows, and
+     refusing to split one means the browser drops the whole thing to the next
+     sheet the moment it doesn't fit — measured at ~130pt of dead space on each
+     of the first two pages, which is what pushed the report onto an extra one.
+     Letting a category flow across the boundary fills every sheet, and the
+     heading rule below is what stops that costing legibility. The genuinely
+     atomic things — the photo pair, the signature, a table row — mark
+     themselves with break-inside-avoid where they are written. */
 
   /* A heading stranded at the foot of a sheet with its rows overleaf reads as
      an empty section. */

@@ -609,13 +609,36 @@ const InspectionPage = () => {
     // Saving a new sheet replaces the URL with its id, which would otherwise
     // re-run this effect and overwrite what's on screen. Same guard as the
     // estimate builder.
-    if (!id || loadedIdRef.current === id) return;
-    loadedIdRef.current = id;
+    const current = id || null;
+
+    if (current === loadedIdRef.current) {
+      // The form already holds this record — this fires after saving a new
+      // inspection redirects to its own URL. Refetching would swap the form
+      // out for a skeleton and blank the print copy with it.
+      setLoading(false);
+      return;
+    }
+
+    if (!current) {
+      // Navigating from a saved inspection back to /inspections/new.
+      loadedIdRef.current = null;
+      setInspection(blankInspection());
+      setSavedId(null);
+      setInspectionNumber("");
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
-    fetchInspection(id)
+    fetchInspection(current)
       .then((record) => {
         if (cancelled) return;
+        // Claimed only once the record is actually on screen. Claiming it
+        // before the fetch resolves lets StrictMode's remount skip the
+        // refetch while the first run's result is thrown away as cancelled,
+        // which leaves the page stuck on its skeleton forever.
+        loadedIdRef.current = record.id;
         setInspection(fromInspectionRecord(record));
         setInspectionNumber(record.inspection_number || "");
         setSavedId(record.id);
@@ -623,7 +646,9 @@ const InspectionPage = () => {
       .catch((err) =>
         setAlertInfo({ type: "error", message: apiErrorMessage(err, "Could not load this inspection.") })
       )
-      .finally(() => !cancelled && setLoading(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => { cancelled = true; };
   }, [id]);
 

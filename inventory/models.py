@@ -3,6 +3,19 @@ from django.db.models.functions import Lower
 from django.utils import timezone
 import uuid
 
+# Value and label are deliberately the same string so the picker in
+# frontend/src/components/inspectionSchema.js can list these without a
+# code-to-label map that would have to be kept in step.
+FUEL_TYPE_CHOICES = [
+    ('Petrol', 'Petrol'),
+    ('Diesel', 'Diesel'),
+    ('Hybrid', 'Hybrid'),
+    ('Plug-in Hybrid', 'Plug-in Hybrid'),
+    ('Electric', 'Electric'),
+    ('Other', 'Other'),
+]
+
+
 class Supplier(models.Model):
     """
     Represents the company/person you buy parts from.
@@ -102,6 +115,10 @@ class CustomerVehicle(models.Model):
     model = models.CharField(max_length=50, blank=True, help_text="e.g., Corolla")
     year = models.PositiveIntegerField(null=True, blank=True)
     color = models.CharField(max_length=50, blank=True, help_text="e.g., Pearl White")
+    # Attributes of the vehicle itself rather than of any one job, so they live
+    # here and an inspection can both read them back and fill them in.
+    chassis_number = models.CharField(max_length=40, blank=True)
+    fuel_type = models.CharField(max_length=20, blank=True, choices=FUEL_TYPE_CHOICES)
     current_mileage = models.PositiveIntegerField(null=True, blank=True, help_text="Current odometer reading in km")
     # When current_mileage was last actually read, which is NOT updated_at —
     # that moves whenever any field changes (colour, notes, customer link).
@@ -495,18 +512,6 @@ class RestockRecord(models.Model):
 # a customer. Change this only before the first inspection is saved — afterwards
 # the series is derived from the records themselves and a change leaves a gap.
 INSPECTION_NUMBER_START = 3794
-
-# Value and label are deliberately the same string so the picker in
-# frontend/src/components/inspectionSchema.js can list these without a
-# code-to-label map that would have to be kept in step.
-FUEL_TYPE_CHOICES = [
-    ('Petrol', 'Petrol'),
-    ('Diesel', 'Diesel'),
-    ('Hybrid', 'Hybrid'),
-    ('Plug-in Hybrid', 'Plug-in Hybrid'),
-    ('Electric', 'Electric'),
-    ('Other', 'Other'),
-]
 
 
 def inspection_overall_rating(ratings, excluded_sections=None):

@@ -2729,3 +2729,135 @@ class InspectionExcludedSectionTest(TestCase):
         """Backward compatibility: absent means nothing is excluded."""
         response = self._create()
         self.assertEqual(response.data['excluded_sections'], [])
+
+
+class InspectionRegistrySyncTest(TestCase):
+    """
+    The inspection sheet and the vehicle registry feed each other: typing a
+    known plate fills the sheet from the registry, and inspecting an unknown
+    one files the vehicle properly rather than leaving a bare plate behind.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='inspector', password='pw')
+        self.client.force_authenticate(user=self.user)
+
+    def _create(self, **overrides):
+        payload = {
+            'vehicle_number': 'WP CAL-3421',
+            'make_model': 'Honda Fit',
+            'year': 2014,
+            'chassis_number': 'GP5-3074330',
+            'fuel_type': 'Hybrid',
+            'mileage': 163710,
+            'checklist': {'engine': {'oil_leaks': 'Yes'}},
+        }
+        payload.update(overrides)
+        return self.client.post(reverse('create_inspection'), payload, format='json')
+
+    def test_an_unknown_plate_is_filed_with_everything_the_sheet_carries(self):
+        self._create()
+        vehicle = CustomerVehicle.objects.get(vehicle_number='WP CAL-3421')
+        self.assertEqual(vehicle.make, 'Honda')
+        self.assertEqual(vehicle.model, 'Fit')
+        self.assertEqual(vehicle.year, 2014)
+        self.assertEqual(vehicle.chassis_number, 'GP5-3074330')
+        self.assertEqual(vehicle.fuel_type, 'Hybrid')
+        # Mileage still travels through _refresh_vehicle_mileage.
+        self.assertEqual(vehicle.current_mileage, 163710)
+
+    def test_an_existing_vehicle_keeps_the_details_it_already_had(self):
+        """The registry is the curated record; one inspection must not rewrite it."""
+        CustomerVehicle.objects.create(
+            vehicle_number='WP CAL-3421', make='Toyota', model='Aqua',
+            year=2016, chassis_number='OLD-CHASSIS', fuel_type='Petrol',
+        )
+        self._create()
+        vehicle = CustomerVehicle.objects.get(vehicle_number='WP CAL-3421')
+        self.assertEqual(vehicle.make, 'Toyota')
+        self.assertEqual(vehicle.model, 'Aqua')
+        self.assertEqual(vehicle.year, 2016)
+        self.assertEqual(vehicle.chassis_number, 'OLD-CHASSIS')
+        self.assertEqual(vehicle.fuel_type, 'Petrol')
+
+    def test_an_existing_vehicle_gains_only_what_it_was_missing(self):
+        CustomerVehicle.objects.create(vehicle_number='WP CAL-3421', make='Honda')
+        self._create()
+        vehicle = CustomerVehicle.objects.get(vehicle_number='WP CAL-3421')
+        # Had a make already, so that stands; the blanks are filled in.
+        self.assertEqual(vehicle.make, 'Honda')
+        self.assertEqual(vehicle.model, 'Fit')
+        self.assertEqual(vehicle.chassis_number, 'GP5-3074330')
+        self.assertEqual(vehicle.fuel_type, 'Hybrid')
+        self.assertEqual(vehicle.year, 2014)
+
+    def test_filling_blanks_does_not_disturb_the_mileage_reading_stamp(self):
+        """
+        CustomerVehicle.save() stamps mileage_updated_at whenever the number
+        moves, so a save that only fills in a chassis number must not look
+        like a fresh odometer reading.
+        """
+        vehicle = CustomerVehicle.objects.create(
+            vehicle_number='WP CAL-3421', current_mileage=200000,
+        )
+        stamped = vehicle.mileage_updated_at
+        self._create(mileage=100)  # lower, so the mileage rule ignores it
+        vehicle.refresh_from_db()
+        self.assertEqual(vehicle.current_mileage, 200000)
+        self.assertEqual(vehicle.mileage_updated_at, stamped)
+
+    def test_a_sheet_with_no_extra_details_still_registers_the_plate(self):
+        self._create(make_model='', year=None, chassis_number='', fuel_type='', mileage=None)
+        self.assertTrue(CustomerVehicle.objects.filter(vehicle_number='WP CAL-3421').exists())
+
+    def test_a_sheet_with_only_a_plate_saves(self):
+        """
+        An inspector opens the job, records the vehicle, and works through the
+        207 components afterwards — so a sheet carrying nothing but a plate is
+        a normal starting point and must save.
+        """
+        response = self.client.post(
+            reverse('create_inspection'), {'vehicle_number': 'WP CAL-3421'}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['checklist'], {})
+        self.assertEqual(float(response.data['overall_rating']), 0.0)
+        self.assertTrue(response.data['inspection_number'])
+        # The plate is still filed, so the sheet has a vehicle to hang off.
+        self.assertTrue(CustomerVehicle.objects.filter(vehicle_number='WP CAL-3421').exists())
+
+
+class VehicleLookupAPITest(TestCase):
+    """The endpoint the inspection and estimate forms auto-fill from."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username='u', password='pw')
+        self.client.force_authenticate(user=self.user)
+        self.vehicle = CustomerVehicle.objects.create(
+            vehicle_number='WP CAL-3421', make='Honda', model='Fit', year=2014,
+            chassis_number='GP5-3074330', fuel_type='Hybrid', current_mileage=163710,
+        )
+
+    def test_lookup_returns_every_field_the_auto_fill_needs(self):
+        response = self.client.get(reverse('lookup_vehicle'), {'vehicle_number': 'WP CAL-3421'})
+        self.assertTrue(response.data['found'])
+        v = response.data['vehicle']
+        for field in ('make', 'model', 'year', 'chassis_number', 'fuel_type', 'current_mileage'):
+            self.assertIn(field, v, f"{field} missing from the lookup payload")
+        self.assertEqual(v['chassis_number'], 'GP5-3074330')
+        self.assertEqual(v['fuel_type'], 'Hybrid')
+
+    def test_lookup_is_case_and_whitespace_insensitive(self):
+        response = self.client.get(reverse('lookup_vehicle'), {'vehicle_number': '  wp cal-3421 '})
+        self.assertTrue(response.data['found'])
+
+    def test_an_unknown_plate_reports_not_found_rather_than_erroring(self):
+        response = self.client.get(reverse('lookup_vehicle'), {'vehicle_number': 'NOT-HERE'})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['found'])
+
+    def test_a_blank_plate_is_rejected(self):
+        response = self.client.get(reverse('lookup_vehicle'), {'vehicle_number': ''})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

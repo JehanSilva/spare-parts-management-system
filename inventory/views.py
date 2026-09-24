@@ -2552,25 +2552,44 @@ def pay_payroll_record(request, pk):
     return Response(PayrollSerializer(payroll).data)
 
 # --- VEHICLE INSPECTION VIEWS ---
-def _resolve_inspection_vehicle(vehicle_number, make_model):
+def _resolve_inspection_vehicle(vehicle_number, make_model, details=None):
     """
     Normalize the plate the way lookup_vehicle does, find it in the registry and
     register it if it's new — so an inspection's vehicle FK always holds and the
     vehicle page can list it. Mirrors _resolve_estimate_vehicle.
+
+    An unregistered plate is filed with everything the sheet carries, so
+    inspecting a vehicle for the first time also registers it properly rather
+    than leaving a bare plate behind. A plate that is already registered only
+    has its blanks filled in: the registry is the standing record of the
+    vehicle, and one inspection must not overwrite a detail curated there.
+    Mileage is deliberately not handled here — _refresh_vehicle_mileage owns
+    it, because it may only ever move upwards.
     """
     plate = (vehicle_number or '').strip().upper()
     if not plate:
         return None, ''
 
+    details = details or {}
+    # "Honda Fit" -> make "Honda", model "Fit"; a single word is all make.
+    make, _, model = (make_model or '').strip().partition(' ')
+    attrs = {
+        'make': make[:50],
+        'model': model.strip()[:50],
+        'year': details.get('year'),
+        'chassis_number': (details.get('chassis_number') or '')[:40],
+        'fuel_type': details.get('fuel_type') or '',
+    }
+
     vehicle = CustomerVehicle.objects.filter(vehicle_number__iexact=plate).first()
     if vehicle is None:
-        # "Honda Fit" -> make "Honda", model "Fit"; a single word is all make.
-        make, _, model = (make_model or '').strip().partition(' ')
-        vehicle = CustomerVehicle.objects.create(
-            vehicle_number=plate,
-            make=make[:50],
-            model=model.strip()[:50],
-        )
+        return CustomerVehicle.objects.create(vehicle_number=plate, **attrs), plate
+
+    missing = [field for field, value in attrs.items() if value and not getattr(vehicle, field)]
+    if missing:
+        for field in missing:
+            setattr(vehicle, field, attrs[field])
+        vehicle.save(update_fields=missing + ['updated_at'])
     return vehicle, plate
 
 
@@ -2643,6 +2662,7 @@ def create_inspection(request):
     vehicle, plate = _resolve_inspection_vehicle(
         serializer.validated_data.get('vehicle_number'),
         serializer.validated_data.get('make_model'),
+        serializer.validated_data,
     )
     inspection = serializer.save(
         vehicle=vehicle,
@@ -2671,6 +2691,7 @@ def update_inspection(request, pk):
         vehicle, plate = _resolve_inspection_vehicle(
             serializer.validated_data.get('vehicle_number'),
             serializer.validated_data.get('make_model', inspection.make_model),
+            serializer.validated_data,
         )
         extra = {'vehicle': vehicle, 'vehicle_number': plate}
 

@@ -35,6 +35,7 @@ import { customerDisplayName } from "../components/customerName";
 import ConfirmModal from "../components/ConfirmModal";
 import CustomerLinkPicker from "../components/CustomerLinkPicker";
 import AvatarBadge from "../components/AvatarBadge";
+import { FUEL_TYPES } from "../components/inspectionSchema";
 
 const formatLKR = (amount) =>
   new Intl.NumberFormat("en-LK", { style: "currency", currency: "LKR", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
@@ -61,6 +62,8 @@ const VehicleModal = ({ vehicle, onClose, onSaved }) => {
     model: vehicle?.model || "",
     year: vehicle?.year ? String(vehicle.year) : "",
     color: vehicle?.color || "",
+    chassis_number: vehicle?.chassis_number || "",
+    fuel_type: vehicle?.fuel_type || "",
     current_mileage: vehicle?.current_mileage ? String(vehicle.current_mileage) : "",
     notes: vehicle?.notes || "",
   });
@@ -141,6 +144,28 @@ const VehicleModal = ({ vehicle, onClose, onSaved }) => {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Color" id="reg-veh-color" value={form.color} onChange={(e) => setForm((p) => ({ ...p, color: e.target.value }))} placeholder="e.g. Pearl White" />
             <Field label="Current Mileage (km)" id="reg-veh-mileage" type="number" value={form.current_mileage} onChange={(e) => setForm((p) => ({ ...p, current_mileage: e.target.value }))} placeholder="e.g. 45000" />
+          </div>
+
+          {/* Attributes of the vehicle itself, shared with the inspection
+              sheet — it reads them back and fills them in when it learns them. */}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Chassis Number" id="reg-veh-chassis" value={form.chassis_number} onChange={(e) => setForm((p) => ({ ...p, chassis_number: e.target.value }))} placeholder="e.g. GP5-3074330" />
+            <div>
+              <label htmlFor="reg-veh-fuel" className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">
+                Fuel Type
+              </label>
+              <select
+                id="reg-veh-fuel"
+                value={form.fuel_type}
+                onChange={(e) => setForm((p) => ({ ...p, fuel_type: e.target.value }))}
+                className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-0 focus:border-gray-900 focus:bg-white transition-colors"
+              >
+                <option value="">—</option>
+                {FUEL_TYPES.map((f) => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <div>

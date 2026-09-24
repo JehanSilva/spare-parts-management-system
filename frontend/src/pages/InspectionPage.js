@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useDeferredValue } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Save, Printer, Plus, Trash2, Eye, EyeOff, Check, Upload, X, Wand2, List,
+  Loader2, Link2, UserCheck, PlusCircle, AlertTriangle,
 } from "lucide-react";
 import AlertComponent from "../components/AlertComponent";
 import InspectionDocument, {
@@ -14,11 +15,11 @@ import {
   optionsFor,
   emptyCustomField,
   CUSTOM_FIELD_OPTIONS,
-  filledCustomFields,
   isSectionExcluded,
   ratingTone,
 } from "../components/inspectionSchema";
-import { createInspection, updateInspection, fetchInspection } from "../services/api";
+import { createInspection, updateInspection, fetchInspection, lookupVehicle } from "../services/api";
+import { customerDisplayName } from "../components/customerName";
 import { apiErrorMessage } from "../components/apiErrorMessage";
 
 // The steps of the sheet, in the order they're worked through: the eleven
@@ -149,6 +150,113 @@ const PhotoDropzone = ({ id, caption, value, onPick, onClear }) => {
           </span>
         )}
       </label>
+    </div>
+  );
+};
+
+// Tells the inspector, while they type the plate, whether this sheet will
+// attach to a vehicle already on file or file a new one when saved. Mirrors
+// the estimate builder's VehicleLookupStatus.
+const VehicleLookupStatus = ({ lookup }) => {
+  if (lookup.status === "idle") return null;
+
+  if (lookup.status === "searching") {
+    return (
+      <p className="mt-1.5 text-xs text-gray-400 flex items-center gap-1.5">
+        <Loader2 size={12} className="animate-spin" /> Checking the vehicle registry…
+      </p>
+    );
+  }
+
+  if (lookup.status === "not_found") {
+    return (
+      <p className="mt-1.5 text-xs text-amber-600 flex items-center gap-1.5">
+        <PlusCircle size={12} className="shrink-0" />
+        New vehicle — it&rsquo;ll be added to the registry when you save.
+      </p>
+    );
+  }
+
+  const owner = lookup.vehicle?.customer_details;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      <span className="inline-flex items-center gap-1.5 font-semibold text-green-700">
+        <Link2 size={12} className="shrink-0" /> Details filled from the registry
+      </span>
+      {owner && (
+        <span className="inline-flex items-center gap-1.5 text-gray-500">
+          <UserCheck size={12} className="shrink-0 text-gray-400" /> {customerDisplayName(owner)}
+        </span>
+      )}
+    </div>
+  );
+};
+
+// A value-identity of the sheet, used only to tell "changed since the last
+// save" from "untouched". Keys are sorted so the comparison can't be upset by
+// two objects carrying the same data in a different insertion order, and a
+// picked photo is identified by name and size because a File has no value to
+// compare.
+const stableShape = (value) => {
+  if (Array.isArray(value)) return value.map(stableShape);
+  if (value && typeof value === "object" && !(value instanceof File)) {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => ({ ...acc, [key]: stableShape(value[key]) }), {});
+  }
+  return value;
+};
+
+const fingerprint = (inspection) => {
+  const photo = (v) => (v instanceof File ? `file:${v.name}:${v.size}:${v.lastModified}` : v || "");
+  return JSON.stringify(
+    stableShape({ ...inspection, frontImage: photo(inspection.frontImage), rearImage: photo(inspection.rearImage) })
+  );
+};
+
+// Leaving with unsaved work is the one thing that can lose a sheet outright,
+// so it asks rather than warns — and offers to do the save itself.
+const LeavePrompt = ({ open, saving, onSave, onDiscard, onStay }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="p-4 border-b border-amber-100 bg-amber-50 flex items-center gap-3">
+          <div className="p-2 rounded-full bg-amber-100 text-amber-600">
+            <AlertTriangle size={22} />
+          </div>
+          <h3 className="font-bold text-gray-900">Unsaved changes</h3>
+        </div>
+        <div className="px-6 py-5">
+          <p className="text-sm text-gray-600">
+            This inspection has changes that haven&rsquo;t been saved. Leaving now discards them.
+          </p>
+        </div>
+        <div className="px-6 pb-6 flex flex-col sm:flex-row gap-2 sm:justify-end">
+          <button
+            type="button"
+            onClick={onStay}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-gray-100 text-gray-700 hover:bg-gray-200"
+          >
+            Keep editing
+          </button>
+          <button
+            type="button"
+            onClick={onDiscard}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-red-200 text-red-600 hover:bg-red-50"
+          >
+            Discard changes
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-gray-900 text-white hover:bg-black disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save and leave"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -600,6 +708,19 @@ const InspectionPage = () => {
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const documentRef = useRef(null);
   const loadedIdRef = useRef(null);
+  // Registry lookup for the plate being typed, mirroring EstimatePage.
+  const [vehicleLookup, setVehicleLookup] = useState({ status: "idle", vehicle: null });
+  const lookupRequestRef = useRef(0);
+  // The plate the inspector typed, and whose registry details may therefore be
+  // pulled in. Opening a saved inspection leaves this null, so a sheet's stored
+  // vehicle details are never rewritten behind their back.
+  const autoFillPlateRef = useRef(null);
+  const [leavePrompt, setLeavePrompt] = useState(false);
+  // The sheet as it last stood on the server. blankInspection() stamps today's
+  // date and time, so the baseline has to come from the actual initial state
+  // rather than a second call to it.
+  const savedFingerprintRef = useRef(null);
+  if (savedFingerprintRef.current === null) savedFingerprintRef.current = fingerprint(inspection);
 
   // Rendering six A4 pages on every keystroke would make the selects lag, and
   // nobody is reading the preview mid-edit. Let it fall behind the form.
@@ -622,7 +743,9 @@ const InspectionPage = () => {
     if (!current) {
       // Navigating from a saved inspection back to /inspections/new.
       loadedIdRef.current = null;
-      setInspection(blankInspection());
+      const blank = blankInspection();
+      savedFingerprintRef.current = fingerprint(blank);
+      setInspection(blank);
       setSavedId(null);
       setInspectionNumber("");
       setLoading(false);
@@ -639,7 +762,9 @@ const InspectionPage = () => {
         // refetch while the first run's result is thrown away as cancelled,
         // which leaves the page stuck on its skeleton forever.
         loadedIdRef.current = record.id;
-        setInspection(fromInspectionRecord(record));
+        const loaded = fromInspectionRecord(record);
+        savedFingerprintRef.current = fingerprint(loaded);
+        setInspection(loaded);
         setInspectionNumber(record.inspection_number || "");
         setSavedId(record.id);
       })
@@ -668,7 +793,69 @@ const InspectionPage = () => {
     return () => window.removeEventListener("paste", onPaste);
   }, []);
 
+  // Look the plate up in the registry as it is typed, so the sheet can say
+  // whether it will attach to a vehicle already on file and fill in what that
+  // vehicle already knows.
+  const vehicleNumber = inspection.vehicleNumber;
+  useEffect(() => {
+    const plate = vehicleNumber.trim();
+    // Invalidate anything already in flight: clearing the timer below only
+    // stops requests that haven't fired, and a slow answer for an older plate
+    // must not overwrite the current state.
+    const requestId = ++lookupRequestRef.current;
+
+    if (plate.length < 3) {
+      setVehicleLookup({ status: "idle", vehicle: null });
+      return;
+    }
+
+    setVehicleLookup({ status: "searching", vehicle: null });
+    const timer = setTimeout(async () => {
+      try {
+        const result = await lookupVehicle(plate);
+        if (lookupRequestRef.current !== requestId) return; // superseded by a newer edit
+        if (!result.found) {
+          setVehicleLookup({ status: "not_found", vehicle: null });
+          return;
+        }
+        setVehicleLookup({ status: "found", vehicle: result.vehicle });
+
+        // Only for a plate the inspector just typed — see autoFillPlateRef.
+        if (autoFillPlateRef.current !== plate) return;
+
+        const v = result.vehicle;
+        const registryMakeModel = [v.make, v.model].filter(Boolean).join(" ");
+        const owner = v.customer_details;
+        // The registry is the standing record of the vehicle, so what it holds
+        // wins. It can only fill, never blank: a field the registry has
+        // nothing for is left exactly as typed.
+        setInspection((prev) => ({
+          ...prev,
+          ...(registryMakeModel ? { makeModel: registryMakeModel } : {}),
+          ...(v.year ? { year: String(v.year) } : {}),
+          ...(v.chassis_number ? { chassisNumber: v.chassis_number } : {}),
+          ...(v.fuel_type ? { fuelType: v.fuel_type } : {}),
+          ...(v.current_mileage ? { mileage: String(v.current_mileage) } : {}),
+          ...(owner?.name ? { customerName: customerDisplayName(owner) } : {}),
+        }));
+      } catch {
+        if (lookupRequestRef.current === requestId) {
+          setVehicleLookup({ status: "idle", vehicle: null });
+        }
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [vehicleNumber]);
+
   const setField = (field, value) => setInspection((prev) => ({ ...prev, [field]: value }));
+
+  const handlePlateChange = (value) => {
+    const plate = value.toUpperCase();
+    // The inspector is choosing this plate, so its registry details are welcome.
+    autoFillPlateRef.current = plate.trim();
+    setField("vehicleNumber", plate);
+  };
 
   const setComponent = (categoryKey, componentKey, value) =>
     setInspection((prev) => ({
@@ -754,14 +941,11 @@ const InspectionPage = () => {
   const pickPhoto = async (field, file) => setField(field, await downscaleImage(file));
 
   const validate = () => {
+    // The plate is the only hard requirement: it is what the sheet is filed
+    // against and what the registry link resolves from. Components are filled
+    // in while the car is worked through — often across more than one sitting
+    // — so an empty checklist is a normal starting point, not an error.
     if (!inspection.vehicleNumber.trim()) return "Enter the vehicle's registration number first.";
-    const answered = INSPECTION_CATEGORIES.reduce(
-      (n, cat) => n + answeredCount(inspection.checklist, cat, inspection.customFields), 0
-    );
-    // A sheet whose only content is custom rows is still a real sheet.
-    const namedExtras = Object.values(inspection.customFields || {})
-      .reduce((n, rows) => n + filledCustomFields(rows).length, 0);
-    if (!answered && !namedExtras) return "Record at least one component before saving.";
     return null;
   };
 
@@ -781,8 +965,13 @@ const InspectionPage = () => {
       setSavedId(record.id);
       setInspectionNumber(record.inspection_number || "");
       // Take the saved record back: the photos are now Cloudinary URLs rather
-      // than Files, which is what stops the next save re-uploading them.
-      setInspection(fromInspectionRecord(record));
+      // than Files, which is what stops the next save re-uploading them. The
+      // baseline comes from that same object, because the server normalises
+      // what it stored — a plate is upper-cased, blank ratings are dropped —
+      // and comparing against what was sent would read as dirty immediately.
+      const saved = fromInspectionRecord(record);
+      savedFingerprintRef.current = fingerprint(saved);
+      setInspection(saved);
       if (!savedId) {
         loadedIdRef.current = record.id;
         navigate(`/inspections/${record.id}`, { replace: true });
@@ -812,6 +1001,40 @@ const InspectionPage = () => {
     window.print();
   };
 
+  const isDirty = useMemo(
+    () => fingerprint(inspection) !== savedFingerprintRef.current,
+    [inspection]
+  );
+
+  const handleBack = () => {
+    if (isDirty) {
+      setLeavePrompt(true);
+      return;
+    }
+    navigate("/inspections");
+  };
+
+  const saveAndLeave = async () => {
+    const record = await handleSave();
+    // A failed save — a missing plate, or the request itself — leaves the
+    // prompt up rather than silently dropping the work it was protecting.
+    if (!record) return;
+    setLeavePrompt(false);
+    navigate("/inspections");
+  };
+
+  // Covers a refresh or a closed tab, which the in-app prompt can't see.
+  // Browsers show their own wording here; the flag is all they take.
+  useEffect(() => {
+    if (!isDirty) return undefined;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isDirty]);
+
   const totalAnswered = INSPECTION_CATEGORIES.reduce(
     (n, cat) => n + answeredCount(inspection.checklist, cat, inspection.customFields), 0
   );
@@ -838,16 +1061,25 @@ const InspectionPage = () => {
           onClose={() => setAlertInfo({ type: "", message: "" })}
         />
 
+        <LeavePrompt
+          open={leavePrompt}
+          saving={saving}
+          onSave={saveAndLeave}
+          onDiscard={() => navigate("/inspections")}
+          onStay={() => setLeavePrompt(false)}
+        />
+
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
           <div className="flex items-center gap-3">
-            <Link
-              to="/inspections"
+            <button
+              type="button"
+              onClick={handleBack}
               className="p-2 rounded-xl hover:bg-gray-100 text-gray-500"
               aria-label="Back to inspections"
             >
               <ArrowLeft size={18} />
-            </Link>
+            </button>
             <div>
               <h1 className="text-xl lg:text-2xl font-bold text-gray-900">
                 {inspectionNumber ? `Inspection ${inspectionNumber}` : "New Inspection"}
@@ -914,12 +1146,18 @@ const InspectionPage = () => {
               </div>
 
               <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                <TextField
-                  label="Reg. Number" id="plate"
-                  value={inspection.vehicleNumber}
-                  onChange={(e) => setField("vehicleNumber", e.target.value.toUpperCase())}
-                  placeholder="WP CAL-3421"
-                />
+                {/* The status sits with the plate rather than in the grid
+                    flow, so a two-line message can't shove the fields beside
+                    it out of alignment. */}
+                <div className="col-span-2 lg:col-span-1">
+                  <TextField
+                    label="Reg. Number" id="plate"
+                    value={inspection.vehicleNumber}
+                    onChange={(e) => handlePlateChange(e.target.value)}
+                    placeholder="WP CAL-3421"
+                  />
+                  <VehicleLookupStatus lookup={vehicleLookup} />
+                </div>
                 <TextField
                   label="Chassis Number" id="chassis"
                   value={inspection.chassisNumber}

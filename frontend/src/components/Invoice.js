@@ -60,12 +60,41 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
     return {
       name: item.part_name || item.name || item.description || "Item",
       part_number: item.part_number,
+      isLabor: item.item_type === "LABOR",
       qty,
       originalPrice,
       discountAmount,
       lineTotal,
     };
   });
+
+  // Parts first, then the repairs done — the two are read for different
+  // reasons (warranty/returns vs. workmanship), so the invoice groups them
+  // instead of interleaving them in cart order. No headings: the part
+  // numbers under the part names already mark where one ends and the other
+  // begins. Numbering runs continuously so a line has one clear reference.
+  const partItems = items.filter((i) => !i.isLabor);
+  const laborItems = items.filter((i) => i.isLabor);
+
+  // `offset` carries the running line number across the two groups.
+  const renderRows = (list, offset) =>
+    list.map((item, index) => (
+      <tr key={`${offset}-${index}`} className="border-b border-gray-200 align-top">
+        <td className="py-1.5 pl-3 pr-2 text-gray-600">{offset + index + 1}</td>
+        <td className="py-1.5 px-2">
+          <div className="font-bold text-gray-900">{item.name}</div>
+          {item.part_number && (
+            <div className="text-[9px] text-gray-500">{item.part_number}</div>
+          )}
+        </td>
+        <td className="py-1.5 px-2 text-right">{item.qty.toFixed(2)}</td>
+        <td className="py-1.5 px-2 text-right">{formatAmount(item.originalPrice)}</td>
+        <td className="py-1.5 px-2 text-right">
+          {formatAmount(item.discountAmount * item.qty)}
+        </td>
+        <td className="py-1.5 pl-2 pr-3 text-right">{formatAmount(item.lineTotal)}</td>
+      </tr>
+    ));
 
   const issuedAt = sale ? new Date(sale.created_at) : new Date();
   const issuedDate = issuedAt.toLocaleDateString("en-GB");
@@ -195,23 +224,8 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
           </tr>
         </thead>
         <tbody>
-          {items.map((item, index) => (
-            <tr key={index} className="border-b border-gray-200 align-top">
-              <td className="py-1.5 pl-3 pr-2 text-gray-600">{index + 1}</td>
-              <td className="py-1.5 px-2">
-                <div className="font-bold text-gray-900">{item.name}</div>
-                {item.part_number && (
-                  <div className="text-[9px] text-gray-500">{item.part_number}</div>
-                )}
-              </td>
-              <td className="py-1.5 px-2 text-right">{item.qty.toFixed(2)}</td>
-              <td className="py-1.5 px-2 text-right">{formatAmount(item.originalPrice)}</td>
-              <td className="py-1.5 px-2 text-right">
-                {formatAmount(item.discountAmount * item.qty)}
-              </td>
-              <td className="py-1.5 pl-2 pr-3 text-right">{formatAmount(item.lineTotal)}</td>
-            </tr>
-          ))}
+          {renderRows(partItems, 0)}
+          {renderRows(laborItems, partItems.length)}
         </tbody>
       </table>
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchSales, fetchParts, updateSale, cancelSale, reverseSale, markSaleAsPaid } from "../services/api";
 import BillingDocument from "../components/BillingDocument";
+import { getVehicleInfo } from "../components/billingVehicle";
 import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
 import { useSettings } from "../context/SettingsContext";
 import AlertComponent from "../components/AlertComponent";
@@ -32,6 +33,20 @@ import {
 // read it back in local time rather than slicing the UTC ISO string, which
 // would show the previous day for anything billed after 5:30am Colombo time.
 const toDateInput = (iso) => (iso ? new Date(iso).toLocaleDateString("en-CA") : "");
+
+// Plate, with the registry make/model beneath it. A plate on its own doesn't
+// say which car a past job was on, and Sale.vehicle_number is free text — an
+// unregistered plate has no vehicle_details, so the second line drops out.
+// Shared by the desktop row and the mobile card so the two can't drift.
+const VehicleLines = ({ sale, subClassName = "text-[11px] text-gray-400" }) => {
+  const { makeModel } = getVehicleInfo(sale);
+  return (
+    <span className="flex flex-col leading-tight text-left">
+      {sale.vehicle_number}
+      {makeModel && <span className={subClassName}>{makeModel}</span>}
+    </span>
+  );
+};
 
 const EditSaleModal = ({ isOpen, sale, onClose, onSave }) => {
   const [customerName, setCustomerName] = useState("");
@@ -444,11 +459,17 @@ const SalesHistoryPage = () => {
       const partId = item.part || item.part_id;
       const originalPart = parts.find((p) => p.id === partId);
 
+      // Labor lines have no catalogue part at all, so they must not fall
+      // through to "N/A"/"Unknown" — the serializer already aliases
+      // part_name to the repair description for them.
+      const isLabor = item.item_type === "LABOR";
+
       return {
         ...item,
-        part_number: originalPart ? originalPart.part_number : "N/A",
+        part_number: originalPart ? originalPart.part_number : isLabor ? "" : "N/A",
         part_name:
-          item.part_name || (originalPart ? originalPart.name : "Unknown"),
+          item.part_name ||
+          (originalPart ? originalPart.name : isLabor ? "Repair / Labour" : "Unknown"),
       };
     });
     return { ...sale, items: enrichedItems };
@@ -793,16 +814,20 @@ const SalesHistoryPage = () => {
                     </h3>
                     <div className="flex justify-between items-center mt-2">
                        <div className="flex flex-col gap-1">
-                          <span className="text-sm text-gray-600 flex items-center gap-1">
+                          <span className="text-sm text-gray-600 flex items-start gap-1">
                             <Car
                               size={14}
-                              className={
+                              className={`mt-0.5 shrink-0 ${
                                 sale.vehicle_number
                                   ? "text-orange-500"
                                   : "text-gray-300"
-                              }
+                              }`}
                             />
-                            {sale.vehicle_number || "No Vehicle"}
+                            {sale.vehicle_number ? (
+                              <VehicleLines sale={sale} subClassName="text-xs text-gray-400" />
+                            ) : (
+                              "No Vehicle"
+                            )}
                           </span>
                           {sale.status === 'CANCELLED' && (
                             <div className="flex flex-wrap items-center gap-1.5 mt-1">
@@ -1041,9 +1066,9 @@ const SalesHistoryPage = () => {
                       </td>
                       <td className="p-4 text-sm text-gray-600">
                         {sale.vehicle_number ? (
-                          <span className="flex items-center gap-2">
-                            <Car size={14} className="text-orange-500" />
-                            {sale.vehicle_number}
+                          <span className="flex items-start gap-2">
+                            <Car size={14} className="text-orange-500 mt-0.5 shrink-0" />
+                            <VehicleLines sale={sale} />
                           </span>
                         ) : (
                           <span className="text-gray-400">-</span>

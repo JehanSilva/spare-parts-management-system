@@ -444,11 +444,17 @@ const SalesHistoryPage = () => {
       const partId = item.part || item.part_id;
       const originalPart = parts.find((p) => p.id === partId);
 
+      // Labor lines have no catalogue part at all, so they must not fall
+      // through to "N/A"/"Unknown" — the serializer already aliases
+      // part_name to the repair description for them.
+      const isLabor = item.item_type === "LABOR";
+
       return {
         ...item,
-        part_number: originalPart ? originalPart.part_number : "N/A",
+        part_number: originalPart ? originalPart.part_number : isLabor ? "" : "N/A",
         part_name:
-          item.part_name || (originalPart ? originalPart.name : "Unknown"),
+          item.part_name ||
+          (originalPart ? originalPart.name : isLabor ? "Repair / Labour" : "Unknown"),
       };
     });
     return { ...sale, items: enrichedItems };

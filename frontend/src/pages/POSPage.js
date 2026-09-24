@@ -1187,6 +1187,10 @@ const POSPage = () => {
   const [cartToDelete, setCartToDelete] = useState(null);
   const [laborModalOpen, setLaborModalOpen] = useState(false);
   const [editingLaborItem, setEditingLaborItem] = useState(null);
+  // Which half of the cart the panel is showing — parts sold vs. repairs done.
+  // Purely a view filter; the cart itself stays one list, so totals, the
+  // ActiveCart sync and checkout are untouched by it.
+  const [cartTab, setCartTab] = useState("PARTS");
   const [showNoCustomerConfirm, setShowNoCustomerConfirm] = useState(false);
   const [itemToRemove, setItemToRemove] = useState(null);
   const [showMileageWarning, setShowMileageWarning] = useState(false);
@@ -1199,6 +1203,12 @@ const POSPage = () => {
       carts[0] || { id: "default", customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "", saleDate: "" }
     );
   }, [carts, activeCartId]);
+
+  // Switching repair tabs starts you on Parts again — carrying the previous
+  // job's Repairs view over would open the next cart on an empty list.
+  useEffect(() => {
+    setCartTab("PARTS");
+  }, [activeCartId]);
 
   const cart = activeCart.items;
   const customerName = activeCart.customerName;
@@ -1731,6 +1741,8 @@ const POSPage = () => {
         return { ...c, items: newItems };
       });
     });
+    // Keep the panel on the half the cashier just added to.
+    setCartTab("PARTS");
   }, [activeCartId]);
 
   // 3.5 Add (or edit) a Repair/Labor line item — priced by hand, not tied to
@@ -1772,6 +1784,9 @@ const POSPage = () => {
     );
     setLaborModalOpen(false);
     setEditingLaborItem(null);
+    // Show the line that was just added/edited rather than leaving the
+    // cashier on the Parts tab wondering whether it registered.
+    setCartTab("LABOR");
   };
 
   const handleOpenEditLabor = (item) => {
@@ -1936,6 +1951,28 @@ const POSPage = () => {
   const totalItems = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.quantity, 0);
   }, [cart]);
+
+  // The two halves the cart panel tabs between. Line order within each is the
+  // cart's own (newest first), so switching tabs never reshuffles anything.
+  const partLines = useMemo(
+    () => cart.filter((item) => item.item_type !== "LABOR"),
+    [cart]
+  );
+  const laborLines = useMemo(
+    () => cart.filter((item) => item.item_type === "LABOR"),
+    [cart]
+  );
+  const visibleCartLines = cartTab === "LABOR" ? laborLines : partLines;
+
+  const sectionTotal = useCallback(
+    (lines) =>
+      lines.reduce((sum, item) => {
+        const originalPrice = parseFloat(item.sell_price) || 0;
+        const discountVal = parseFloat(item.discountAmount) || 0;
+        return sum + (originalPrice - discountVal) * item.quantity;
+      }, 0),
+    []
+  );
 
   // Live catalogue rows keyed by part id, so a cart line's discount allowance
   // reflects the part's current minimum selling price rather than whatever was
@@ -2591,17 +2628,63 @@ const POSPage = () => {
             )}
           </div>
 
-          <div className="shrink-0 px-3 pt-3">
-            <button
-              onClick={() => setLaborModalOpen(true)}
-              className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-dashed border-blue-200 hover:border-blue-300 rounded-xl py-2 transition-colors"
-            >
-              <Wrench size={13} /> Add Repair / Labor
-            </button>
+          {/* PARTS / REPAIRS TABS — browser-style, so the active tab merges
+              into the list beneath it and the cart reads as two separate
+              sheets rather than one mixed list. This is a view filter only:
+              `cart` stays a single list for totals, sync and checkout. */}
+          <div className="shrink-0 flex items-end gap-1 px-3 pt-2.5 bg-white border-b border-gray-200">
+            {[
+              { key: "PARTS", label: "Parts", Icon: Package, lines: partLines },
+              { key: "LABOR", label: "Repairs & Labor", Icon: Wrench, lines: laborLines },
+            ].map(({ key, label, Icon, lines }) => {
+              const isActive = cartTab === key;
+              const isLabor = key === "LABOR";
+              return (
+                <button
+                  key={key}
+                  onClick={() => setCartTab(key)}
+                  className={`-mb-px flex items-center gap-1.5 px-3 pt-1.5 pb-2 rounded-t-lg border border-b-0 text-[11px] font-bold transition-colors ${isActive
+                      ? `bg-gray-50/50 border-gray-200 ${isLabor ? "text-blue-700" : "text-gray-800"}`
+                      : "bg-gray-100 border-transparent text-gray-400 hover:bg-gray-200/70 hover:text-gray-600"
+                    }`}
+                >
+                  <Icon size={12} className={isActive && isLabor ? "text-blue-500" : ""} />
+                  <span className="whitespace-nowrap">{label}</span>
+                  {lines.length > 0 && (
+                    <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold leading-none ${isActive
+                        ? isLabor ? "bg-blue-100 text-blue-700" : "bg-gray-800 text-white"
+                        : "bg-gray-300 text-gray-600"
+                      }`}>
+                      {lines.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+
+            {/* Running total for whichever half is open — the figure a cashier
+                is asked for ("how much is the labour?") without doing the
+                arithmetic off the grand total. */}
+            {visibleCartLines.length > 0 && (
+              <span className="ml-auto pb-2 text-[10px] font-bold text-gray-400 whitespace-nowrap">
+                LKR {sectionTotal(visibleCartLines).toLocaleString()}
+              </span>
+            )}
           </div>
 
+          {cartTab === "LABOR" && (
+            <div className="shrink-0 px-3 pt-3 bg-gray-50/50">
+              <button
+                onClick={() => setLaborModalOpen(true)}
+                className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-dashed border-blue-200 hover:border-blue-300 rounded-xl py-2 transition-colors"
+              >
+                <Wrench size={13} /> Add Repair / Labor
+              </button>
+            </div>
+          )}
+
           <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2 bg-gray-50/50">
-            {cart.length === 0 ? (
+            {cart.length === 0 && cartTab === "PARTS" ? (
               <div className="text-center text-gray-400 mt-20 flex flex-col items-center">
                 <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-4">
                   <ShoppingCart size={32} className="opacity-40" />
@@ -2609,8 +2692,27 @@ const POSPage = () => {
                 <p className="text-lg font-semibold text-gray-500">Cart is empty</p>
                 <p className="text-sm">Select items to start a sale</p>
               </div>
+            ) : visibleCartLines.length === 0 ? (
+              // This half is empty but the sale isn't (or the Add button is
+              // already sitting right above) — say so quietly rather than
+              // repeating the full "cart is empty" panel.
+              <div className="text-center text-gray-400 mt-12 flex flex-col items-center gap-2">
+                {cartTab === "LABOR" ? (
+                  <>
+                    <Wrench size={22} className="opacity-40" />
+                    <p className="text-sm font-semibold text-gray-500">No repairs or labour added</p>
+                    <p className="text-xs">Use the button above to add one</p>
+                  </>
+                ) : (
+                  <>
+                    <Package size={22} className="opacity-40" />
+                    <p className="text-sm font-semibold text-gray-500">No parts added</p>
+                    <p className="text-xs">Pick parts from the catalogue on the left</p>
+                  </>
+                )}
+              </div>
             ) : (
-              cart.map((item) => {
+              visibleCartLines.map((item) => {
                 const original = parseFloat(item.sell_price) || 0;
                 const discountVal = parseFloat(item.discountAmount) || 0;
                 const final = original - discountVal;

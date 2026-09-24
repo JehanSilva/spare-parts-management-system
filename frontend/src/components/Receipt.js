@@ -42,8 +42,9 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
     totalSavings += discountAmount * qty;
 
     return {
-      name: item.part_name || item.name,
+      name: item.part_name || item.name || item.description || "Item",
       part_number: item.part_number,
+      isLabor: item.item_type === "LABOR",
       qty,
       originalPrice,
       finalPrice,
@@ -51,6 +52,39 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
       lineTotal,
     };
   });
+
+  // Parts first, then the repairs done — same grouping as the A4 invoice, so
+  // the two documents describe a sale the same way.
+  const partItems = items.filter((i) => !i.isLabor);
+  const laborItems = items.filter((i) => i.isLabor);
+
+  const renderRows = (list, offset) =>
+    list.map((item, index) => (
+      <tr key={`${offset}-${index}`}>
+        <td className="py-2 pr-1 align-top">
+          <div className="font-bold">{item.name}</div>
+          {item.part_number && (
+            <div className="text-[9px] text-gray-500">{item.part_number}</div>
+          )}
+        </td>
+        <td className="py-2 text-center align-top">{item.qty}</td>
+        <td className="py-2 text-right align-top">
+          {item.discountAmount > 0 ? (
+            <div className="flex flex-col items-end leading-none space-y-0.5">
+              <span className="line-through text-[9px] text-gray-400">
+                {item.originalPrice.toFixed(2)}
+              </span>
+              <span className="font-bold">{item.finalPrice.toFixed(2)}</span>
+            </div>
+          ) : (
+            <span>{item.originalPrice.toFixed(2)}</span>
+          )}
+        </td>
+        <td className="py-2 text-right font-bold align-top">
+          {item.lineTotal.toFixed(2)}
+        </td>
+      </tr>
+    ));
 
   // Meta Info
   const date = sale
@@ -141,36 +175,8 @@ const Receipt = forwardRef(({ sale, cartItems }, ref) => {
           </tr>
         </thead>
         <tbody className="text-[11px]">
-          {items.map((item, index) => (
-            <tr key={index}>
-              <td className="py-2 pr-1 align-top">
-                <div className="font-bold">{item.name}</div>
-                {item.part_number && (
-                  <div className="text-[9px] text-gray-500">
-                    {item.part_number}
-                  </div>
-                )}
-              </td>
-              <td className="py-2 text-center align-top">{item.qty}</td>
-              <td className="py-2 text-right align-top">
-                {item.discountAmount > 0 ? (
-                  <div className="flex flex-col items-end leading-none space-y-0.5">
-                    <span className="line-through text-[9px] text-gray-400">
-                      {item.originalPrice.toFixed(2)}
-                    </span>
-                    <span className="font-bold">
-                      {item.finalPrice.toFixed(2)}
-                    </span>
-                  </div>
-                ) : (
-                  <span>{item.originalPrice.toFixed(2)}</span>
-                )}
-              </td>
-              <td className="py-2 text-right font-bold align-top">
-                {item.lineTotal.toFixed(2)}
-              </td>
-            </tr>
-          ))}
+          {renderRows(partItems, 0)}
+          {renderRows(laborItems, partItems.length)}
         </tbody>
       </table>
 

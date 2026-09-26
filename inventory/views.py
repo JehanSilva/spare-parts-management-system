@@ -2246,6 +2246,9 @@ def sync_active_carts(request):
                 'mileage': cart.get('mileage'),
                 'notes': cart.get('notes', ''),
                 'sale_date': cart.get('sale_date') or None,
+                'payment_mode': cart.get('payment_mode') or 'PAID',
+                'partial_amount_paid': cart.get('partial_amount_paid', ''),
+                'credit_note': cart.get('credit_note', ''),
             }
         )
 

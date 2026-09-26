@@ -374,6 +374,16 @@ class ActiveCart(models.Model):
     # session) so it survives navigating away and switching repair tabs —
     # each job card bills on its own date. NULL = record the sale today.
     sale_date = models.DateField(null=True, blank=True)
+    # The payment decision for this job card, held per cart for the same
+    # reason sale_date is — each repair tab carries its own PAID / PARTIAL /
+    # CREDIT choice across tab switches and reloads.
+    payment_mode = models.CharField(max_length=10, default='PAID')
+    # The "amount received now" exactly as typed. Kept as text, not Decimal,
+    # so a half-typed value round-trips unchanged and the box doesn't
+    # redisplay as "12.00"; the figure that counts is Sale.amount_paid,
+    # written at checkout.
+    partial_amount_paid = models.CharField(max_length=20, blank=True, default='')
+    credit_note = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

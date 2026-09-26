@@ -75,6 +75,28 @@ const toCartPayload = (cart) => ({
   mileage: cart.mileage ? parseInt(cart.mileage) : null,
   notes: cart.notes || "",
   sale_date: cart.saleDate || null,
+  payment_mode: cart.paymentMode || "PAID",
+  partial_amount_paid: cart.partialAmountPaid || "",
+  credit_note: cart.creditNote || "",
+});
+
+// A fresh repair tab. One factory rather than an object literal at each of
+// the five places a blank cart is born (first load, the + button, discarding
+// the last cart, and after a checkout) — every field a cart carries has to be
+// present in all of them or the tabs drift apart.
+const makeEmptyCart = (id) => ({
+  id,
+  customerName: "",
+  vehicleNumber: "",
+  customerId: null,
+  customerDetails: null,
+  items: [],
+  mileage: "",
+  notes: "",
+  saleDate: "",
+  paymentMode: "PAID",
+  partialAmountPaid: "",
+  creditNote: "",
 });
 
 // The cart's own copy of the linked customer. The name is denormalized (the
@@ -1058,6 +1080,9 @@ const POSPage = () => {
           mileage: c.mileage != null ? String(c.mileage) : "",
           notes: c.notes || "",
           saleDate: c.sale_date || "",
+          paymentMode: c.payment_mode || "PAID",
+          partialAmountPaid: c.partial_amount_paid || "",
+          creditNote: c.credit_note || "",
         }));
 
         if (mapped.length > 0) {
@@ -1073,19 +1098,7 @@ const POSPage = () => {
         } else {
           // Initialize with a single default cart
           const newId = "cart_" + Date.now();
-          const initialCarts = [
-            {
-              id: newId,
-              customerName: "",
-              vehicleNumber: "",
-              customerId: null,
-              customerDetails: null,
-              items: [],
-              mileage: "",
-              notes: "",
-              saleDate: "",
-            },
-          ];
+          const initialCarts = [makeEmptyCart(newId)];
           setCarts(initialCarts);
           setActiveCartId(newId);
 
@@ -1144,6 +1157,9 @@ const POSPage = () => {
         mileage: c.mileage != null ? String(c.mileage) : "",
         notes: c.notes || "",
         saleDate: c.sale_date || "",
+        paymentMode: c.payment_mode || "PAID",
+        partialAmountPaid: c.partial_amount_paid || "",
+        creditNote: c.credit_note || "",
       }));
       if (mapped.length > 0) {
         setCarts(mapped);
@@ -1153,19 +1169,7 @@ const POSPage = () => {
         setAlertInfo({ type: "success", message: "Repairs synced with database." });
       } else {
         const newId = "cart_" + Date.now();
-        const initialCarts = [
-          {
-            id: newId,
-            customerName: "",
-            vehicleNumber: "",
-            customerId: null,
-            customerDetails: null,
-            items: [],
-            mileage: "",
-            notes: "",
-            saleDate: "",
-          },
-        ];
+        const initialCarts = [makeEmptyCart(newId)];
         setCarts(initialCarts);
         setActiveCartId(newId);
         await syncActiveCarts(initialCarts.map(toCartPayload));
@@ -1200,7 +1204,7 @@ const POSPage = () => {
   const activeCart = useMemo(() => {
     return (
       carts.find((c) => c.id === activeCartId) ||
-      carts[0] || { id: "default", customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "", saleDate: "" }
+      carts[0] || makeEmptyCart("default")
     );
   }, [carts, activeCartId]);
 
@@ -1219,6 +1223,18 @@ const POSPage = () => {
   // mileage and notes it belongs to the job card, so it survives leaving the
   // page and switching repair tabs instead of resetting to today.
   const saleDate = activeCart.saleDate || "";
+  // How this job is being paid for. Per cart for the same reason the date is:
+  // a half-entered partial payment on one repair tab must still be there after
+  // a detour through another tab (or a page reload), not silently reset to
+  // Full Payment.
+  const paymentMode = activeCart.paymentMode || "PAID";
+  const creditNote = activeCart.creditNote || "";
+  const partialAmountPaid = activeCart.partialAmountPaid || "";
+
+  // Every per-cart field is written through here, so each edit lands on the
+  // active tab only and trips the debounced sync.
+  const updateActiveCart = (fields) =>
+    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, ...fields } : c)));
 
   // Persist active cart selection locally
   useEffect(() => {
@@ -1278,10 +1294,11 @@ const POSPage = () => {
     }));
   }, []);
 
-  // --- Payment Mode State: PAID (full) | PARTIAL (part now, part on credit) | CREDIT (pay later) ---
-  const [paymentMode, setPaymentMode] = useState("PAID");
-  const [creditNote, setCreditNote] = useState("");
-  const [partialAmountPaid, setPartialAmountPaid] = useState("");
+  // --- Payment Mode: PAID (full) | PARTIAL (part now, part on credit) | CREDIT (pay later) ---
+  // Read off the active cart above; these write back to it.
+  const setPaymentMode = (value) => updateActiveCart({ paymentMode: value });
+  const setCreditNote = (value) => updateActiveCart({ creditNote: value });
+  const setPartialAmountPaid = (value) => updateActiveCart({ partialAmountPaid: value });
   const isCredit = paymentMode !== "PAID";
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [focusPartialOnOpen, setFocusPartialOnOpen] = useState(false);
@@ -1331,15 +1348,7 @@ const POSPage = () => {
   // 2.5 Multi-Cart Actions
   const handleAddNewCart = () => {
     const newId = "cart_" + Date.now();
-    const newCart = {
-      id: newId,
-      customerName: "",
-      vehicleNumber: "",
-      items: [],
-      mileage: "",
-      notes: "",
-      saleDate: "",
-    };
+    const newCart = makeEmptyCart(newId);
     // Newest first, right beside the + button — the tab strip scrolls, and the
     // repair you just opened is the one you're about to work in.
     setCarts((prev) => [newCart, ...prev]);
@@ -1365,7 +1374,7 @@ const POSPage = () => {
       if (remaining.length === 0) {
         const newId = "cart_" + Date.now();
         setActiveCartId(newId);
-        return [{ id: newId, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "", saleDate: "" }];
+        return [makeEmptyCart(newId)];
       }
       if (activeCartId === cartId) {
         setActiveCartId(remaining[0].id);
@@ -1379,14 +1388,14 @@ const POSPage = () => {
   // Mileage/notes are per-job details — optional, entered "if available",
   // and scoped to whichever repair cart is currently active.
   const handleMileageChange = (value) => {
-    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, mileage: value } : c)));
+    updateActiveCart({ mileage: value });
     setMileageOverrideConfirmed(false);
   };
   const handleNotesChange = (value) => {
-    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, notes: value } : c)));
+    updateActiveCart({ notes: value });
   };
   const setSaleDate = (value) => {
-    setCarts((prev) => prev.map((c) => (c.id === activeCartId ? { ...c, saleDate: value || "" } : c)));
+    updateActiveCart({ saleDate: value || "" });
   };
 
   const handleVehicleNumberChange = (veh) => {
@@ -1601,11 +1610,9 @@ const POSPage = () => {
     setLinkPickerOpen(false);
     setVehicleChoiceCustomer(null);
     setVehicleForm({ make: "", model: "" });
-    setPaymentMode("PAID");
-    setCreditNote("");
-    setPartialAmountPaid("");
-    // No setSaleDate("") here — the date is the cart's own, and switching to a
-    // tab must show that tab's date rather than clearing it.
+    // Nothing to reset for the date, payment mode, partial amount or credit
+    // note — they're the cart's own, so switching to a tab has to show that
+    // tab's values rather than clearing them. Only the modal itself closes.
     setPaymentModalOpen(false);
 
     setLinkedVehicle(null);
@@ -1948,6 +1955,12 @@ const POSPage = () => {
     }, 0);
   }, [cart]);
 
+  // A partial payment splits the bill in two, and the footer shows both
+  // halves. Clamped to the bill so a mid-typed amount can't render a negative
+  // balance or a "paid" figure larger than the sale.
+  const paidNowAmount = Math.min(Math.max(parseFloat(partialAmountPaid) || 0, 0), totalAmount);
+  const partialBalanceDue = totalAmount - paidNowAmount;
+
   const totalItems = useMemo(() => {
     return cart.reduce((sum, item) => sum + item.quantity, 0);
   }, [cart]);
@@ -2136,7 +2149,7 @@ const POSPage = () => {
         if (remaining.length === 0) {
           const newId = "cart_" + Date.now();
           setActiveCartId(newId);
-          return [{ id: newId, customerName: "", vehicleNumber: "", customerId: null, customerDetails: null, items: [], mileage: "", notes: "", saleDate: "" }];
+          return [makeEmptyCart(newId)];
         } else {
           setActiveCartId(remaining[0].id);
           return remaining;
@@ -3028,7 +3041,7 @@ const POSPage = () => {
                   </p>
                   <p className={`text-[10px] truncate ${paymentMode === "PAID" ? "text-gray-400" : paymentMode === "PARTIAL" ? "text-blue-600" : "text-amber-600"}`}>
                     {paymentMode === "PARTIAL"
-                      ? `LKR ${Math.max(totalAmount - (parseFloat(partialAmountPaid) || 0), 0).toLocaleString()} due`
+                      ? `LKR ${partialBalanceDue.toLocaleString()} due`
                       : paymentMode === "CREDIT"
                         ? (creditNote.trim() || "No note added")
                         : "Pay in full at checkout"}
@@ -3049,6 +3062,20 @@ const POSPage = () => {
                 <ChevronUp size={13} className="text-gray-400 -rotate-90 shrink-0" />
               </button>
 
+              {/* A partial payment turns the headline figure into the balance,
+                  which on its own hides what the job actually came to — so the
+                  total and the amount received lead into it. */}
+              {paymentMode === "PARTIAL" && (
+                <div className="mb-2 pb-2 flex justify-between items-center gap-2 text-xs border-b border-dashed border-gray-200">
+                  <span className="font-medium text-gray-500 truncate">
+                    Total <span className="font-bold text-gray-700">LKR {totalAmount.toLocaleString()}</span>
+                  </span>
+                  <span className="font-medium text-gray-500 truncate">
+                    Paid Now <span className="font-bold text-blue-700">− LKR {paidNowAmount.toLocaleString()}</span>
+                  </span>
+                </div>
+              )}
+
               <div className="flex justify-between items-end mb-2.5">
                 <span className="text-sm font-medium text-gray-500">
                   {paymentMode === "PAID" ? "Total Amount" : paymentMode === "PARTIAL" ? "Balance Due" : "Amount Due"}
@@ -3056,10 +3083,7 @@ const POSPage = () => {
                 <div className="text-right">
                   <span className="text-2xl font-bold text-gray-900 tracking-tight">
                     <span className="text-base text-gray-400 font-normal mr-1">LKR</span>
-                    {(paymentMode === "PARTIAL"
-                      ? Math.max(totalAmount - (parseFloat(partialAmountPaid) || 0), 0)
-                      : totalAmount
-                    ).toLocaleString()}
+                    {(paymentMode === "PARTIAL" ? partialBalanceDue : totalAmount).toLocaleString()}
                   </span>
                 </div>
               </div>

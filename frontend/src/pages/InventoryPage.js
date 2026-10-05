@@ -637,6 +637,15 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting, o
   );
 };
 
+// "Invalid Price / No Image" filter group and its sub-filters
+const ISSUE_FILTERS = ["no_price", "no_image", "invalid_price"];
+const hasInvalidPrice = (p) =>
+  !p.buy_price ||
+  parseFloat(p.buy_price) <= 0 ||
+  !p.sell_price ||
+  parseFloat(p.sell_price) <= 0;
+const hasNoImage = (p) => !p.image;
+
 const InventoryPage = () => {
   // ── Cache ────────────────────────────────────────────────────────────────
   const { allParts, partsLoading: loading, invalidateParts } = useParts();
@@ -752,14 +761,11 @@ const InventoryPage = () => {
         }
       );
     } else if (stockFilter === "no_price") {
-      result = result.filter(
-        (p) =>
-          !p.buy_price ||
-          parseFloat(p.buy_price) <= 0 ||
-          !p.sell_price ||
-          parseFloat(p.sell_price) <= 0 ||
-          !p.image
-      );
+      result = result.filter((p) => hasInvalidPrice(p) || hasNoImage(p));
+    } else if (stockFilter === "no_image") {
+      result = result.filter(hasNoImage);
+    } else if (stockFilter === "invalid_price") {
+      result = result.filter(hasInvalidPrice);
     }
 
     // Sorting — applied last, always on a copy so allParts is never mutated
@@ -952,7 +958,8 @@ const InventoryPage = () => {
   };
 
   // Determine if download button should show
-  const showDownloadButton = stockFilter === "low" || stockFilter === "out" || stockFilter === "no_price";
+  const isIssueFilter = ISSUE_FILTERS.includes(stockFilter);
+  const showDownloadButton = stockFilter === "low" || stockFilter === "out" || isIssueFilter;
 
   return (
     <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
@@ -1222,13 +1229,34 @@ const InventoryPage = () => {
         <button
           onClick={() => handleStockFilter("no_price")}
           className={`px-4 py-1.5 rounded-full text-sm font-bold border transition-colors flex items-center gap-1 ${
-            stockFilter === "no_price"
+            isIssueFilter
               ? "bg-purple-600 text-white border-purple-600 shadow-sm"
               : "bg-white text-purple-600 border-purple-200 hover:bg-purple-50"
           }`}
         >
           Invalid Price / No Image
         </button>
+        {isIssueFilter && (
+          <div className="flex items-center gap-1 bg-purple-50 border border-purple-200 p-0.5 rounded-full text-xs font-bold shadow-sm transition-all duration-300 animate-fadeIn">
+            {[
+              { value: "no_price", label: "All Issues" },
+              { value: "no_image", label: "No Image" },
+              { value: "invalid_price", label: "Invalid Price" },
+            ].map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => handleStockFilter(value)}
+                className={`px-3 py-1 rounded-full transition-colors ${
+                  stockFilter === value
+                    ? "bg-purple-600 text-white"
+                    : "text-purple-700 hover:bg-purple-100"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Download Report Button - visible when filtering by stock status */}
         {showDownloadButton && parts.length > 0 && (

@@ -259,7 +259,8 @@ class EstimateSerializer(serializers.ModelSerializer):
         model = Estimate
         fields = [
             'id', 'estimate_number', 'vehicle', 'vehicle_details', 'vehicle_number',
-            'make_model', 'insurance_company', 'date', 'validity_days',
+            'make_model', 'mileage', 'first_registered_date', 'registration_number',
+            'chassis_number', 'insurance_company', 'date', 'validity_days',
             'owner_name', 'owner_phone', 'owner_address', 'sections',
             'total_amount', 'has_pending_quotation', 'created_at', 'updated_at',
         ]

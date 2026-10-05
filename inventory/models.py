@@ -300,6 +300,12 @@ class Estimate(models.Model):
     # printed document drops whatever is blank rather than leaving empty labels.
     vehicle_number = models.CharField(max_length=20, blank=True, help_text="Plate as printed; kept in sync with the linked vehicle")
     make_model = models.CharField(max_length=100, blank=True)
+    # Free text so it can carry its unit ("45,000 km") as written on the claim.
+    mileage = models.CharField(max_length=30, blank=True)
+    first_registered_date = models.DateField(null=True, blank=True)
+    # The registration certificate number — separate from the plate above.
+    registration_number = models.CharField(max_length=50, blank=True)
+    chassis_number = models.CharField(max_length=50, blank=True)
     insurance_company = models.CharField(max_length=150, blank=True)
     date = models.DateField(null=True, blank=True)
     validity_days = models.PositiveIntegerField(default=30)

@@ -27,6 +27,7 @@ import {
   fetchSuppliers,
 } from "../services/api";
 import SupplierSelect from "./forms/SupplierSelect";
+import CopyButton from "./CopyButton";
 
 const formatLKR = (val) =>
   `LKR ${parseFloat(val || 0).toLocaleString("en-LK", {
@@ -577,12 +578,18 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
               </div>
             )}
             <div className="flex-1 w-full overflow-hidden">
-              <h2 className="text-xl sm:text-2xl font-bold text-gray-800 leading-tight mb-2 break-words">
-                {part.name}
-              </h2>
-              <p className="text-sm text-gray-500 font-mono mb-3 py-1 px-2 bg-gray-100 rounded inline-block break-all">
-                Part No: {part.part_number}
-              </p>
+              <div className="flex items-start gap-1 mb-2">
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-800 leading-tight break-words min-w-0">
+                  {part.name}
+                </h2>
+                {part.name && <CopyButton text={part.name} label="part name" size={16} />}
+              </div>
+              <div className="flex items-center gap-1 mb-3">
+                <p className="text-sm text-gray-500 font-mono py-1 px-2 bg-gray-100 rounded inline-block break-all min-w-0">
+                  Part No: {part.part_number}
+                </p>
+                {part.part_number && <CopyButton text={part.part_number} label="part number" size={16} />}
+              </div>
               {part.brand && (
                 <div className="mb-3">
                   <span className="bg-red-50 text-red-800 text-xs font-bold px-2.5 py-1 rounded-md border border-red-100 uppercase tracking-wide inline-block break-words">
@@ -650,7 +657,12 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
               <div className="flex items-center justify-between mb-1">
                 <p className="text-xs text-gray-500 shrink-0">Primary Supplier</p>
               </div>
-              <p className="text-md font-bold text-gray-800 break-words">{part.supplier_details?.name || "N/A"}</p>
+              <div className="flex items-start gap-1">
+                <p className="text-md font-bold text-gray-800 break-words min-w-0">{part.supplier_details?.name || "N/A"}</p>
+                {part.supplier_details?.name && (
+                  <CopyButton text={part.supplier_details.name} label="supplier name" size={16} />
+                )}
+              </div>
             </div>
 
             {part.description && (

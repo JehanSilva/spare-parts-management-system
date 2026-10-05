@@ -10,6 +10,7 @@ import AddSupplierForm from "../components/forms/AddSupplierForm";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal"; // <--- 1. Import Modal
 import AvatarBadge from "../components/AvatarBadge";
+import CopyButton from "../components/CopyButton";
 import {
   Truck,
   Plus,
@@ -22,28 +23,15 @@ import {
   Trash2,
   XCircle,
   Landmark,
-  Copy,
-  Check,
 } from "lucide-react";
 
 // Payment details, shown only once something is on file — suppliers paid in cash
 // keep the card exactly as it was.
 const BankDetails = ({ supplier }) => {
-  const [copied, setCopied] = useState(false);
   const account = supplier.bank_account_number || "";
   const bankLine = [supplier.bank_name, supplier.bank_branch].filter(Boolean).join(" · ");
 
   if (!bankLine && !account && !supplier.bank_account_name) return null;
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(account);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard blocked (insecure origin or denied) — the number is on screen anyway.
-    }
-  };
 
   return (
     <div className="bg-gray-50 rounded-xl px-3 py-2 mt-2">
@@ -62,13 +50,7 @@ const BankDetails = ({ supplier }) => {
         {account && (
           <div className="flex items-center gap-2 mt-0.5">
             <span className="text-sm font-semibold text-gray-800 truncate">{account}</span>
-            <button
-              onClick={handleCopy}
-              title={copied ? "Copied" : "Copy account number"}
-              className="p-1 text-gray-400 hover:text-gray-900 hover:bg-gray-200 rounded-full transition-colors shrink-0"
-            >
-              {copied ? <Check size={12} className="text-green-600" /> : <Copy size={12} />}
-            </button>
+            <CopyButton text={account} label="account number" size={12} />
           </div>
         )}
 
@@ -129,9 +111,12 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
           : "No contacts"}
         {phoneCount > 0 && ` · ${phoneCount} number${phoneCount > 1 ? "s" : ""}`}
       </p>
-      <h2 className="text-lg font-bold text-gray-900 leading-snug mt-0.5 line-clamp-2">
-        {supplier.name}
-      </h2>
+      <div className="flex items-start gap-1 mt-0.5">
+        <h2 className="text-lg font-bold text-gray-900 leading-snug line-clamp-2 min-w-0">
+          {supplier.name}
+        </h2>
+        <CopyButton text={supplier.name} label="supplier name" size={14} />
+      </div>
 
       {/* Chips */}
       <div className="flex flex-wrap gap-2 mt-3">
@@ -175,19 +160,21 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
               {contact.phones && contact.phones.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-5 mt-1">
                   {contact.phones.map((ph, pIdx) => (
-                    <a
-                      key={pIdx}
-                      href={`tel:${ph}`}
-                      className={`text-xs hover:text-red-600 hover:underline ${ph === primaryPhone ? "text-gray-800 font-semibold" : "text-gray-500"
-                        }`}
-                    >
-                      {ph}
-                      {ph === primaryPhone && phoneCount > 1 && (
-                        <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-gray-400 no-underline">
-                          Default
-                        </span>
-                      )}
-                    </a>
+                    <span key={pIdx} className="inline-flex items-center">
+                      <a
+                        href={`tel:${ph}`}
+                        className={`text-xs hover:text-red-600 hover:underline ${ph === primaryPhone ? "text-gray-800 font-semibold" : "text-gray-500"
+                          }`}
+                      >
+                        {ph}
+                        {ph === primaryPhone && phoneCount > 1 && (
+                          <span className="ml-1.5 text-[9px] font-bold uppercase tracking-wide text-gray-400 no-underline">
+                            Default
+                          </span>
+                        )}
+                      </a>
+                      <CopyButton text={ph} label="number" size={12} />
+                    </span>
                   ))}
                 </div>
               ) : (
@@ -209,7 +196,10 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
         <div className="min-w-0">
           {primaryPhone ? (
             <>
-              <p className="text-lg font-bold text-gray-900 leading-none truncate">{primaryPhone}</p>
+              <div className="flex items-center gap-1">
+                <p className="text-lg font-bold text-gray-900 leading-none truncate">{primaryPhone}</p>
+                <CopyButton text={primaryPhone} label="number" size={14} />
+              </div>
               <p className="text-[11px] text-gray-400 mt-1 truncate">
                 {primaryContact?.name || "Primary contact"}
               </p>

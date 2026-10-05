@@ -107,7 +107,7 @@ const SectionEditor = ({ section, rows, onChange }) => {
         </div>
 
         {rows.map((row, index) => (
-          <div key={index} className="flex flex-col lg:flex-row gap-2 mb-4 lg:mb-2 border-b lg:border-0 border-gray-100 pb-3 lg:pb-0 last:border-0 last:pb-0">
+          <div key={index} className="flex flex-col lg:flex-row lg:items-start gap-2 mb-4 lg:mb-2 border-b lg:border-0 border-gray-100 pb-3 lg:pb-0 last:border-0 last:pb-0">
             <div className="flex-1">
               <span className="text-[10px] font-bold uppercase text-gray-400 block lg:hidden mb-1">
                 {isQty ? "Item" : "Task"} Description

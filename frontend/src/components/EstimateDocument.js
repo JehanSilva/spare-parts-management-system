@@ -58,6 +58,11 @@ export const toEstimatePayload = (estimate) => ({
   insurance_company: estimate.insuranceCompany,
   vehicle_number: estimate.vehicleNumber,
   make_model: estimate.makeModel,
+  mileage: estimate.mileage,
+  // Same as `date`: a cleared date must go as null.
+  first_registered_date: estimate.firstRegisteredDate || null,
+  registration_number: estimate.registrationNumber,
+  chassis_number: estimate.chassisNumber,
   validity_days: parseInt(estimate.validityDays, 10) || 30,
   owner_name: estimate.ownerName,
   owner_phone: estimate.ownerPhone,
@@ -70,6 +75,10 @@ export const fromEstimateRecord = (record) => ({
   insuranceCompany: record.insurance_company || "",
   vehicleNumber: record.vehicle_number || "",
   makeModel: record.make_model || "",
+  mileage: record.mileage || "",
+  firstRegisteredDate: record.first_registered_date || "",
+  registrationNumber: record.registration_number || "",
+  chassisNumber: record.chassis_number || "",
   validityDays: record.validity_days ?? 30,
   ownerName: record.owner_name || "",
   ownerPhone: record.owner_phone || "",
@@ -186,6 +195,10 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
     insuranceCompany,
     vehicleNumber,
     makeModel,
+    mileage,
+    firstRegisteredDate,
+    registrationNumber,
+    chassisNumber,
     validityDays = 30,
     ownerName,
     ownerPhone,
@@ -195,13 +208,15 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
 
   const pendingQuotation = hasPendingQuotation(sections);
 
-  const dateLabel = date
-    ? new Date(date).toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : "";
+  const formatDate = (value) =>
+    value
+      ? new Date(value).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })
+      : "";
+  const dateLabel = formatDate(date);
 
   // Every claim detail is optional, so the document is built from whichever
   // facts were actually filled in — a blank one prints no label at all rather
@@ -212,6 +227,10 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
   const vehicleFacts = filled([
     ["Vehicle Number", vehicleNumber],
     ["Make & Model", makeModel],
+    ["Registration No.", registrationNumber],
+    ["Chassis No.", chassisNumber],
+    ["First Registered", formatDate(firstRegisteredDate)],
+    ["Mileage", mileage],
   ]);
 
   const customerFacts = filled([

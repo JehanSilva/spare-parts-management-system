@@ -11,6 +11,9 @@ import EstimateDocument, {
   fromEstimateRecord,
 } from "../components/EstimateDocument";
 import AlertComponent from "../components/AlertComponent";
+import LeavePrompt from "../components/LeavePrompt";
+import ConfirmModal from "../components/ConfirmModal";
+import useUnsavedChangesPrompt from "../hooks/useUnsavedChangesPrompt";
 import { fetchEstimate, createEstimate, updateEstimate, lookupVehicle } from "../services/api";
 import { customerDisplayName } from "../components/customerName";
 import {
@@ -36,6 +39,19 @@ const formatAmount = (amount) =>
   new Intl.NumberFormat("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(
     amount || 0
   );
+
+// JSON with sorted keys, so two estimates holding the same values compare equal
+// however their objects were put together (the API returns JSON keys reordered).
+const stableShape = (value) => {
+  if (Array.isArray(value)) return value.map(stableShape);
+  if (value && typeof value === "object") {
+    return Object.keys(value)
+      .sort()
+      .reduce((acc, key) => ({ ...acc, [key]: stableShape(value[key]) }), {});
+  }
+  return value;
+};
+const fingerprint = (estimate) => JSON.stringify(stableShape(estimate));
 
 const emptyRow = () => ({ description: "", hours: "", rate: "", quotationPending: false });
 
@@ -257,6 +273,10 @@ const EstimatePage = () => {
       insuranceCompany: "",
       vehicleNumber: "",
       makeModel: "",
+      mileage: "",
+      firstRegisteredDate: "",
+      registrationNumber: "",
+      chassisNumber: "",
       validityDays: 30,
       ownerName: "",
       ownerPhone: "",
@@ -274,10 +294,24 @@ const EstimatePage = () => {
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const documentRef = useRef(null);
   // Which record the form currently holds (null = a blank, unsaved one).
   const loadedIdRef = useRef(null);
+
+  // Unsaved-changes tracking: the form is dirty when it no longer matches what
+  // was last loaded or saved. Read through refs so the navigation blocker sees
+  // the current state at the moment someone tries to leave.
+  const estimateRef = useRef(estimate);
+  estimateRef.current = estimate;
+  const savedFingerprintRef = useRef(null);
+  if (savedFingerprintRef.current === null) savedFingerprintRef.current = fingerprint(estimate);
+  const isDirty = useCallback(
+    () => fingerprint(estimateRef.current) !== savedFingerprintRef.current,
+    []
+  );
+  const leaveBlocker = useUnsavedChangesPrompt(isDirty);
 
   // Registry lookup for the plate being typed, mirroring POSPage.
   const [vehicleLookup, setVehicleLookup] = useState({ status: "idle", vehicle: null });
@@ -299,7 +333,9 @@ const EstimatePage = () => {
     if (!current) {
       // Navigating from an existing estimate back to /estimates/new.
       loadedIdRef.current = null;
-      setEstimate(blankEstimate());
+      const blank = blankEstimate();
+      savedFingerprintRef.current = fingerprint(blank);
+      setEstimate(blank);
       setSavedId(null);
       setEstimateNumber("");
       setLoading(false);
@@ -312,7 +348,9 @@ const EstimatePage = () => {
       .then((record) => {
         if (cancelled) return;
         loadedIdRef.current = record.id;
-        setEstimate(fromEstimateRecord(record));
+        const loaded = fromEstimateRecord(record);
+        savedFingerprintRef.current = fingerprint(loaded);
+        setEstimate(loaded);
         setEstimateNumber(record.estimate_number || "");
         setSavedId(record.id);
       })
@@ -410,10 +448,11 @@ const EstimatePage = () => {
   const pendingQuotation = hasPendingQuotation(estimate.sections);
 
   // Every claim detail is optional — an estimate is often written before the
-  // plate or insurer is known. The task lines are the one thing it can't do
-  // without: there would be nothing on the page to price.
+  // plate or insurer is known. It can be saved as soon as it has either a
+  // plate (a placeholder for the car, priced later) or a task line.
+  const hasPlate = Boolean(estimate.vehicleNumber.trim());
   const validate = () => {
-    if (!hasAnyTask) return "Add at least one task first.";
+    if (!hasAnyTask && !hasPlate) return "Add a vehicle number or at least one task first.";
     return null;
   };
 
@@ -422,14 +461,21 @@ const EstimatePage = () => {
    * Only the filtered rows are stored — blank placeholder rows are editor
    * scaffolding and must not reach the database. Returns the saved record, or
    * null if validation or the request failed.
+   *
+   * `rebindUrl: false` keeps a new estimate on /estimates/new instead of moving
+   * to its own URL — used when saving on the way out, where the pending
+   * navigation is about to take the user elsewhere anyway.
    */
-  const handleSave = async () => {
+  const handleSave = async ({ rebindUrl = true } = {}) => {
     const error = validate();
     if (error) {
       setAlertInfo({ type: "error", message: error });
       return null;
     }
 
+    // What this save covers. Anything typed while the request is in flight
+    // still counts as unsaved afterwards.
+    const savedSnapshot = estimate;
     setSaving(true);
     try {
       const payload = toEstimatePayload(printableEstimate);
@@ -438,12 +484,14 @@ const EstimatePage = () => {
         : await createEstimate(payload);
 
       setEstimateNumber(record.estimate_number || "");
+      // Before the URL change below, so the blocker doesn't hold it back.
+      savedFingerprintRef.current = fingerprint(savedSnapshot);
       if (!savedId) {
         setSavedId(record.id);
         // Bind the form to the new record so the next save updates it. The ref
         // is set first so the URL change doesn't trigger a pointless refetch.
         loadedIdRef.current = record.id;
-        navigate(`/estimates/${record.id}`, { replace: true });
+        if (rebindUrl) navigate(`/estimates/${record.id}`, { replace: true });
       }
       setAlertInfo({
         type: "success",
@@ -463,6 +511,12 @@ const EstimatePage = () => {
 
   // Generating always saves first, so nothing printed is ever left unrecorded.
   const handlePrint = async () => {
+    // Saving needs only a plate, but a printed estimate with no lines on it
+    // would have nothing to price.
+    if (!hasAnyTask) {
+      setAlertInfo({ type: "error", message: "Add at least one task before generating the estimate." });
+      return;
+    }
     const record = await handleSave();
     if (!record) return;
     // Plain window.print() + print:/print:hidden classes, matching how the POS
@@ -477,8 +531,29 @@ const EstimatePage = () => {
       navigate("/estimates/new");
       return;
     }
-    setEstimate(blankEstimate());
-    setAlertInfo({ type: "success", message: "Estimate cleared." });
+    // Ask first: one stray click would otherwise wipe every typed line.
+    setConfirmClear(true);
+  };
+
+  // Clear Form keeps the vehicle — the usual reason to clear is starting the
+  // job over for the same car, and re-typing its plate and papers is the
+  // tedious part. Everything else goes back to a blank estimate.
+  const clearForm = () => {
+    const cleared = {
+      ...blankEstimate(),
+      vehicleNumber: estimate.vehicleNumber,
+      makeModel: estimate.makeModel,
+      mileage: estimate.mileage,
+      firstRegisteredDate: estimate.firstRegisteredDate,
+      registrationNumber: estimate.registrationNumber,
+      chassisNumber: estimate.chassisNumber,
+    };
+    // Measured against a blank estimate, not the cleared form: a kept plate is
+    // enough to save, so leaving without saving it should still ask.
+    savedFingerprintRef.current = fingerprint(blankEstimate());
+    setEstimate(cleared);
+    setConfirmClear(false);
+    setAlertInfo({ type: "success", message: "Estimate cleared. Vehicle details kept." });
   };
 
   if (loading) {
@@ -498,6 +573,33 @@ const EstimatePage = () => {
     <>
       <div className="min-h-screen bg-gray-50 print:hidden">
         <div className="p-4 md:p-8 max-w-6xl mx-auto w-full">
+          <ConfirmModal
+            isOpen={confirmClear}
+            title="Clear this estimate?"
+            message="All tasks, claim and owner details will be removed. The vehicle number and vehicle details will be kept."
+            confirmLabel="Yes, Clear It"
+            onConfirm={clearForm}
+            onCancel={() => setConfirmClear(false)}
+          />
+
+          <LeavePrompt
+            open={leaveBlocker.state === "blocked"}
+            saving={saving}
+            itemLabel="estimate"
+            onStay={() => leaveBlocker.reset()}
+            onDiscard={() => leaveBlocker.proceed()}
+            onSave={async () => {
+              const record = await handleSave({ rebindUrl: false });
+              if (record) {
+                leaveBlocker.proceed();
+              } else {
+                // Stay on the page so the save error (e.g. no tasks yet) is
+                // visible instead of hidden behind this dialog.
+                leaveBlocker.reset();
+              }
+            }}
+          />
+
           {alertInfo.message && (
             <AlertComponent
               type={alertInfo.type}
@@ -546,7 +648,7 @@ const EstimatePage = () => {
                 <span>{showPreview ? "Hide" : "Show"} preview</span>
               </button>
               <button
-                onClick={handleSave}
+                onClick={() => handleSave()}
                 disabled={saving}
                 className="sm:flex-none justify-center whitespace-nowrap px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-50 transition flex items-center gap-2 disabled:opacity-60"
               >
@@ -623,6 +725,50 @@ const EstimatePage = () => {
                 <p className="mt-1.5 text-xs text-gray-400">
                   Filled in from the vehicle registry — edit it for this estimate if it's wrong.
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Registration Number
+                </label>
+                <input
+                  value={estimate.registrationNumber}
+                  onChange={(e) => setField("registrationNumber", e.target.value)}
+                  placeholder="As on the registration certificate"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg font-mono focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Chassis Number</label>
+                <input
+                  value={estimate.chassisNumber}
+                  onChange={(e) => setField("chassisNumber", e.target.value)}
+                  placeholder="e.g. NZE141-6012345"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg font-mono focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  First Registered Date
+                </label>
+                <input
+                  type="date"
+                  value={estimate.firstRegisteredDate}
+                  onChange={(e) => setField("firstRegisteredDate", e.target.value)}
+                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Mileage</label>
+                <input
+                  value={estimate.mileage}
+                  onChange={(e) => setField("mileage", e.target.value)}
+                  placeholder="e.g. 85,000 km"
+                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
               </div>
 
               <div>
@@ -718,7 +864,7 @@ const EstimatePage = () => {
 
           <div className="flex flex-col sm:flex-row gap-3 mb-10">
             <button
-              onClick={handleSave}
+              onClick={() => handleSave()}
               disabled={saving}
               className="w-full sm:w-auto justify-center px-5 py-3 bg-gray-900 text-white rounded-xl font-bold text-sm hover:bg-black transition flex items-center gap-2 disabled:opacity-60"
             >

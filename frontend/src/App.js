@@ -1,6 +1,7 @@
 import React from "react";
 import {
-  BrowserRouter as Router,
+  createBrowserRouter,
+  RouterProvider,
   Routes,
   Route,
   useLocation,
@@ -43,168 +44,173 @@ const Layout = ({ children }) => {
   );
 };
 
+// The whole app lives under one catch-all route of a data router. The routes
+// themselves stay declared as <Routes> below; the data router is only there so
+// pages can use useBlocker (see useUnsavedChangesPrompt).
+const AppRoutes = () => (
+  <SettingsProvider>
+  <PartsProvider>
+    <Layout>
+    <Routes>
+      {/* Public Route */}
+      <Route path="/login" element={<LoginPage />} />
+
+      {/* Protected Routes */}
+      <Route
+        path="/"
+        element={
+          <PrivateRoute>
+            <HomePage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/pos"
+        element={
+          <PrivateRoute>
+            <POSPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/inventory"
+        element={
+          <PrivateRoute>
+            <InventoryPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/suppliers"
+        element={
+          <PrivateRoute>
+            <SupplierPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/customers"
+        element={
+          <PrivateRoute>
+            <CustomerPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/vehicles"
+        element={
+          <PrivateRoute>
+            <VehicleRegistryPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/vehicle-models"
+        element={
+          <PrivateRoute>
+            <VehiclePage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/repairs"
+        element={
+          <PrivateRoute>
+            <RepairServicesPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/employees"
+        element={
+          <PrivateRoute>
+            <EmployeePage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/sales-history"
+        element={
+          <PrivateRoute>
+            <SalesHistoryPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/daily-report"
+        element={
+          <PrivateRoute>
+            <DailyReportPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/options"
+        element={
+          <PrivateRoute>
+            <OptionsPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/estimates"
+        element={
+          <PrivateRoute>
+            <EstimateListPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/estimates/new"
+        element={
+          <PrivateRoute>
+            <EstimatePage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/estimates/:id"
+        element={
+          <PrivateRoute>
+            <EstimatePage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/inspections"
+        element={
+          <PrivateRoute>
+            <InspectionListPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/inspections/new"
+        element={
+          <PrivateRoute>
+            <InspectionPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/inspections/:id"
+        element={
+          <PrivateRoute>
+            <InspectionPage />
+          </PrivateRoute>
+        }
+      />
+    </Routes>
+    </Layout>
+  </PartsProvider>
+  </SettingsProvider>
+);
+
+const router = createBrowserRouter([{ path: "*", element: <AppRoutes /> }]);
+
 function App() {
   useAutoLogout();
-  return (
-    <Router>
-      <SettingsProvider>
-      <PartsProvider>
-        <Layout>
-        <Routes>
-          {/* Public Route */}
-          <Route path="/login" element={<LoginPage />} />
-
-          {/* Protected Routes */}
-          <Route
-            path="/"
-            element={
-              <PrivateRoute>
-                <HomePage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/pos"
-            element={
-              <PrivateRoute>
-                <POSPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/inventory"
-            element={
-              <PrivateRoute>
-                <InventoryPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/suppliers"
-            element={
-              <PrivateRoute>
-                <SupplierPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/customers"
-            element={
-              <PrivateRoute>
-                <CustomerPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/vehicles"
-            element={
-              <PrivateRoute>
-                <VehicleRegistryPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/vehicle-models"
-            element={
-              <PrivateRoute>
-                <VehiclePage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/repairs"
-            element={
-              <PrivateRoute>
-                <RepairServicesPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/employees"
-            element={
-              <PrivateRoute>
-                <EmployeePage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/sales-history"
-            element={
-              <PrivateRoute>
-                <SalesHistoryPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/daily-report"
-            element={
-              <PrivateRoute>
-                <DailyReportPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/options"
-            element={
-              <PrivateRoute>
-                <OptionsPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/estimates"
-            element={
-              <PrivateRoute>
-                <EstimateListPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/estimates/new"
-            element={
-              <PrivateRoute>
-                <EstimatePage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/estimates/:id"
-            element={
-              <PrivateRoute>
-                <EstimatePage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/inspections"
-            element={
-              <PrivateRoute>
-                <InspectionListPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/inspections/new"
-            element={
-              <PrivateRoute>
-                <InspectionPage />
-              </PrivateRoute>
-            }
-          />
-          <Route
-            path="/inspections/:id"
-            element={
-              <PrivateRoute>
-                <InspectionPage />
-              </PrivateRoute>
-            }
-          />
-        </Routes>
-        </Layout>
-      </PartsProvider>
-      </SettingsProvider>
-    </Router>
-  );
+  return <RouterProvider router={router} />;
 }
 
 export default App;

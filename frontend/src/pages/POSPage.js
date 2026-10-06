@@ -8,6 +8,7 @@ import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
+import CopyButton from "../components/CopyButton";
 import CustomerLinkPicker from "../components/CustomerLinkPicker";
 import { customerDisplayName } from "../components/customerName";
 import {
@@ -2807,9 +2808,11 @@ const POSPage = () => {
                             <Wrench size={10} /> Repair / Labor
                           </p>
                         ) : (
-                          <p className="text-[10px] text-gray-500 font-mono truncate">
-                            {item.part_number} • {item.brand}
-                          </p>
+                          <div className="flex items-center gap-0.5 min-w-0 text-[10px] text-gray-500 font-mono">
+                            <span className="truncate">{item.part_number}</span>
+                            <CopyButton text={item.part_number} label="part number" size={11} />
+                            {item.brand && <span className="truncate">• {item.brand}</span>}
+                          </div>
                         )}
                       </div>
 

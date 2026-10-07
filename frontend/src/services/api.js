@@ -199,6 +199,27 @@ export const fetchVehicleHistory = async (vehicleId) =>
 export const fetchVehicleEstimates = async (vehicleId) =>
   (await API.get(`/vehicles/registry/${vehicleId}/estimates/`)).data;
 
+// --- PURCHASE ORDER SERVICES (parts ordered from suppliers) ---
+export const fetchPurchaseOrders = async (status = '') =>
+  (await API.get("/purchase-orders/", { params: status ? { status } : {} })).data;
+// Adds to the supplier's open draft (creating one if needed). Returns { purchase_order, created }.
+export const addPurchaseOrderItem = async (partId, supplierId, quantity) =>
+  (await API.post("/purchase-orders/add-item/", { part_id: partId, supplier_id: supplierId, quantity })).data;
+export const updatePurchaseOrder = async (id, data) =>
+  (await API.patch(`/purchase-orders/${id}/update/`, data)).data;
+export const deletePurchaseOrderItem = async (itemId) =>
+  (await API.delete(`/purchase-orders/items/${itemId}/delete/`)).data;
+export const markPurchaseOrderOrdered = async (id) =>
+  (await API.post(`/purchase-orders/${id}/order/`)).data;
+export const receivePurchaseOrder = async (id, data) =>
+  (await API.post(`/purchase-orders/${id}/receive/`, data)).data;
+// Undo a receipt: takes the received stock back out and returns the order to ORDERED.
+export const revertPurchaseOrder = async (id) =>
+  (await API.post(`/purchase-orders/${id}/revert/`)).data;
+export const cancelPurchaseOrder = async (id) =>
+  (await API.post(`/purchase-orders/${id}/cancel/`)).data;
+export const deletePurchaseOrder = async (id) => await API.delete(`/purchase-orders/${id}/delete/`);
+
 // --- ESTIMATE SERVICES (insurance claim repair estimates) ---
 export const fetchEstimates = async (search = '') =>
   (await API.get("/estimates/", { params: search ? { search } : {} })).data;

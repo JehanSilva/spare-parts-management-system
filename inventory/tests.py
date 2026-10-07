@@ -14,7 +14,7 @@ from rest_framework import status
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, inspection_overall_rating
+from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, inspection_overall_rating, PurchaseOrder
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -2861,3 +2861,217 @@ class VehicleLookupAPITest(TestCase):
     def test_a_blank_plate_is_rejected(self):
         response = self.client.get(reverse('lookup_vehicle'), {'vehicle_number': ''})
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class PurchaseOrderAPITest(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.toyota = Supplier.objects.create(name="Toyota Lanka")
+        self.denso = Supplier.objects.create(name="Denso Distributors")
+        self.pads = Part.objects.create(
+            name="Brake pads", part_number="BP-1", brand="Toyota",
+            buy_price=1000, sell_price=2000, stock_qty=10, supplier=self.toyota,
+        )
+        self.filter = Part.objects.create(
+            name="Air Filter", part_number="AF-1", brand="Toyota",
+            buy_price=500, sell_price=900, stock_qty=2, supplier=self.toyota,
+        )
+        self.coil = Part.objects.create(
+            name="Ignition Coil", part_number="IC-1", brand="Denso",
+            buy_price=6000, sell_price=12000, stock_qty=0, supplier=self.denso,
+        )
+        self.add_url = reverse('add_purchase_order_item')
+
+    def _add(self, part, supplier, quantity):
+        return self.client.post(
+            self.add_url,
+            {"part_id": str(part.id), "supplier_id": supplier.id, "quantity": quantity},
+            format='json',
+        )
+
+    def test_items_are_grouped_into_one_draft_per_supplier(self):
+        first = self._add(self.pads, self.toyota, 4)
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(first.data['created'])
+        self._add(self.filter, self.toyota, 2)
+        self._add(self.coil, self.denso, 1)
+
+        self.assertEqual(PurchaseOrder.objects.count(), 2)
+        toyota_po = PurchaseOrder.objects.get(supplier=self.toyota)
+        self.assertEqual(toyota_po.items.count(), 2)
+        self.assertEqual(toyota_po.status, PurchaseOrder.STATUS_DRAFT)
+        self.assertEqual(PurchaseOrder.objects.get(supplier=self.denso).items.count(), 1)
+        self.assertEqual(
+            sorted(PurchaseOrder.objects.values_list('po_number', flat=True)),
+            ["PO-0001", "PO-0002"],
+        )
+
+    def test_adding_same_part_again_increases_quantity(self):
+        self._add(self.pads, self.toyota, 4)
+        response = self._add(self.pads, self.toyota, 3)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        items = response.data['purchase_order']['items']
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['quantity'], 7)
+
+    def test_supplier_is_required(self):
+        response = self.client.post(
+            self.add_url, {"part_id": str(self.pads.id), "quantity": 1}, format='json'
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_ordered_draft_is_closed_and_next_item_starts_a_new_one(self):
+        po_id = self._add(self.pads, self.toyota, 4).data['purchase_order']['id']
+        response = self.client.post(reverse('mark_purchase_order_ordered', args=[po_id]))
+        self.assertEqual(response.data['status'], PurchaseOrder.STATUS_ORDERED)
+
+        second = self._add(self.filter, self.toyota, 1)
+        self.assertTrue(second.data['created'])
+        self.assertNotEqual(second.data['purchase_order']['id'], po_id)
+
+    def test_receiving_adds_stock_and_restock_history(self):
+        po_id = self._add(self.pads, self.toyota, 10).data['purchase_order']['id']
+        self._add(self.filter, self.toyota, 5)
+        po = PurchaseOrder.objects.get(pk=po_id)
+        pads_item = po.items.get(part=self.pads)
+        filter_item = po.items.get(part=self.filter)
+
+        response = self.client.post(
+            reverse('receive_purchase_order', args=[po_id]),
+            {
+                "invoice_number": "INV-77",
+                "items": [
+                    # Delivered in full at a higher price than expected.
+                    {"id": pads_item.id, "received_quantity": 10, "unit_price": "1200", "sell_price": "2400"},
+                    # Not delivered at all.
+                    {"id": filter_item.id, "received_quantity": 0, "unit_price": "500"},
+                ],
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], PurchaseOrder.STATUS_RECEIVED)
+
+        self.pads.refresh_from_db()
+        self.filter.refresh_from_db()
+        self.assertEqual(self.pads.stock_qty, 20)
+        # (10 x 1000 + 10 x 1200) / 20
+        self.assertEqual(float(self.pads.buy_price), 1100.0)
+        self.assertEqual(self.filter.stock_qty, 2)
+        # A new selling price is applied; a line without one keeps its own.
+        self.assertEqual(float(self.pads.sell_price), 2400.0)
+        self.assertEqual(float(self.filter.sell_price), 900.0)
+
+        record = RestockRecord.objects.get(part=self.pads)
+        self.assertEqual(record.supplier, self.toyota)
+        self.assertEqual(record.invoice_number, "INV-77")
+        self.assertFalse(RestockRecord.objects.filter(part=self.filter).exists())
+
+        # A received order is closed: it can't be received twice or deleted.
+        again = self.client.post(reverse('receive_purchase_order', args=[po_id]), {}, format='json')
+        self.assertEqual(again.status_code, status.HTTP_400_BAD_REQUEST)
+        delete = self.client.delete(reverse('delete_purchase_order', args=[po_id]))
+        self.assertEqual(delete.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_receiving_nothing_is_rejected(self):
+        po_id = self._add(self.pads, self.toyota, 3).data['purchase_order']['id']
+        item_id = PurchaseOrder.objects.get(pk=po_id).items.get().id
+        response = self.client.post(
+            reverse('receive_purchase_order', args=[po_id]),
+            {"items": [{"id": item_id, "received_quantity": 0}]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.pads.refresh_from_db()
+        self.assertEqual(self.pads.stock_qty, 10)
+
+    def test_order_still_lists_a_part_deleted_after_ordering(self):
+        po_id = self._add(self.coil, self.denso, 2).data['purchase_order']['id']
+        self.coil.delete()
+        response = self.client.get(reverse('get_purchase_order', args=[po_id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        item = response.data['items'][0]
+        self.assertEqual(item['part_name'], "Ignition Coil")
+        self.assertEqual(item['part_number'], "IC-1")
+        self.assertIsNone(item['current_stock'])
+
+    def _ordered_po(self):
+        po_id = self._add(self.pads, self.toyota, 10).data['purchase_order']['id']
+        self._add(self.filter, self.toyota, 5)
+        self.client.post(reverse('mark_purchase_order_ordered', args=[po_id]))
+        return PurchaseOrder.objects.get(pk=po_id)
+
+    def _receive(self, po, pads_qty=10, pads_price="1200", pads_sell="2400", filter_qty=5):
+        return self.client.post(
+            reverse('receive_purchase_order', args=[po.id]),
+            {
+                "invoice_number": "INV-1",
+                "items": [
+                    {"id": po.items.get(part=self.pads).id, "received_quantity": pads_qty,
+                     "unit_price": pads_price, "sell_price": pads_sell},
+                    {"id": po.items.get(part=self.filter).id, "received_quantity": filter_qty, "unit_price": "500"},
+                ],
+            },
+            format='json',
+        )
+
+    def test_revert_restores_stock_prices_and_history(self):
+        po = self._ordered_po()
+        self.assertEqual(self._receive(po).status_code, status.HTTP_200_OK)
+
+        response = self.client.post(reverse('revert_purchase_order', args=[po.id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], PurchaseOrder.STATUS_ORDERED)
+        self.assertEqual(response.data['invoice_number'], "")
+        self.assertTrue(all(i['received_quantity'] == 0 for i in response.data['items']))
+
+        self.pads.refresh_from_db()
+        self.filter.refresh_from_db()
+        self.assertEqual(self.pads.stock_qty, 10)
+        self.assertEqual(float(self.pads.buy_price), 1000.0)
+        self.assertEqual(float(self.pads.sell_price), 2000.0)
+        self.assertEqual(self.filter.stock_qty, 2)
+        self.assertEqual(float(self.filter.buy_price), 500.0)
+        self.assertFalse(RestockRecord.objects.exists())
+
+        # Corrected and received again.
+        self.assertEqual(self._receive(po, pads_qty=8, pads_price="1100", pads_sell="").status_code, status.HTTP_200_OK)
+        self.pads.refresh_from_db()
+        self.assertEqual(self.pads.stock_qty, 18)
+        # (10 x 1000 + 8 x 1100) / 18
+        self.assertAlmostEqual(float(self.pads.buy_price), 1044.44, places=2)
+        self.assertEqual(float(self.pads.sell_price), 2000.0)
+
+    def test_revert_refused_when_stock_already_sold(self):
+        po = self._ordered_po()
+        self._receive(po)
+        Part.objects.filter(pk=self.filter.pk).update(stock_qty=3)  # 4 of the 7 sold
+
+        response = self.client.post(reverse('revert_purchase_order', args=[po.id]))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Air Filter", response.data['error'])
+        po.refresh_from_db()
+        self.pads.refresh_from_db()
+        self.assertEqual(po.status, PurchaseOrder.STATUS_RECEIVED)
+        self.assertEqual(self.pads.stock_qty, 20)  # untouched
+        self.assertEqual(RestockRecord.objects.count(), 2)
+
+    def test_revert_refused_unless_received(self):
+        po = self._ordered_po()
+        response = self.client.post(reverse('revert_purchase_order', args=[po.id]))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_revert_finds_records_of_orders_received_before_linking(self):
+        po = self._ordered_po()
+        self._receive(po, pads_sell="")
+        # Simulate an order received before lines were linked to their record.
+        po.items.update(restock_record=None)
+
+        response = self.client.post(reverse('revert_purchase_order', args=[po.id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.pads.refresh_from_db()
+        self.assertEqual(self.pads.stock_qty, 10)
+        self.assertFalse(RestockRecord.objects.exists())
+

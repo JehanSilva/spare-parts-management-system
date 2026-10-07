@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.db.models.functions import Upper
-from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService, VehicleInspection
+from decimal import Decimal
+from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService, VehicleInspection, PurchaseOrder, PurchaseOrderItem
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -270,6 +271,57 @@ class EstimateSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'estimate_number', 'vehicle', 'total_amount', 'has_pending_quotation',
         ]
+
+
+class PurchaseOrderItemSerializer(serializers.ModelSerializer):
+    # Live figures from the part, so the order page can show what's on the
+    # shelf now next to what's being ordered. None once the part is deleted.
+    current_stock = serializers.IntegerField(source='part.stock_qty', read_only=True, default=None)
+    current_sell_price = serializers.DecimalField(
+        source='part.sell_price', max_digits=10, decimal_places=2, read_only=True, default=None
+    )
+    image = serializers.SerializerMethodField()
+    line_total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PurchaseOrderItem
+        fields = [
+            'id', 'part', 'part_name', 'part_number', 'brand', 'quantity',
+            'unit_price', 'received_quantity', 'current_stock', 'current_sell_price', 'image', 'line_total',
+        ]
+        read_only_fields = ['part', 'part_name', 'part_number', 'brand', 'received_quantity']
+
+    def get_image(self, obj):
+        if obj.part and obj.part.image:
+            return obj.part.image.url
+        return None
+
+    def get_line_total(self, obj):
+        return obj.quantity * obj.unit_price
+
+
+class PurchaseOrderSerializer(serializers.ModelSerializer):
+    items = PurchaseOrderItemSerializer(many=True, read_only=True)
+    total_amount = serializers.SerializerMethodField()
+    total_quantity = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PurchaseOrder
+        fields = [
+            'id', 'po_number', 'supplier', 'supplier_name', 'status', 'notes',
+            'invoice_number', 'items', 'total_amount', 'total_quantity',
+            'created_at', 'updated_at', 'ordered_at', 'received_at',
+        ]
+        read_only_fields = [
+            'po_number', 'supplier', 'supplier_name', 'status', 'invoice_number',
+            'created_at', 'updated_at', 'ordered_at', 'received_at',
+        ]
+
+    def get_total_amount(self, obj):
+        return sum((i.quantity * i.unit_price for i in obj.items.all()), Decimal('0'))
+
+    def get_total_quantity(self, obj):
+        return sum(i.quantity for i in obj.items.all())
 
 
 class RepairServiceSerializer(serializers.ModelSerializer):

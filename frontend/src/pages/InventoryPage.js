@@ -10,6 +10,9 @@ import {
   Car,
   XCircle,
   Download,
+  ShoppingCart,
+  Minus,
+  Loader2,
 } from "lucide-react";
 import {
   deletePart,
@@ -19,11 +22,13 @@ import {
   bulkUploadParts,
   resolveBulkUploadConflicts,
   cancelBulkUpload,
+  addPurchaseOrderItem,
 } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import AddPartForm from "../components/forms/AddPartForm";
 import { apiErrorMessage } from "../components/apiErrorMessage";
 import QuickRestockModal from "../components/forms/QuickRestockModal";
+import SupplierSelect from "../components/forms/SupplierSelect";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
@@ -637,6 +642,133 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting, o
   );
 };
 
+// --- Add a part to its supplier's purchase order ---
+// Each supplier has one open draft order; the server finds or starts it, so
+// parts from different suppliers land on separate orders automatically.
+const AddToOrderModal = ({ part, suppliers, onClose, onAdded }) => {
+  const [quantity, setQuantity] = useState("1");
+  const [supplierId, setSupplierId] = useState(part.supplier ? String(part.supplier) : "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  const qty = parseInt(quantity, 10);
+  const step = (delta) => setQuantity(String(Math.max(1, (isNaN(qty) ? 0 : qty) + delta)));
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (isNaN(qty) || qty < 1) {
+      setError("Enter a quantity of at least 1.");
+      return;
+    }
+    if (!supplierId) {
+      setError("Choose which supplier to order from.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = await addPurchaseOrderItem(part.id, supplierId, qty);
+      onAdded(result, qty);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <form
+        onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+      >
+        <div className="p-4 border-b border-emerald-100 bg-emerald-50 flex items-center gap-3">
+          <div className="p-2 rounded-full bg-emerald-100 text-emerald-700">
+            <ShoppingCart size={20} />
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-bold text-gray-900">Add to Purchase Order</h3>
+            <p className="text-xs text-gray-500 truncate">
+              {part.name} · <span className="font-mono">{part.part_number}</span>
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-600">
+            <XCircle size={20} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Quantity to order</label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => step(-1)}
+                className="p-2.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
+              >
+                <Minus size={16} />
+              </button>
+              <input
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value.replace(/[^0-9]/g, ""))}
+                inputMode="numeric"
+                autoFocus
+                className="w-24 p-2.5 border border-gray-300 rounded-lg text-center font-bold focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => step(1)}
+                className="p-2.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
+              >
+                <Plus size={16} />
+              </button>
+              <span className="ml-auto text-xs text-gray-500">
+                In stock: <span className="font-bold text-gray-800">{part.stock_qty}</span>
+              </span>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Order from</label>
+            <SupplierSelect
+              suppliers={suppliers}
+              value={supplierId}
+              onChange={(id) => setSupplierId(id ? String(id) : "")}
+              noneLabel="— Choose a supplier —"
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              Added to this supplier&rsquo;s open purchase order, or starts a new one.
+            </p>
+          </div>
+
+          {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
+        </div>
+
+        <div className="px-5 pb-5 flex gap-2 justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-gray-100 text-gray-700 hover:bg-gray-200"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="px-4 py-2 text-sm font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-2"
+          >
+            {submitting ? <Loader2 size={16} className="animate-spin" /> : <ShoppingCart size={16} />}
+            Add to Order
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
 // "Invalid Price / No Image" filter group and its sub-filters
 const ISSUE_FILTERS = ["no_price", "no_image", "invalid_price"];
 const hasInvalidPrice = (p) =>
@@ -663,6 +795,7 @@ const InventoryPage = () => {
   const [isCancellingUpload, setIsCancellingUpload] = useState(false);
   const [editingPart, setEditingPart] = useState(null);
   const [showRestockModal, setShowRestockModal] = useState(false);
+  const [orderPart, setOrderPart] = useState(null);
   const [restockInitialPart, setRestockInitialPart] = useState(null);
 
   // ── Filter States ────────────────────────────────────────────────────────
@@ -976,6 +1109,23 @@ const InventoryPage = () => {
       />
 
       {/* --- QUICK RESTOCK MODAL --- */}
+      {orderPart && (
+        <AddToOrderModal
+          part={orderPart}
+          suppliers={suppliers}
+          onClose={() => setOrderPart(null)}
+          onAdded={({ purchase_order: po, created }, qty) => {
+            setOrderPart(null);
+            setAlertInfo({
+              type: "success",
+              message: `Added ${qty} × ${orderPart.name} to ${po.po_number} (${po.supplier_name})${
+                created ? " — new purchase order started." : "."
+              }`,
+            });
+          }}
+        />
+      )}
+
       {showRestockModal && (
         <QuickRestockModal
           initialPart={restockInitialPart}
@@ -1301,6 +1451,15 @@ const InventoryPage = () => {
               >
                 {/* --- Action Buttons (Visible on Hover for Desktop, Always for Mobile if needed, but keeping clean for now) --- */}
                 <div className="absolute top-2 right-2 flex gap-1 z-10 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setOrderPart(part); }}
+                    onMouseDown={(e) => { e.stopPropagation(); endPress(); }}
+                    onTouchStart={(e) => { e.stopPropagation(); endPress(); }}
+                    className="bg-white/90 backdrop-blur-sm p-1.5 rounded-full shadow-sm text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 border border-gray-100"
+                    title="Add to Purchase Order"
+                  >
+                    <ShoppingCart size={14} />
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleEdit(part); }}
                     onMouseDown={(e) => { e.stopPropagation(); endPress(); }}

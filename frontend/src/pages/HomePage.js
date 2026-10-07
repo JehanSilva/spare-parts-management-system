@@ -203,6 +203,37 @@ const HomePage = () => {
           />
         </div>
 
+        {/* --- Purchase Orders (parts ordered from suppliers) --- */}
+        <div className="mb-12">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-emerald-100 rounded-lg text-emerald-700">
+              <ShoppingCart size={24} />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-800">Purchase Orders</h2>
+          </div>
+
+          <Link
+            to="/purchase-orders"
+            className="group bg-white p-6 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow flex items-center justify-between gap-4"
+          >
+            <div>
+              <h3 className="text-lg font-bold text-gray-800 group-hover:text-red-700 transition-colors">
+                Purchase Orders
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Parts you&rsquo;ve added with the cart button on the Inventory page, grouped into
+                one order per supplier — review quantities, print the order and send it off.
+              </p>
+              <p className="text-xs text-gray-400 mt-2">
+                When the delivery arrives, receive it here and the stock is updated automatically.
+              </p>
+            </div>
+            <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 group-hover:bg-red-50 group-hover:text-red-600 transition-colors shadow-sm border border-gray-100 shrink-0">
+              <ArrowRight size={20} />
+            </div>
+          </Link>
+        </div>
+
         {/* --- SECTION 2: Vehicle Repair Estimates --- */}
         <div className="mb-12">
           <div className="flex items-center gap-3 mb-4">

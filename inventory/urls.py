@@ -62,6 +62,18 @@ urlpatterns = [
     path('inspections/<uuid:pk>/update/', views.update_inspection, name='update_inspection'),
     path('inspections/<uuid:pk>/delete/', views.delete_inspection, name='delete_inspection'),
 
+    # Purchase orders (parts ordered from suppliers)
+    path('purchase-orders/', views.get_purchase_orders, name='get_purchase_orders'),
+    path('purchase-orders/add-item/', views.add_purchase_order_item, name='add_purchase_order_item'),
+    path('purchase-orders/items/<int:item_pk>/delete/', views.delete_purchase_order_item, name='delete_purchase_order_item'),
+    path('purchase-orders/<int:pk>/', views.get_purchase_order, name='get_purchase_order'),
+    path('purchase-orders/<int:pk>/update/', views.update_purchase_order, name='update_purchase_order'),
+    path('purchase-orders/<int:pk>/order/', views.mark_purchase_order_ordered, name='mark_purchase_order_ordered'),
+    path('purchase-orders/<int:pk>/receive/', views.receive_purchase_order, name='receive_purchase_order'),
+    path('purchase-orders/<int:pk>/revert/', views.revert_purchase_order, name='revert_purchase_order'),
+    path('purchase-orders/<int:pk>/cancel/', views.cancel_purchase_order, name='cancel_purchase_order'),
+    path('purchase-orders/<int:pk>/delete/', views.delete_purchase_order, name='delete_purchase_order'),
+
     # Reports
     path('dashboard/', views.dashboard_stats, name='dashboard_stats'),
 

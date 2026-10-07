@@ -9,8 +9,8 @@ from datetime import timedelta
 from django.db.models.functions import TruncDate, Coalesce
 from rest_framework import status
 from django.db.models import Sum, F, Value, DecimalField
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context
+from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context, PurchaseOrderSerializer
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle, normalize_repair_description
 from .serializers import VehicleSerializer
@@ -557,6 +557,63 @@ def delete_part(request, pk):
     part.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+def _apply_restock(part, entries, sell_price=None, invoice_number=''):
+    """
+    Add stock to a part: one RestockRecord per entry, the part's weighted
+    average buy price recalculated, and its primary supplier moved to whoever it
+    was most recently bought from. Shared by Quick Restock and receiving a
+    purchase order. `entries` are dicts of supplier (object or None), quantity,
+    buy_price and notes. Returns (records, total_added_qty, new_avg_price),
+    where `records` are the saved RestockRecords in entry order.
+    """
+    # --- Weighted Average Cost Calculation ---
+    # Start with existing stock value
+    old_qty = part.stock_qty
+    running_value = old_qty * float(part.buy_price)
+    total_added_qty = 0
+
+    records_to_create = []
+    latest_supplier = None  # the part's primary supplier follows the newest restock
+    for entry in entries:
+        qty = entry['quantity']
+        price = float(entry['buy_price'])
+        if entry['supplier'] is not None:
+            latest_supplier = entry['supplier']
+
+        running_value += qty * price
+        total_added_qty += qty
+
+        records_to_create.append(RestockRecord(
+            part=part,
+            supplier=entry['supplier'],
+            quantity=qty,
+            buy_price=entry['buy_price'],
+            notes=entry.get('notes', ''),
+            invoice_number=invoice_number,
+        ))
+
+    # Bulk create all restock records (Postgres hands back their primary keys)
+    records = RestockRecord.objects.bulk_create(records_to_create)
+
+    # Update part stock and weighted avg price
+    new_total_qty = old_qty + total_added_qty
+    new_avg_price = round(running_value / new_total_qty, 2)
+
+    part.stock_qty = new_total_qty
+    part.buy_price = new_avg_price
+    if sell_price is not None:
+        part.sell_price = sell_price
+    # Point the part at whoever it was most recently bought from, so the next
+    # restock defaults to that supplier. Entries left as "Unknown / No Supplier"
+    # leave the existing one alone rather than clearing it.
+    if latest_supplier is not None:
+        part.supplier = latest_supplier
+    part.save()
+
+    return records, total_added_qty, new_avg_price
+
+
 @api_view(['POST'])
 @transaction.atomic
 def restock_part(request, pk):
@@ -598,21 +655,10 @@ def restock_part(request, pk):
 
     validated_entries = serializer.validated_data
 
-    # --- Weighted Average Cost Calculation ---
-    # Start with existing stock value
-    old_qty = part.stock_qty
-    running_value = old_qty * float(part.buy_price)
-    total_added_qty = 0
-
-    records_to_create = []
-    latest_supplier = None  # the part's primary supplier follows the newest restock
+    # Resolve every supplier before touching stock, so a bad id fails cleanly.
+    entries = []
     for entry in validated_entries:
         supplier_id = entry.get('supplier_id')
-        qty = entry['quantity']
-        price = float(entry['buy_price'])
-        notes = entry.get('notes', '')
-
-        # Resolve supplier
         supplier_obj = None
         if supplier_id:
             try:
@@ -622,40 +668,18 @@ def restock_part(request, pk):
                     {"error": f"Supplier with id {supplier_id} does not exist."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            latest_supplier = supplier_obj
+        entries.append({
+            'supplier': supplier_obj,
+            'quantity': entry['quantity'],
+            'buy_price': entry['buy_price'],
+            'notes': entry.get('notes', ''),
+        })
 
-        running_value += qty * price
-        total_added_qty += qty
-
-        records_to_create.append(RestockRecord(
-            part=part,
-            supplier=supplier_obj,
-            quantity=qty,
-            buy_price=entry['buy_price'],
-            notes=notes,
-        ))
-
-    # Bulk create all restock records
-    RestockRecord.objects.bulk_create(records_to_create)
-
-    # Update part stock and weighted avg price
-    new_total_qty = old_qty + total_added_qty
-    new_avg_price = round(running_value / new_total_qty, 2)
-
-    part.stock_qty = new_total_qty
-    part.buy_price = new_avg_price
-    if sell_price is not None:
-        part.sell_price = sell_price
-    # Point the part at whoever it was most recently bought from, so the next
-    # restock defaults to that supplier. Entries left as "Unknown / No Supplier"
-    # leave the existing one alone rather than clearing it.
-    if latest_supplier is not None:
-        part.supplier = latest_supplier
-    part.save()
+    records, total_added_qty, new_avg_price = _apply_restock(part, entries, sell_price=sell_price)
 
     return Response({
         "part": PartSerializer(part).data,
-        "records_created": len(records_to_create),
+        "records_created": len(records),
         "total_added_qty": total_added_qty,
         "new_avg_buy_price": new_avg_price,
     })
@@ -2716,3 +2740,347 @@ def get_vehicle_inspections(request, pk):
     vehicle = get_object_or_404(CustomerVehicle, pk=pk)
     qs = vehicle.inspections.select_related('vehicle__customer')
     return Response(VehicleInspectionSerializer(qs, many=True).data)
+
+
+# --- PURCHASE ORDERS ---
+
+# Orders that can still be edited: items added, quantities and prices changed.
+PO_EDITABLE_STATUSES = (PurchaseOrder.STATUS_DRAFT, PurchaseOrder.STATUS_ORDERED)
+
+
+def _next_po_number():
+    """Sequential PO-0001, PO-0002, ... derived from the current maximum."""
+    highest = 0
+    for number in PurchaseOrder.objects.exclude(po_number='').values_list('po_number', flat=True):
+        digits = number.rsplit('-', 1)[-1]
+        if digits.isdigit():
+            highest = max(highest, int(digits))
+    return f"PO-{highest + 1:04d}"
+
+
+def _purchase_order_qs():
+    return PurchaseOrder.objects.select_related('supplier').prefetch_related('items__part')
+
+
+def _parse_positive_int(value, field):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be a whole number.")
+    if number < 0:
+        raise ValueError(f"{field} cannot be negative.")
+    return number
+
+
+def _parse_price(value, field):
+    try:
+        price = Decimal(str(value).strip() or '0')
+    except (InvalidOperation, ValueError):
+        raise ValueError(f"{field} must be a number.")
+    if price < 0:
+        raise ValueError(f"{field} cannot be negative.")
+    return price
+
+
+@api_view(['GET'])
+def get_purchase_orders(request):
+    """List purchase orders, optionally filtered by ?status=DRAFT|ORDERED|..."""
+    qs = _purchase_order_qs()
+    status_filter = request.query_params.get('status', '').strip().upper()
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    return Response(PurchaseOrderSerializer(qs, many=True).data)
+
+
+@api_view(['GET'])
+def get_purchase_order(request, pk):
+    po = get_object_or_404(_purchase_order_qs(), pk=pk)
+    return Response(PurchaseOrderSerializer(po).data)
+
+
+@api_view(['POST'])
+@transaction.atomic
+def add_purchase_order_item(request):
+    """
+    Add a part to its supplier's open draft order, creating the draft if the
+    supplier has none. Adding a part that's already on the draft increases its
+    quantity instead of listing it twice.
+
+    Payload: { "part_id": <uuid>, "supplier_id": <int>, "quantity": <int> }
+    """
+    part = get_object_or_404(Part, pk=request.data.get('part_id'))
+    supplier_id = request.data.get('supplier_id')
+    if not supplier_id:
+        return Response({"error": "Choose a supplier to order from."}, status=status.HTTP_400_BAD_REQUEST)
+    supplier = get_object_or_404(Supplier, pk=supplier_id)
+    try:
+        quantity = _parse_positive_int(request.data.get('quantity'), "Quantity")
+    except ValueError as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    if quantity < 1:
+        return Response({"error": "Quantity must be at least 1."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Lock the supplier's drafts so two quick clicks can't open two drafts.
+    po = (PurchaseOrder.objects.select_for_update()
+          .filter(supplier=supplier, status=PurchaseOrder.STATUS_DRAFT)
+          .order_by('created_at').first())
+    created = po is None
+    if created:
+        po = PurchaseOrder.objects.create(
+            supplier=supplier,
+            supplier_name=supplier.name,
+            po_number=_next_po_number(),
+        )
+
+    item = po.items.filter(part=part).first()
+    if item:
+        item.quantity += quantity
+        item.save(update_fields=['quantity'])
+    else:
+        PurchaseOrderItem.objects.create(
+            purchase_order=po,
+            part=part,
+            part_name=part.name,
+            part_number=part.part_number,
+            brand=part.brand,
+            quantity=quantity,
+            unit_price=part.buy_price or 0,
+        )
+    po.save(update_fields=['updated_at'])
+
+    po = _purchase_order_qs().get(pk=po.pk)
+    return Response(
+        {"purchase_order": PurchaseOrderSerializer(po).data, "created": created},
+        status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+    )
+
+
+@api_view(['PATCH'])
+@transaction.atomic
+def update_purchase_order(request, pk):
+    """
+    Edit an order that hasn't been received or cancelled: its notes, and each
+    line's quantity and expected unit price.
+
+    Payload: { "notes": "...", "items": [{ "id": 1, "quantity": 5, "unit_price": "1200.00" }] }
+    """
+    po = get_object_or_404(PurchaseOrder, pk=pk)
+    if po.status not in PO_EDITABLE_STATUSES:
+        return Response({"error": f"A {po.get_status_display().lower()} order can't be edited."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    if 'notes' in request.data:
+        po.notes = request.data.get('notes') or ''
+
+    items_by_id = {item.id: item for item in po.items.all()}
+    for row in request.data.get('items', []):
+        item = items_by_id.get(row.get('id'))
+        if item is None:
+            continue
+        try:
+            if 'quantity' in row:
+                item.quantity = _parse_positive_int(row['quantity'], "Quantity")
+                if item.quantity < 1:
+                    raise ValueError("Quantity must be at least 1 — remove the item instead.")
+            if 'unit_price' in row:
+                item.unit_price = _parse_price(row['unit_price'], "Unit price")
+        except ValueError as e:
+            return Response({"error": f"{item.part_name}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+        item.save(update_fields=['quantity', 'unit_price'])
+
+    po.save()
+    return Response(PurchaseOrderSerializer(_purchase_order_qs().get(pk=po.pk)).data)
+
+
+@api_view(['DELETE'])
+@transaction.atomic
+def delete_purchase_order_item(request, item_pk):
+    item = get_object_or_404(PurchaseOrderItem.objects.select_related('purchase_order'), pk=item_pk)
+    po = item.purchase_order
+    if po.status not in PO_EDITABLE_STATUSES:
+        return Response({"error": "Items can only be removed from a draft or ordered purchase order."},
+                        status=status.HTTP_400_BAD_REQUEST)
+    item.delete()
+    po.save(update_fields=['updated_at'])
+    return Response(PurchaseOrderSerializer(_purchase_order_qs().get(pk=po.pk)).data)
+
+
+@api_view(['POST'])
+def mark_purchase_order_ordered(request, pk):
+    """Close the draft: it's been sent to the supplier. New items start a new draft."""
+    po = get_object_or_404(PurchaseOrder, pk=pk)
+    if po.status != PurchaseOrder.STATUS_DRAFT:
+        return Response({"error": "Only a draft can be marked as ordered."}, status=status.HTTP_400_BAD_REQUEST)
+    if not po.items.exists():
+        return Response({"error": "Add at least one item before ordering."}, status=status.HTTP_400_BAD_REQUEST)
+    po.status = PurchaseOrder.STATUS_ORDERED
+    po.ordered_at = timezone.now()
+    po.save()
+    return Response(PurchaseOrderSerializer(_purchase_order_qs().get(pk=po.pk)).data)
+
+
+@api_view(['POST'])
+@transaction.atomic
+def receive_purchase_order(request, pk):
+    """
+    Book a delivery into stock. Each line's received quantity and actual unit
+    price are confirmed here (deliveries are often short, and prices drift
+    from what was expected); every line with a quantity above zero is restocked
+    exactly like Quick Restock, tagged with the supplier's invoice number.
+    A line may also carry a new selling price for the part — omitted or blank
+    leaves the current one alone.
+
+    Payload: { "invoice_number": "...", "items": [{ "id": 1, "received_quantity": 5, "unit_price": "1200.00", "sell_price": "1800.00" }] }
+    """
+    po = get_object_or_404(PurchaseOrder.objects.select_for_update(), pk=pk)
+    if po.status not in PO_EDITABLE_STATUSES:
+        return Response({"error": f"This order is already {po.get_status_display().lower()}."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    invoice_number = (request.data.get('invoice_number') or '').strip()
+    rows = {row.get('id'): row for row in request.data.get('items', [])}
+    items = list(po.items.select_related('part'))
+
+    # Validate everything before any stock moves.
+    plan = []
+    for item in items:
+        row = rows.get(item.id, {})
+        try:
+            qty = _parse_positive_int(row.get('received_quantity', item.quantity), "Received quantity")
+            price = _parse_price(row.get('unit_price', item.unit_price), "Unit price")
+            raw_sell = row.get('sell_price')
+            sell_price = None if raw_sell in (None, '') else _parse_price(raw_sell, "Selling price")
+        except ValueError as e:
+            return Response({"error": f"{item.part_name}: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+        if qty > 0 and item.part is None:
+            return Response({"error": f"{item.part_name} no longer exists in inventory — set its received quantity to 0."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        plan.append((item, qty, price, sell_price))
+
+    if not any(qty > 0 for _, qty, _, _ in plan):
+        return Response({"error": "Nothing to receive — enter a received quantity for at least one item."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    for item, qty, price, sell_price in plan:
+        item.received_quantity = qty
+        item.unit_price = price
+        item.restock_record = None
+        item.previous_sell_price = None
+        if item.part_id and (qty > 0 or sell_price is not None):
+            part = Part.objects.select_for_update().get(pk=item.part_id)
+            # Kept so a revert can put the old price back.
+            if sell_price is not None and sell_price != part.sell_price:
+                item.previous_sell_price = part.sell_price
+            if qty > 0:
+                records, _, _ = _apply_restock(
+                    part,
+                    [{'supplier': po.supplier, 'quantity': qty, 'buy_price': price, 'notes': f"Received on {po.po_number}"}],
+                    sell_price=sell_price,
+                    invoice_number=invoice_number,
+                )
+                item.restock_record = records[0]
+            elif sell_price is not None:
+                # Nothing arrived, but a repricing was still asked for.
+                part.sell_price = sell_price
+                part.save(update_fields=['sell_price'])
+        item.save(update_fields=['received_quantity', 'unit_price', 'restock_record', 'previous_sell_price'])
+
+    po.status = PurchaseOrder.STATUS_RECEIVED
+    po.received_at = timezone.now()
+    po.invoice_number = invoice_number
+    po.save()
+    return Response(PurchaseOrderSerializer(_purchase_order_qs().get(pk=po.pk)).data)
+
+
+@api_view(['POST'])
+@transaction.atomic
+def revert_purchase_order(request, pk):
+    """
+    Undo a receipt that was entered wrong, putting the order back to ORDERED so
+    it can be corrected and received again. Each received line's stock comes
+    back off the part (same maths as returning a restock record), its restock
+    record is deleted — it was a mistake, not a return — and any selling price
+    the receipt changed is restored. Refused, with nothing changed, when that
+    can't be done cleanly: the record is gone or partly returned, or some of
+    the delivery has already been sold.
+    """
+    po = get_object_or_404(PurchaseOrder.objects.select_for_update(), pk=pk)
+    if po.status != PurchaseOrder.STATUS_RECEIVED:
+        return Response({"error": "Only a received order can be reverted."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Check every line before any stock moves.
+    plan = []
+    for item in po.items.select_related('restock_record'):
+        if item.received_quantity == 0:
+            plan.append((item, None, None))
+            continue
+        if item.part_id is None:
+            return Response({"error": f"{item.part_name} no longer exists in inventory, so its receipt can't be undone."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        record = item.restock_record
+        if record is None:
+            # Orders received before lines were linked to their record are
+            # found by the note the receipt left on it.
+            record = (RestockRecord.objects
+                      .filter(part_id=item.part_id, supplier=po.supplier,
+                              notes=f"Received on {po.po_number}", quantity=item.received_quantity)
+                      .order_by('-restocked_at').first())
+        if record is None:
+            return Response({"error": f"{item.part_name}: the purchase history entry for this delivery was removed, so it can't be undone."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if record.returned_quantity > 0:
+            return Response({"error": f"{item.part_name}: some of this delivery was already returned to the supplier. Undo that return first."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        part = Part.objects.select_for_update().get(pk=item.part_id)
+        if part.stock_qty < record.quantity:
+            return Response({"error": f"{item.part_name}: only {part.stock_qty} left in stock but {record.quantity} were received — some have been sold, so this can't be undone."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        plan.append((item, record, part))
+
+    for item, record, part in plan:
+        if record is not None:
+            # Take this delivery back out of the weighted average.
+            old_stock_value = float(part.stock_qty) * float(part.buy_price)
+            new_stock_qty = part.stock_qty - record.quantity
+            if new_stock_qty > 0:
+                part.buy_price = round((old_stock_value - record.quantity * float(record.buy_price)) / new_stock_qty, 2)
+            part.stock_qty = new_stock_qty
+            if item.previous_sell_price is not None:
+                part.sell_price = item.previous_sell_price
+            part.save()
+            record.delete()
+        elif item.previous_sell_price is not None and item.part_id:
+            Part.objects.filter(pk=item.part_id).update(sell_price=item.previous_sell_price)
+
+        item.received_quantity = 0
+        item.restock_record = None
+        item.previous_sell_price = None
+        item.save(update_fields=['received_quantity', 'restock_record', 'previous_sell_price'])
+
+    po.status = PurchaseOrder.STATUS_ORDERED
+    po.received_at = None
+    po.invoice_number = ''
+    po.save()
+    return Response(PurchaseOrderSerializer(_purchase_order_qs().get(pk=po.pk)).data)
+
+
+@api_view(['POST'])
+def cancel_purchase_order(request, pk):
+    po = get_object_or_404(PurchaseOrder, pk=pk)
+    if po.status not in PO_EDITABLE_STATUSES:
+        return Response({"error": f"This order is already {po.get_status_display().lower()}."},
+                        status=status.HTTP_400_BAD_REQUEST)
+    po.status = PurchaseOrder.STATUS_CANCELLED
+    po.save()
+    return Response(PurchaseOrderSerializer(_purchase_order_qs().get(pk=po.pk)).data)
+
+
+@api_view(['DELETE'])
+def delete_purchase_order(request, pk):
+    """Received orders are stock history and can't be deleted; anything else can."""
+    po = get_object_or_404(PurchaseOrder, pk=pk)
+    if po.status == PurchaseOrder.STATUS_RECEIVED:
+        return Response({"error": "A received order is part of the stock history and can't be deleted."},
+                        status=status.HTTP_400_BAD_REQUEST)
+    po.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

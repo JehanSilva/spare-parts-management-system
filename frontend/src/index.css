@@ -134,6 +134,22 @@
     display: table-header-group !important;
   }
 
+  /* Purchase order — same page geometry handling as the invoice. */
+  .po-doc {
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .po-doc tr {
+    page-break-inside: avoid !important;
+  }
+
+  .po-doc thead {
+    display: table-header-group !important;
+  }
+
   /* Repair estimate — same page geometry handling as the invoice: the sheet
      carries its own A4 size on screen, the printed page supplies the margins.
      Estimates are kept as compact as possible (they are letters, not reports,

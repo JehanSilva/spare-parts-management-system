@@ -21,6 +21,7 @@ import DailyReportPage from "./pages/DailyReportPage";
 import OptionsPage from "./pages/OptionsPage";
 import EstimatePage from "./pages/EstimatePage";
 import EstimateListPage from "./pages/EstimateListPage";
+import PurchaseOrdersPage from "./pages/PurchaseOrdersPage";
 import InspectionPage from "./pages/InspectionPage";
 import InspectionListPage from "./pages/InspectionListPage";
 import RepairServicesPage from "./pages/RepairServicesPage";
@@ -149,6 +150,14 @@ const AppRoutes = () => (
         element={
           <PrivateRoute>
             <OptionsPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/purchase-orders"
+        element={
+          <PrivateRoute>
+            <PurchaseOrdersPage />
           </PrivateRoute>
         }
       />

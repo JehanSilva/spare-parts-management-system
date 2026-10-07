@@ -521,6 +521,78 @@ class RestockRecord(models.Model):
         supplier_name = self.supplier.name if self.supplier else "Unknown"
         return f"{self.part.name} | {supplier_name} | Qty: {self.quantity} @ {self.buy_price}"
 
+# --- PURCHASE ORDERS (parts ordered from a supplier) ---
+
+class PurchaseOrder(models.Model):
+    """
+    An order for parts placed with one supplier. Items are added from the
+    Inventory page into that supplier's open DRAFT (one draft per supplier at a
+    time); marking it ORDERED closes it, so the next item starts a fresh draft.
+    Receiving it adds the delivered quantities to stock through the same
+    RestockRecord path as Quick Restock.
+    """
+    STATUS_DRAFT = 'DRAFT'
+    STATUS_ORDERED = 'ORDERED'
+    STATUS_RECEIVED = 'RECEIVED'
+    STATUS_CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Draft'),
+        (STATUS_ORDERED, 'Ordered'),
+        (STATUS_RECEIVED, 'Received'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    po_number = models.CharField(max_length=20, unique=True, blank=True, help_text="Sequential reference, e.g. PO-0001")
+    # SET_NULL, like RestockRecord.supplier: deleting a supplier must not erase
+    # what was ordered from them. supplier_name keeps the printed name.
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchase_orders')
+    supplier_name = models.CharField(max_length=100, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    notes = models.TextField(blank=True)
+    invoice_number = models.CharField(max_length=100, blank=True, help_text="Supplier invoice the delivery came with")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    ordered_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.po_number} | {self.supplier_name}"
+
+
+class PurchaseOrderItem(models.Model):
+    """
+    One part on a purchase order. The part's name/number/brand are copied on so
+    an old order still prints what was ordered after the part is edited or
+    deleted (SET_NULL), the same reason Estimate copies the owner details.
+    """
+    purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.CASCADE, related_name='items')
+    part = models.ForeignKey(Part, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchase_order_items')
+    part_name = models.CharField(max_length=200, blank=True)
+    part_number = models.CharField(max_length=100, blank=True)
+    brand = models.CharField(max_length=100, blank=True)
+    quantity = models.PositiveIntegerField(default=1)
+    # Expected unit cost, pre-filled from the part's buy price; confirmed (and
+    # possibly corrected) when the delivery is received.
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    received_quantity = models.PositiveIntegerField(default=0)
+    # Set when the line is received, so the receipt can be reverted exactly:
+    # the restock record it created, and — only if receiving repriced the
+    # part — the selling price it had before.
+    restock_record = models.ForeignKey(
+        RestockRecord, on_delete=models.SET_NULL, null=True, blank=True, related_name='purchase_order_items'
+    )
+    previous_sell_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        ordering = ['id']
+
+    def __str__(self):
+        return f"{self.part_name} x {self.quantity}"
+
+
 # --- VEHICLE INSPECTION (pre-purchase / warranty inspection sheet) ---
 
 # The digital sheet continues the shop's paper book rather than restarting at 1,

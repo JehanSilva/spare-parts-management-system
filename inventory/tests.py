@@ -1322,6 +1322,31 @@ class EstimateAPITest(TestCase):
         self.assertEqual(fetched.data['owner_phone'], "0716188187")
         self.assertIn("Negombo Road", fetched.data['owner_address'])
 
+    def test_notes_round_trip(self):
+        note = "Please release 50% of the estimate\nbefore repairs begin."
+        response = self.client.post(self.create_url, self._payload(notes=note), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        fetched = self.client.get(reverse('get_estimate', kwargs={'pk': response.data['id']}))
+        self.assertEqual(fetched.data['notes'], note)
+
+        # Optional: an estimate without one comes back blank.
+        bare = self.client.post(self.create_url, self._payload(), format='json')
+        self.assertEqual(bare.data['notes'], "")
+
+    def test_bank_details_flag_is_off_by_default_and_saved_when_set(self):
+        bare = self.client.post(self.create_url, self._payload(), format='json')
+        self.assertFalse(bare.data['show_bank_details'])
+
+        response = self.client.post(self.create_url, self._payload(show_bank_details=True), format='json')
+        fetched = self.client.get(reverse('get_estimate', kwargs={'pk': response.data['id']}))
+        self.assertTrue(fetched.data['show_bank_details'])
+
+        updated = self.client.patch(
+            reverse('update_estimate', kwargs={'pk': response.data['id']}),
+            {"show_bank_details": False}, format='json',
+        )
+        self.assertFalse(updated.data['show_bank_details'])
+
     def test_owner_details_can_be_edited_and_cleared(self):
         created = self.client.post(
             self.create_url, self._payload(owner_name="Jehan Silva"), format='json'

@@ -11,6 +11,7 @@ import EstimateDocument, {
   fromEstimateRecord,
 } from "../components/EstimateDocument";
 import AlertComponent from "../components/AlertComponent";
+import { BANK_DETAILS } from "../components/bankDetails";
 import LeavePrompt from "../components/LeavePrompt";
 import ConfirmModal from "../components/ConfirmModal";
 import useUnsavedChangesPrompt from "../hooks/useUnsavedChangesPrompt";
@@ -33,6 +34,8 @@ import {
   Link2,
   UserCheck,
   PlusCircle,
+  StickyNote,
+  Landmark,
 } from "lucide-react";
 
 const formatAmount = (amount) =>
@@ -281,6 +284,8 @@ const EstimatePage = () => {
       ownerName: "",
       ownerPhone: "",
       ownerAddress: "",
+      notes: "",
+      showBankDetails: false,
       sections: blankSections(),
     }),
     [today]
@@ -839,6 +844,39 @@ const EstimatePage = () => {
               onChange={(rows) => setSection(section.key, rows)}
             />
           ))}
+
+          {/* ── NOTES ─────────────────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
+            <h2 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
+              <StickyNote size={18} className="text-red-700" /> Notes
+            </h2>
+            <p className="text-xs text-gray-400 mb-4">
+              Optional — printed below the total. E.g. a message to the insurer, or a request for a
+              50% advance before work starts.
+            </p>
+            <textarea
+              value={estimate.notes}
+              onChange={(e) => setField("notes", e.target.value)}
+              rows={4}
+              placeholder="e.g. Kindly release 50% of the estimated amount as an advance to commence the repairs."
+              className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+            />
+            <label className="mt-3 flex items-center gap-2 text-sm font-semibold text-gray-700 cursor-pointer select-none w-fit">
+              <input
+                type="checkbox"
+                checked={estimate.showBankDetails}
+                onChange={(e) => setField("showBankDetails", e.target.checked)}
+                className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+              />
+              <Landmark size={14} className="text-gray-400" />
+              Add bank account details for payment
+            </label>
+            {estimate.showBankDetails && (
+              <p className="mt-1 ml-6 text-xs text-gray-400">
+                {BANK_DETAILS.map(([, value]) => value).join(" · ")}
+              </p>
+            )}
+          </div>
 
           {/* ── TOTAL ─────────────────────────────────────────────────── */}
           {/* Pending items carry no price, so the figure is only the repairs

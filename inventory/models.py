@@ -315,6 +315,12 @@ class Estimate(models.Model):
     owner_name = models.CharField(max_length=100, blank=True)
     owner_phone = models.CharField(max_length=20, blank=True)
     owner_address = models.TextField(blank=True)
+    # Free-text remarks printed under the total — a message to the insurer, a
+    # request for an advance before work starts, and so on.
+    notes = models.TextField(blank=True)
+    # Print the shop's bank account under the note — only on the estimates that
+    # ask for payment, so it's off unless chosen.
+    show_bank_details = models.BooleanField(default=False)
     sections = models.JSONField(default=dict, blank=True)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)

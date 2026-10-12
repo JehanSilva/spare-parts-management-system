@@ -1,4 +1,5 @@
 import React, { forwardRef } from "react";
+import { BANK_DETAILS } from "./bankDetails";
 import logo from "../assets/logo.png";
 import signature from "../assets/signature.png";
 
@@ -67,6 +68,8 @@ export const toEstimatePayload = (estimate) => ({
   owner_name: estimate.ownerName,
   owner_phone: estimate.ownerPhone,
   owner_address: estimate.ownerAddress,
+  notes: estimate.notes,
+  show_bank_details: Boolean(estimate.showBankDetails),
   sections: estimate.sections,
 });
 
@@ -83,6 +86,8 @@ export const fromEstimateRecord = (record) => ({
   ownerName: record.owner_name || "",
   ownerPhone: record.owner_phone || "",
   ownerAddress: record.owner_address || "",
+  notes: record.notes || "",
+  showBankDetails: Boolean(record.show_bank_details),
   // A section the estimate never used comes back missing or empty; the editor
   // always needs at least one row to render, so backfill a blank one.
   sections: ESTIMATE_SECTIONS.reduce((acc, s) => {
@@ -203,6 +208,8 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
     ownerName,
     ownerPhone,
     ownerAddress,
+    notes,
+    showBankDetails,
     sections = {},
   } = estimate || {};
 
@@ -387,6 +394,27 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
           ? ` and applies only to the Insurance company: ${insuranceCompany}`
           : ""}
       </p>
+
+      {/* ── NOTE ────────────────────────────────────────────────────────── */}
+      {(notes || "").trim() && (
+        <div className="mt-3 break-inside-avoid text-[10.5px]">
+          <div className="font-bold text-gray-900">Note</div>
+          <p className="text-gray-800 whitespace-pre-wrap leading-snug">{notes.trim()}</p>
+        </div>
+      )}
+
+      {/* ── BANK DETAILS (only on estimates that ask for payment) ──────── */}
+      {showBankDetails && (
+        <div className="mt-3 break-inside-avoid text-[10.5px]">
+          <div className="font-bold text-gray-900">Bank Details</div>
+          {BANK_DETAILS.map(([label, value]) => (
+            <div key={label} className="flex gap-2 text-gray-800 leading-snug">
+              <span className="w-24 text-gray-600">{label}</span>
+              <span>: {value}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── SIGNATURE (applied automatically) ───────────────────────────── */}
       <div className="mt-4 break-inside-avoid">

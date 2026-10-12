@@ -1,15 +1,7 @@
 import React, { forwardRef } from "react";
 import logo from "../assets/logo.png";
 import { getVehicleInfo } from "./billingVehicle";
-
-// Where a customer transferring the money should send it. Printed on every
-// invoice, so this is the one place to edit if the shop ever changes banks.
-const BANK_DETAILS = [
-  ["Bank", "Commercial Bank"],
-  ["Branch", "Ja-ela"],
-  ["Account Name", "NSS Auto Engineers"],
-  ["Account No.", "1000956014"],
-];
+import { BANK_DETAILS } from "./bankDetails";
 
 // Right-aligned "Label : value" row used in the invoice meta column.
 const MetaRow = ({ label, value }) => (

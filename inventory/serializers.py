@@ -262,7 +262,7 @@ class EstimateSerializer(serializers.ModelSerializer):
             'id', 'estimate_number', 'vehicle', 'vehicle_details', 'vehicle_number',
             'make_model', 'mileage', 'first_registered_date', 'registration_number',
             'chassis_number', 'insurance_company', 'date', 'validity_days',
-            'owner_name', 'owner_phone', 'owner_address', 'sections',
+            'owner_name', 'owner_phone', 'owner_address', 'notes', 'show_bank_details', 'sections',
             'total_amount', 'has_pending_quotation', 'created_at', 'updated_at',
         ]
         # All derived server-side: the reference number is allocated on create,

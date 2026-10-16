@@ -1146,6 +1146,19 @@ def reverse_sale(request, pk):
             'warranty': item.warranty_period_months,
         })
 
+    # Carry the sale's own day over as the cart's backdate, so the redone sale
+    # is recorded when it actually happened rather than on the day it was
+    # corrected. Local date: an evening sale is already "tomorrow" in UTC.
+    # A sale from today needs no backdate.
+    sale_day = timezone.localtime(sale.created_at).date()
+    # Likewise the payment decision: a credit or part-paid sale comes back as
+    # one, with the amount already received (including any later top-ups) and
+    # its note, so redoing it doesn't silently turn it into a paid sale. The
+    # amount is kept as the cart stores it — typed text, "5000" not "5000.00".
+    payment_mode = sale.payment_status if sale.payment_status in ('PARTIAL', 'CREDIT') else 'PAID'
+    partial_amount_paid = ''
+    if payment_mode == 'PARTIAL':
+        partial_amount_paid = format(Decimal(str(sale.amount_paid)).normalize(), 'f')
     cart = ActiveCart.objects.create(
         id=f"cart_reversed_{uuid.uuid4().hex[:12]}",
         customer_name=sale.customer_name,
@@ -1153,6 +1166,10 @@ def reverse_sale(request, pk):
         items=cart_items,
         mileage=sale.mileage,
         notes=sale.notes,
+        sale_date=sale_day if sale_day != timezone.localdate() else None,
+        payment_mode=payment_mode,
+        partial_amount_paid=partial_amount_paid,
+        credit_note=(sale.credit_note or '') if payment_mode != 'PAID' else '',
     )
 
     sale.delete()

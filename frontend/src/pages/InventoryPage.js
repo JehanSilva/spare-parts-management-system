@@ -29,6 +29,7 @@ import AddPartForm from "../components/forms/AddPartForm";
 import { apiErrorMessage } from "../components/apiErrorMessage";
 import QuickRestockModal from "../components/forms/QuickRestockModal";
 import SupplierSelect from "../components/forms/SupplierSelect";
+import CopyButton from "../components/CopyButton";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
 import PartDetailsModal from "../components/PartDetailsModal";
@@ -1522,12 +1523,18 @@ const InventoryPage = () => {
                 {/* Content Section */}
                 <div className="p-3 md:p-5 flex-1 flex flex-col">
                   <div className="mb-1 md:mb-2">
-                    <h2 className="text-sm md:text-lg font-bold text-gray-800 leading-snug line-clamp-2 md:line-clamp-none">
-                      {part.name}
-                    </h2>
-                    <p className="text-[10px] md:text-xs text-gray-400 font-mono mt-0.5 truncate">
-                      {part.part_number}
-                    </p>
+                    <div className="flex items-start gap-0.5">
+                      <h2 className="text-sm md:text-lg font-bold text-gray-800 leading-snug line-clamp-2 md:line-clamp-none min-w-0">
+                        {part.name}
+                      </h2>
+                      <CopyButton text={part.name} label="part name" size={12} />
+                    </div>
+                    <div className="flex items-center gap-0.5 mt-0.5 min-w-0">
+                      <p className="text-[10px] md:text-xs text-gray-400 font-mono truncate">
+                        {part.part_number}
+                      </p>
+                      <CopyButton text={part.part_number} label="part number" size={11} />
+                    </div>
                   </div>
 
                   <div className="flex gap-2 mb-2">

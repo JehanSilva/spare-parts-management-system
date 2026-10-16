@@ -879,6 +879,74 @@ class BackdatedSaleAPITest(TestCase):
         self.assertEqual(today.data['today_sales_count'], 0)
 
 
+class ReverseSaleAPITest(TestCase):
+    """Reverse & Redo rebuilds a sale as a POS cart — on the sale's own date."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="reverseuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.part = Part.objects.create(
+            name="Brake Pad", part_number="BP-200", buy_price=500, sell_price=1000, stock_qty=10,
+        )
+
+    def _sale(self, created_at=None, **extra):
+        payload = {
+            "customer_name": "John Doe",
+            "vehicle_number": "ABC-1234",
+            "items": [{"part_id": str(self.part.id), "quantity": 2, "unit_price": 1000, "discount": 0}],
+            **extra,
+        }
+        if created_at:
+            payload["created_at"] = created_at.isoformat()
+        response = self.client.post(reverse('create_sale'), payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        return response.data['id']
+
+    def _reverse(self, sale_id):
+        return self.client.post(reverse('reverse_sale', args=[sale_id]))
+
+    def test_reversed_cart_keeps_the_original_sale_date(self):
+        day = (timezone.localtime() - timedelta(days=4)).date()
+        response = self._reverse(self._sale(created_at=day))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['sale_date'], day.isoformat())
+        self.assertEqual(ActiveCart.objects.get(pk=response.data['id']).sale_date, day)
+
+    def test_reversing_todays_sale_leaves_the_date_unset(self):
+        response = self._reverse(self._sale())
+        self.assertIsNone(response.data['sale_date'])
+
+    def test_partial_payment_is_carried_into_the_cart(self):
+        sale_id = self._sale(payment_status="PARTIAL", amount_paid=500, credit_note="Balance on Friday")
+        response = self._reverse(sale_id)
+        self.assertEqual(response.data['payment_mode'], "PARTIAL")
+        self.assertEqual(response.data['partial_amount_paid'], "500")
+        self.assertEqual(response.data['credit_note'], "Balance on Friday")
+
+    def test_full_credit_is_carried_into_the_cart(self):
+        sale_id = self._sale(payment_status="CREDIT", credit_note="Pays end of month")
+        response = self._reverse(sale_id)
+        self.assertEqual(response.data['payment_mode'], "CREDIT")
+        self.assertEqual(response.data['partial_amount_paid'], "")
+        self.assertEqual(response.data['credit_note'], "Pays end of month")
+
+    def test_paid_sale_comes_back_as_paid(self):
+        response = self._reverse(self._sale())
+        self.assertEqual(response.data['payment_mode'], "PAID")
+        self.assertEqual(response.data['credit_note'], "")
+
+    def test_reversing_restores_stock_and_removes_the_sale(self):
+        sale_id = self._sale()
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 8)
+
+        self._reverse(sale_id)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 10)
+        self.assertFalse(Sale.objects.filter(pk=sale_id).exists())
+
+
 class SaleMileageSyncAPITest(TestCase):
     """
     Completing a POS sale should keep CustomerVehicle.current_mileage in sync:

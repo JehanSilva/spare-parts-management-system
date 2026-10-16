@@ -204,12 +204,18 @@ const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => 
       </div>
       <div className="p-2 flex-1 flex flex-col justify-between">
         <div>
-          <h3 className="font-bold text-gray-800 text-[11px] md:text-xs leading-snug line-clamp-2">
-            {part.name}
-          </h3>
-          <p className="text-[10px] text-gray-400 font-mono mt-0.5">
-            {part.part_number}
-          </p>
+          <div className="flex items-start gap-0.5">
+            <h3 className="font-bold text-gray-800 text-[11px] md:text-xs leading-snug line-clamp-2 min-w-0">
+              {part.name}
+            </h3>
+            <CopyButton text={part.name} label="part name" size={11} />
+          </div>
+          <div className="flex items-center gap-0.5 mt-0.5 min-w-0">
+            <p className="text-[10px] text-gray-400 font-mono truncate">
+              {part.part_number}
+            </p>
+            <CopyButton text={part.part_number} label="part number" size={11} />
+          </div>
         </div>
         <div className="mt-1.5 pt-1.5 border-t border-gray-50 flex items-center justify-between">
           <p className="text-[10px] text-gray-500 truncate">{part.brand}</p>

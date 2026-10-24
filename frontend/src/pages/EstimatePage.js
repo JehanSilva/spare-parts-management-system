@@ -14,6 +14,7 @@ import AlertComponent from "../components/AlertComponent";
 import { BANK_DETAILS } from "../components/bankDetails";
 import LeavePrompt from "../components/LeavePrompt";
 import ConfirmModal from "../components/ConfirmModal";
+import { caseOnChange, sentenceCase, titleCaseName } from "../components/titleCase";
 import useUnsavedChangesPrompt from "../hooks/useUnsavedChangesPrompt";
 import { fetchEstimate, createEstimate, updateEstimate, lookupVehicle } from "../services/api";
 import { customerDisplayName } from "../components/customerName";
@@ -117,7 +118,7 @@ const SectionEditor = ({ section, rows, onChange }) => {
               </span>
               <input
                 value={row.description}
-                onChange={(e) => updateRow(index, "description", e.target.value)}
+                onChange={caseOnChange(sentenceCase, (v) => updateRow(index, "description", v))}
                 placeholder={isQty ? `Item ${index + 1} description` : `Task ${index + 1} description`}
                 className="w-full p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
               />
@@ -699,7 +700,7 @@ const EstimatePage = () => {
                 </label>
                 <input
                   value={estimate.insuranceCompany}
-                  onChange={(e) => setField("insuranceCompany", e.target.value)}
+                  onChange={caseOnChange(titleCaseName, (v) => setField("insuranceCompany", v))}
                   placeholder="e.g. Amana Takaful Insurance"
                   className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
                 />
@@ -723,7 +724,7 @@ const EstimatePage = () => {
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Make &amp; Model</label>
                 <input
                   value={estimate.makeModel}
-                  onChange={(e) => setField("makeModel", e.target.value)}
+                  onChange={caseOnChange(titleCaseName, (v) => setField("makeModel", v))}
                   placeholder="e.g. TATA Ace"
                   className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
                 />
@@ -806,7 +807,7 @@ const EstimatePage = () => {
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Owner Name</label>
                 <input
                   value={estimate.ownerName}
-                  onChange={(e) => setField("ownerName", e.target.value)}
+                  onChange={caseOnChange(titleCaseName, (v) => setField("ownerName", v))}
                   placeholder="e.g. Jehan Silva"
                   className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
                 />
@@ -826,7 +827,7 @@ const EstimatePage = () => {
                 <label className="block text-sm font-semibold text-gray-700 mb-1">Address</label>
                 <textarea
                   value={estimate.ownerAddress}
-                  onChange={(e) => setField("ownerAddress", e.target.value)}
+                  onChange={caseOnChange(sentenceCase, (v) => setField("ownerAddress", v))}
                   rows={2}
                   placeholder="e.g. No. 272, Negombo Road, Ja-ela"
                   className="w-full p-2.5 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
@@ -856,7 +857,7 @@ const EstimatePage = () => {
             </p>
             <textarea
               value={estimate.notes}
-              onChange={(e) => setField("notes", e.target.value)}
+              onChange={caseOnChange(sentenceCase, (v) => setField("notes", v))}
               rows={4}
               placeholder="e.g. Kindly release 50% of the estimated amount as an advance to commence the repairs."
               className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"

@@ -14,6 +14,7 @@ from rest_framework import status
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
+from .text import title_case_name
 from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, inspection_overall_rating, PurchaseOrder
 
 class PartMinimalAPITest(TestCase):
@@ -200,6 +201,65 @@ class BulkUploadAPITest(TestCase):
         response = self.client.post(resolve_url, {'resolutions': resolutions}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(RestockRecord.objects.filter(part=self.existing_part).count(), 0)
+
+
+class PartNameTitleCaseTest(TestCase):
+    """Part names are title-cased on every save, keeping abbreviations as typed."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="titleuser", password="password")
+        self.client.force_authenticate(user=self.user)
+
+    def test_rule(self):
+        cases = {
+            "brake pads": "Brake Pads",
+            "cabin AC filter": "Cabin AC Filter",
+            "CV joint boot": "CV Joint Boot",
+            "headlight bulb (h4)": "Headlight Bulb (H4)",
+            "anti-roll bar": "Anti-Roll Bar",
+            "wiper blades size 26'": "Wiper Blades Size 26'",
+            "driver's side mirror": "Driver's Side Mirror",
+            "4wd hub": "4wd Hub",
+            "BRAKE PADS": "BRAKE PADS",
+            "  brake pads  ": "Brake Pads",
+        }
+        for typed, expected in cases.items():
+            self.assertEqual(title_case_name(typed), expected, typed)
+
+    def test_create_and_update_are_title_cased(self):
+        part = Part.objects.create(name="front brake rotor", part_number="FBR-1", buy_price=1, sell_price=2)
+        self.assertEqual(Part.objects.get(pk=part.pk).name, "Front Brake Rotor")
+
+        part.name = "front brake rotor (left)"
+        part.save()
+        self.assertEqual(Part.objects.get(pk=part.pk).name, "Front Brake Rotor (Left)")
+
+    def test_add_part_endpoint_title_cases(self):
+        response = self.client.post(reverse('add_part'), {
+            "name": "brake pads", "part_number": "BP-TC-1", "brand": "Toyota",
+            "buy_price": "1000", "sell_price": "2000", "stock_qty": 3,
+        }, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(Part.objects.get(part_number="BP-TC-1").name, "Brake Pads")
+
+    def test_excel_import_title_cases_new_parts(self):
+        df = pd.DataFrame({
+            'Part Name': ['oxygen sensor (front)'],
+            'Part Number': ['OS-TC-1'],
+            'Brand': ['NTK'],
+            'Cost Price': [100.0],
+            'Selling Price': [200.0],
+            'Current Stock': [2],
+        })
+        excel_file = io.BytesIO()
+        with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        excel_file.seek(0)
+        excel_file.name = 'tc.xlsx'
+        response = self.client.post(reverse('bulk_upload_parts'), {'file': excel_file}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(Part.objects.get(part_number="OS-TC-1").name, "Oxygen Sensor (Front)")
 
 
 class PartCalculationAPITest(TestCase):
@@ -945,6 +1005,47 @@ class ReverseSaleAPITest(TestCase):
         self.part.refresh_from_db()
         self.assertEqual(self.part.stock_qty, 10)
         self.assertFalse(Sale.objects.filter(pk=sale_id).exists())
+
+
+class VehicleSuggestAPITest(TestCase):
+    """The POS plate dropdown: registered plates starting with what's typed."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="suggestuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        owner = Customer.objects.create(name_prefix="Mr.", name="Jehan Silva")
+        CustomerVehicle.objects.create(vehicle_number="KT-8352", make="Perodua", model="Viva Elite", customer=owner)
+        CustomerVehicle.objects.create(vehicle_number="KT-0000", make="Toyota", model="Aqua")
+        CustomerVehicle.objects.create(vehicle_number="KS-0000", make="Honda", model="Vezel")
+
+    def _suggest(self, q):
+        response = self.client.get(reverse('suggest_vehicles'), {'q': q})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_prefix_match(self):
+        plates = [v['vehicle_number'] for v in self._suggest("KT")]
+        self.assertEqual(plates, ["KT-0000", "KT-8352"])
+
+    def test_spaces_dashes_and_case_are_ignored(self):
+        for typed in ("kt-8", "KT8", "kt 83"):
+            self.assertEqual([v['vehicle_number'] for v in self._suggest(typed)], ["KT-8352"], typed)
+
+    def test_owner_name_when_linked(self):
+        by_plate = {v['vehicle_number']: v for v in self._suggest("KT")}
+        self.assertEqual(by_plate["KT-8352"]['owner_name'], "Mr. Jehan Silva")
+        self.assertEqual(by_plate["KT-8352"]['make'], "Perodua")
+        self.assertIsNone(by_plate["KT-0000"]['owner_name'])
+
+    def test_empty_query_returns_nothing(self):
+        self.assertEqual(self._suggest(""), [])
+        self.assertEqual(self._suggest(" - "), [])
+
+    def test_results_are_capped(self):
+        for i in range(12):
+            CustomerVehicle.objects.create(vehicle_number=f"CAB-{i:04d}")
+        self.assertEqual(len(self._suggest("CAB")), 8)
 
 
 class SaleMileageSyncAPITest(TestCase):
@@ -2104,6 +2205,66 @@ class LabourInReportsTest(TestCase):
         self.assertEqual(float(response.data['total_profit']), 800)
 
 
+class RepairChargeHistoryAPITest(TestCase):
+    """Past Charges: what a repair has actually been billed at, and to whom."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="historyuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        now = timezone.now()
+        for days_ago, price, plate, spelling in [
+            (30, 2000, "KT-0001", "Replace Brake pads"),
+            (20, 2500, "KT-0002", "replace  brake PADS"),
+            (10, 2800, "KT-0003", "Replace Brake pads"),
+        ]:
+            self._bill(spelling, price, plate, now - timedelta(days=days_ago))
+        self._bill("Replace Brake pads", 9999, "KT-0004", now, sale_status='CANCELLED')
+        self._bill("Oil change", 1200, "KT-0001", now)
+
+    def _bill(self, description, price, plate, when, sale_status='COMPLETED'):
+        sale = Sale.objects.create(customer_name=f"Owner {plate}", vehicle_number=plate,
+                                   total_amount=price, status=sale_status)
+        Sale.objects.filter(pk=sale.pk).update(created_at=when)
+        SaleItem.objects.create(sale=sale, item_type='LABOR', description=description,
+                                quantity=1, unit_price=price)
+
+    def _history(self, q):
+        response = self.client.get(reverse('get_repair_charge_history'), {'q': q})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_groups_every_completed_bill_with_stats(self):
+        groups = self._history("brake pad")
+        self.assertEqual(len(groups), 1)
+        group = groups[0]
+        self.assertEqual(group['description'], "Replace Brake pads")
+        self.assertEqual(group['times_billed'], 3)
+        self.assertEqual(float(group['last_price']), 2800)
+        self.assertEqual(float(group['min_price']), 2000)
+        self.assertEqual(float(group['max_price']), 2800)
+        self.assertAlmostEqual(float(group['average_price']), 2433.33, places=2)
+        self.assertEqual([b['vehicle_number'] for b in group['bills']], ["KT-0003", "KT-0002", "KT-0001"])
+        self.assertEqual(group['bills'][0]['customer_name'], "Owner KT-0003")
+        self.assertIsNone(group['catalog_price'])
+
+    def test_words_match_in_any_order_and_case(self):
+        self.assertEqual(self._history("PADS brake")[0]['times_billed'], 3)
+
+    def test_words_match_from_the_start_of_a_word(self):
+        self._bill("Changing Ignition coil", 4000, "KT-0005", timezone.now())
+        self.assertEqual([g['description'] for g in self._history("oil")], ["Oil change"])
+        self.assertEqual(self._history("co")[0]['description'], "Changing Ignition coil")
+
+    def test_catalog_price_is_included_when_saved(self):
+        RepairService.objects.create(name="replace brake pads", default_price=2600)
+        self.assertEqual(float(self._history("brake")[0]['catalog_price']), 2600)
+
+    def test_too_short_query_returns_nothing(self):
+        self.assertEqual(self._history("x"), [])
+        self.assertEqual(self._history(""), [])
+
+
 class BulkAddRepairServicesTest(TestCase):
     """Pasting a whole price list into the catalog page."""
 
@@ -3027,6 +3188,7 @@ class PurchaseOrderAPITest(TestCase):
     def test_receiving_adds_stock_and_restock_history(self):
         po_id = self._add(self.pads, self.toyota, 10).data['purchase_order']['id']
         self._add(self.filter, self.toyota, 5)
+        self.client.post(reverse('mark_purchase_order_ordered', args=[po_id]))
         po = PurchaseOrder.objects.get(pk=po_id)
         pads_item = po.items.get(part=self.pads)
         filter_item = po.items.get(part=self.filter)
@@ -3070,6 +3232,7 @@ class PurchaseOrderAPITest(TestCase):
 
     def test_receiving_nothing_is_rejected(self):
         po_id = self._add(self.pads, self.toyota, 3).data['purchase_order']['id']
+        self.client.post(reverse('mark_purchase_order_ordered', args=[po_id]))
         item_id = PurchaseOrder.objects.get(pk=po_id).items.get().id
         response = self.client.post(
             reverse('receive_purchase_order', args=[po_id]),
@@ -3167,4 +3330,92 @@ class PurchaseOrderAPITest(TestCase):
         self.pads.refresh_from_db()
         self.assertEqual(self.pads.stock_qty, 10)
         self.assertFalse(RestockRecord.objects.exists())
+
+    def _to_draft(self, po_id):
+        return self.client.post(reverse('revert_purchase_order_to_draft', args=[po_id]))
+
+    def test_ordered_order_can_go_back_to_draft_and_take_new_items(self):
+        po_id = self._add(self.pads, self.toyota, 4).data['purchase_order']['id']
+        self.client.post(reverse('mark_purchase_order_ordered', args=[po_id]))
+
+        response = self._to_draft(po_id)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['purchase_order']['status'], PurchaseOrder.STATUS_DRAFT)
+        self.assertIsNone(response.data['purchase_order']['ordered_at'])
+        self.assertEqual(response.data['merged_from'], [])
+
+        added = self._add(self.filter, self.toyota, 1)
+        self.assertEqual(added.data['purchase_order']['id'], po_id)
+
+    def test_going_back_to_draft_merges_the_newer_draft(self):
+        po_id = self._add(self.pads, self.toyota, 4).data['purchase_order']['id']
+        self.client.post(reverse('mark_purchase_order_ordered', args=[po_id]))
+        newer = self._add(self.pads, self.toyota, 3).data['purchase_order']
+        self._add(self.filter, self.toyota, 2)
+        self.assertNotEqual(newer['id'], po_id)
+        # Another supplier's draft is left alone.
+        denso_id = self._add(self.coil, self.denso, 1).data['purchase_order']['id']
+
+        response = self._to_draft(po_id)
+        self.assertEqual(response.data['merged_from'], [newer['po_number']])
+        quantities = {i['part_name']: i['quantity'] for i in response.data['purchase_order']['items']}
+        self.assertEqual(quantities, {"Brake Pads": 7, "Air Filter": 2})
+        self.assertFalse(PurchaseOrder.objects.filter(pk=newer['id']).exists())
+        self.assertTrue(PurchaseOrder.objects.filter(pk=denso_id, status=PurchaseOrder.STATUS_DRAFT).exists())
+
+    def test_only_an_ordered_order_can_go_back_to_draft(self):
+        po_id = self._add(self.pads, self.toyota, 2).data['purchase_order']['id']
+        self.assertEqual(self._to_draft(po_id).status_code, status.HTTP_400_BAD_REQUEST)
+
+        po = self._ordered_po()
+        self._receive(po)
+        self.assertEqual(self._to_draft(po.id).status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cancelled_order_can_go_back_to_draft_and_merges_open_draft(self):
+        po_id = self._add(self.pads, self.toyota, 4).data['purchase_order']['id']
+        self.client.post(reverse('mark_purchase_order_ordered', args=[po_id]))
+        self.client.post(reverse('cancel_purchase_order', args=[po_id]))
+        newer = self._add(self.pads, self.toyota, 1).data['purchase_order']
+
+        response = self._to_draft(po_id)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['purchase_order']['status'], PurchaseOrder.STATUS_DRAFT)
+        self.assertEqual(response.data['merged_from'], [newer['po_number']])
+        self.assertEqual(response.data['purchase_order']['items'][0]['quantity'], 5)
+
+    def test_a_draft_cannot_be_received(self):
+        po_id = self._add(self.pads, self.toyota, 3).data['purchase_order']['id']
+        response = self.client.post(reverse('receive_purchase_order', args=[po_id]), {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("ordered", response.data['error'])
+        self.pads.refresh_from_db()
+        self.assertEqual(self.pads.stock_qty, 10)
+
+    def _lines(self, part):
+        return self.client.get(reverse('get_part_purchase_order_lines', args=[part.id])).data
+
+    def test_part_lines_list_every_supplier_order_it_is_on(self):
+        toyota_po = self._add(self.pads, self.toyota, 4).data['purchase_order']
+        denso_po = self._add(self.pads, self.denso, 2).data['purchase_order']
+
+        lines = self._lines(self.pads)
+        by_supplier = {line['supplier_name']: line for line in lines}
+        self.assertEqual(set(by_supplier), {"Toyota Lanka", "Denso Distributors"})
+        self.assertEqual(by_supplier["Toyota Lanka"]['quantity'], 4)
+        self.assertEqual(by_supplier["Toyota Lanka"]['po_number'], toyota_po['po_number'])
+        self.assertEqual(by_supplier["Denso Distributors"]['quantity'], 2)
+        self.assertEqual(by_supplier["Denso Distributors"]['purchase_order_id'], denso_po['id'])
+
+    def test_part_lines_leave_out_received_and_cancelled_orders(self):
+        po = self._ordered_po()
+        self._receive(po)
+        cancelled_id = self._add(self.pads, self.denso, 1).data['purchase_order']['id']
+        self.client.post(reverse('mark_purchase_order_ordered', args=[cancelled_id]))
+        self.client.post(reverse('cancel_purchase_order', args=[cancelled_id]))
+        self.assertEqual(self._lines(self.pads), [])
+
+        self._add(self.pads, self.toyota, 3)
+        lines = self._lines(self.pads)
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]['status'], PurchaseOrder.STATUS_DRAFT)
 

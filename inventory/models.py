@@ -3,6 +3,8 @@ from django.db.models.functions import Lower
 from django.utils import timezone
 import uuid
 
+from .text import title_case_name
+
 # Value and label are deliberately the same string so the picker in
 # frontend/src/components/inspectionSchema.js can list these without a
 # code-to-label map that would have to be kept in step.
@@ -73,6 +75,12 @@ class Part(models.Model):
     image = models.ImageField(upload_to='parts/', blank=True, null=True)
     
     compatible_vehicles = models.ManyToManyField(Vehicle, related_name='compatible_parts', blank=True)
+
+    def save(self, *args, **kwargs):
+        # Every write path — the Add/Edit form, Excel import, conflict
+        # resolution — comes through here, so names stay in one consistent case.
+        self.name = title_case_name(self.name)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name} ({self.brand})"

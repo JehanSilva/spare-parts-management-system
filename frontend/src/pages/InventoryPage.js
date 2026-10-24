@@ -23,6 +23,9 @@ import {
   resolveBulkUploadConflicts,
   cancelBulkUpload,
   addPurchaseOrderItem,
+  fetchPartPurchaseOrderLines,
+  updatePurchaseOrder,
+  deletePurchaseOrderItem,
 } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import AddPartForm from "../components/forms/AddPartForm";
@@ -643,6 +646,89 @@ const BulkUploadConflictModal = ({ conflicts, onClose, onSubmit, isSubmitting, o
   );
 };
 
+// One line of "Already on order" — the part's quantity on one supplier's open
+// order, editable in place (saved on blur / Enter) or removable.
+const OrderLineRow = ({ line, onSaved, onRemoved, onError }) => {
+  const [draft, setDraft] = useState(String(line.quantity));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setDraft(String(line.quantity)), [line.quantity]);
+
+  const save = async () => {
+    const qty = parseInt(draft, 10);
+    if (qty === line.quantity) return;
+    if (isNaN(qty) || qty < 1) {
+      setDraft(String(line.quantity));
+      onError("Quantity must be at least 1 — use the bin to remove it.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const po = await updatePurchaseOrder(line.purchase_order_id, { items: [{ id: line.item_id, quantity: qty }] });
+      const item = po.items.find((i) => i.id === line.item_id);
+      onSaved({ ...line, quantity: item ? item.quantity : qty });
+    } catch (err) {
+      setDraft(String(line.quantity));
+      onError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deletePurchaseOrderItem(line.item_id);
+      onRemoved(line);
+    } catch (err) {
+      onError(apiErrorMessage(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-gray-800 truncate">{line.supplier_name || "No supplier"}</p>
+        <p className="text-[11px] text-gray-500 flex items-center gap-1.5">
+          <span className="font-mono">{line.po_number}</span>
+          <span
+            className={`px-1.5 py-px rounded-full text-[9px] font-bold uppercase tracking-wide ${
+              line.status === "DRAFT" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
+            }`}
+          >
+            {line.status.toLowerCase()}
+          </span>
+        </p>
+      </div>
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, ""))}
+        onBlur={save}
+        onKeyDown={(e) => {
+          // The popup is a form — Enter here saves this line, not "Add to Order".
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.target.blur();
+          }
+        }}
+        disabled={busy}
+        inputMode="numeric"
+        title="Quantity on this order — saved when you click away"
+        className="w-16 p-1.5 border border-gray-300 rounded-lg text-right text-sm font-bold focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-50"
+      />
+      <button
+        type="button"
+        onClick={remove}
+        disabled={busy}
+        title="Remove from this order"
+        className="p-1.5 text-gray-400 hover:text-red-600 disabled:opacity-50"
+      >
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
+};
+
 // --- Add a part to its supplier's purchase order ---
 // Each supplier has one open draft order; the server finds or starts it, so
 // parts from different suppliers land on separate orders automatically.
@@ -651,6 +737,34 @@ const AddToOrderModal = ({ part, suppliers, onClose, onAdded }) => {
   const [supplierId, setSupplierId] = useState(part.supplier ? String(part.supplier) : "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Where this part is already being ordered (null while loading). A failed
+  // lookup just hides the section — adding still works without it.
+  const [lines, setLines] = useState(null);
+  const [linesError, setLinesError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPartPurchaseOrderLines(part.id)
+      .then((data) => !cancelled && setLines(data))
+      .catch(() => !cancelled && setLines([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [part.id]);
+
+  const totalOnOrder = (lines || []).reduce((sum, l) => sum + l.quantity, 0);
+  const supplierCount = new Set((lines || []).map((l) => l.supplier_id)).size;
+
+  // What Add to Order will do for the chosen supplier, mirroring the server:
+  // a draft line is topped up; an ordered one leaves this to start a new draft.
+  const chosenLines = (lines || []).filter((l) => String(l.supplier_id) === String(supplierId));
+  const draftLine = chosenLines.find((l) => l.status === "DRAFT");
+  const orderedLine = chosenLines.find((l) => l.status === "ORDERED");
+  const supplierHint = draftLine
+    ? `Adds to the ${draftLine.quantity} already on ${draftLine.po_number}.`
+    : orderedLine
+      ? `${orderedLine.po_number} is already ordered — this starts a new draft for ${orderedLine.supplier_name}.`
+      : "Added to this supplier\u2019s open purchase order, or starts a new one.";
 
   const qty = parseInt(quantity, 10);
   const step = (delta) => setQuantity(String(Math.max(1, (isNaN(qty) ? 0 : qty) + delta)));
@@ -702,8 +816,42 @@ const AddToOrderModal = ({ part, suppliers, onClose, onAdded }) => {
         </div>
 
         <div className="p-5 space-y-4">
+          {lines === null ? (
+            <p className="text-xs text-gray-400">Checking existing orders…</p>
+          ) : (
+            lines.length > 0 && (
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 px-3 py-2">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 mb-1">
+                  Already on order
+                </p>
+                {lines.map((line) => (
+                  <OrderLineRow
+                    key={line.item_id}
+                    line={line}
+                    onError={setLinesError}
+                    onSaved={(updated) => {
+                      setLinesError("");
+                      setLines((prev) => prev.map((l) => (l.item_id === updated.item_id ? updated : l)));
+                    }}
+                    onRemoved={(removed) => {
+                      setLinesError("");
+                      setLines((prev) => prev.filter((l) => l.item_id !== removed.item_id));
+                    }}
+                  />
+                ))}
+                <p className="text-xs text-gray-500 mt-1.5">
+                  Total on order: <span className="font-bold text-gray-800">{totalOnOrder}</span>
+                  {supplierCount > 1 && ` across ${supplierCount} suppliers`}
+                </p>
+                {linesError && <p className="text-xs text-red-600 font-medium mt-1">{linesError}</p>}
+              </div>
+            )
+          )}
+
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-1">Quantity to order</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              {lines && lines.length > 0 ? "Add more" : "Quantity to order"}
+            </label>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -740,9 +888,7 @@ const AddToOrderModal = ({ part, suppliers, onClose, onAdded }) => {
               onChange={(id) => setSupplierId(id ? String(id) : "")}
               noneLabel="— Choose a supplier —"
             />
-            <p className="mt-1 text-xs text-gray-400">
-              Added to this supplier&rsquo;s open purchase order, or starts a new one.
-            </p>
+            <p className="mt-1 text-xs text-gray-400">{supplierHint}</p>
           </div>
 
           {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
@@ -1293,17 +1439,19 @@ const InventoryPage = () => {
         </div>
 
         {/* Supplier */}
+        {/* Searchable — the supplier list is long enough that scrolling a
+            plain dropdown for one name is slow. Floating so the panel
+            overlays the parts grid instead of pushing it down. */}
         <div className="flex-1 min-w-0">
-          <select
+          <SupplierSelect
+            suppliers={suppliers}
             value={selectedSupplier}
-            onChange={(e) => handleSupplierChange(e.target.value)}
-            className="w-full h-10 px-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none bg-white text-sm text-gray-700"
-          >
-            <option value="">All Suppliers</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+            onChange={(id) => handleSupplierChange(id ? String(id) : "")}
+            placeholder="All Suppliers"
+            noneLabel="All Suppliers"
+            floating
+            triggerClassName="w-full h-10 px-3 border border-gray-300 rounded-lg bg-white text-sm text-gray-700 focus:ring-2 focus:ring-red-500 focus:outline-none"
+          />
         </div>
 
         {/* Sort */}

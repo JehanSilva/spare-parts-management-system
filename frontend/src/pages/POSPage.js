@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, createCustomerVehicle, updateCustomerVehicle, fetchRepairSuggestions, createRepairService } from "../services/api";
+import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, suggestVehicles, createCustomerVehicle, updateCustomerVehicle, fetchRepairSuggestions, createRepairService } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import { useSettings } from "../context/SettingsContext";
 import BillingDocument from "../components/BillingDocument";
@@ -11,6 +11,7 @@ import PartDetailsModal from "../components/PartDetailsModal";
 import CopyButton from "../components/CopyButton";
 import CustomerLinkPicker from "../components/CustomerLinkPicker";
 import { customerDisplayName } from "../components/customerName";
+import { caseOnChange, sentenceCase } from "../components/titleCase";
 import {
   Search,
   ShoppingCart,
@@ -40,7 +41,23 @@ import {
   CalendarDays,
   ArrowUpRight,
   X,
+  User,
 } from "lucide-react";
+
+// Plates are compared without spaces or dashes, so "KT8" matches "KT-8352".
+const plateKey = (plate) => (plate || "").replace(/[\s-]/g, "").toUpperCase();
+
+// Split a suggested plate into the part matching what was typed and the rest,
+// so the typed prefix can be emphasised even when it skipped the dash.
+const splitPlate = (plate, typed) => {
+  let remaining = plateKey(typed).length;
+  let i = 0;
+  while (i < plate.length && remaining > 0) {
+    if (!/[\s-]/.test(plate[i])) remaining -= 1;
+    i += 1;
+  }
+  return [plate.slice(0, i), plate.slice(i)];
+};
 
 // How much a cashier may knock off one unit of this part, from the part's
 // min_sell_price floor (set on the part form). Returns null when there's no
@@ -275,12 +292,79 @@ const VehicleCustomerModal = ({
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
 
+  // Registered plates starting with what's being typed — a pick-list under the
+  // Vehicle No. box. Fetched only for typing (not when a plate is picked), and
+  // a request counter drops a slow reply to an older query.
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
+  const suggestTimer = useRef(null);
+  const suggestRequest = useRef(0);
+
   useEffect(() => {
     if (isOpen) {
       setDetailsExpanded(false);
       setConfirmUnlinkOpen(false);
+      setSuggestions([]);
+      setShowSuggestions(false);
     }
   }, [isOpen]);
+
+  useEffect(() => () => clearTimeout(suggestTimer.current), []);
+
+  const handlePlateTyped = (value) => {
+    onVehicleNumberChange(value);
+    clearTimeout(suggestTimer.current);
+    const requestId = ++suggestRequest.current;
+    if (plateKey(value).length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+    suggestTimer.current = setTimeout(async () => {
+      try {
+        const results = await suggestVehicles(value);
+        if (suggestRequest.current !== requestId) return;
+        setSuggestions(results);
+        setHighlight(-1);
+        setShowSuggestions(true);
+      } catch {
+        if (suggestRequest.current === requestId) setSuggestions([]);
+      }
+    }, 250);
+  };
+
+  const pickSuggestion = (vehicle) => {
+    ++suggestRequest.current; // ignore any reply still in flight
+    clearTimeout(suggestTimer.current);
+    setShowSuggestions(false);
+    setSuggestions([]);
+    onVehicleNumberChange(vehicle.vehicle_number, { immediate: true });
+  };
+
+  // Nothing to offer when the only match is the plate already typed — the
+  // green "found" state says that already.
+  const listVisible =
+    showSuggestions &&
+    suggestions.length > 0 &&
+    !(suggestions.length === 1 && plateKey(suggestions[0].vehicle_number) === plateKey(vehicleNumber));
+
+  const handlePlateKeyDown = (e) => {
+    if (!listVisible) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlight((h) => (h + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlight((h) => (h <= 0 ? suggestions.length - 1 : h - 1));
+    } else if (e.key === "Enter" && highlight >= 0) {
+      e.preventDefault();
+      pickSuggestion(suggestions[highlight]);
+    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      setShowSuggestions(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -324,7 +408,17 @@ const VehicleCustomerModal = ({
                 <input
                   ref={vehicleNumberInputRef}
                   value={vehicleNumber}
-                  onChange={(e) => onVehicleNumberChange(e.target.value)}
+                  onChange={(e) => handlePlateTyped(e.target.value)}
+                  onKeyDown={handlePlateKeyDown}
+                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                  // Rows keep focus on mousedown, so this only fires when
+                  // leaving for somewhere else.
+                  onBlur={() => setShowSuggestions(false)}
+                  autoComplete="off"
+                  role="combobox"
+                  aria-controls="pos-plate-suggestions"
+                  aria-expanded={listVisible}
+                  aria-autocomplete="list"
                   className={`w-full pl-7 pr-7 py-2 bg-white border rounded-lg focus:bg-white outline-none text-sm transition-all ${vehicleLookupStatus === "found"
                       ? "border-green-400 focus:ring-1 focus:ring-green-400"
                       : vehicleLookupStatus === "not_found"
@@ -338,6 +432,48 @@ const VehicleCustomerModal = ({
                   {vehicleLookupStatus === "found" && <BadgeCheck size={14} className="text-green-500" />}
                   {vehicleLookupStatus === "not_found" && <UserPlus size={13} className="text-amber-500" />}
                 </div>
+
+                {listVisible && (
+                  <ul
+                    id="pos-plate-suggestions"
+                    role="listbox"
+                    className="absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-64 overflow-y-auto py-1"
+                  >
+                    {suggestions.map((v, i) => {
+                      const [matched, rest] = splitPlate(v.vehicle_number, vehicleNumber);
+                      const makeModel = [v.make, v.model].filter(Boolean).join(" ");
+                      return (
+                        <li
+                          key={v.id}
+                          role="option"
+                          aria-selected={i === highlight}
+                          // preventDefault keeps focus in the input, so its
+                          // blur doesn't close the list before the click lands.
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickSuggestion(v)}
+                          onMouseEnter={() => setHighlight(i)}
+                          className={`px-3 py-2 cursor-pointer ${i === highlight ? "bg-red-50" : "hover:bg-gray-50"}`}
+                        >
+                          <div className="flex items-baseline gap-2 min-w-0">
+                            <span className="font-mono text-sm text-gray-900 shrink-0">
+                              <span className="font-extrabold">{matched}</span>
+                              <span className="font-semibold text-gray-600">{rest}</span>
+                            </span>
+                            {makeModel && <span className="text-xs text-gray-500 truncate">{makeModel}</span>}
+                          </div>
+                          <div className="flex items-center gap-1 text-[11px] mt-0.5">
+                            <User size={11} className="text-gray-400 shrink-0" />
+                            {v.owner_name ? (
+                              <span className="text-gray-600 truncate">{v.owner_name}</span>
+                            ) : (
+                              <span className="text-gray-400 italic">No owner linked</span>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </div>
 
@@ -915,10 +1051,11 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
               type="text"
               autoFocus
               value={description}
-              onChange={(e) => {
-                setDescription(e.target.value);
+              // Sentence case as it's typed — the same rule as estimate lines.
+              onChange={caseOnChange(sentenceCase, (value) => {
+                setDescription(value);
                 setShowDropdown(true);
-              }}
+              })}
               onFocus={() => setShowDropdown(true)}
               placeholder="e.g. Brake pad replacement labor"
               className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
@@ -1405,7 +1542,9 @@ const POSPage = () => {
     updateActiveCart({ saleDate: value || "" });
   };
 
-  const handleVehicleNumberChange = (veh) => {
+  // `immediate` skips the typing debounce — used when a plate is picked from
+  // the suggestion list, where there's nothing left to wait for.
+  const handleVehicleNumberChange = (veh, { immediate = false } = {}) => {
     const upperVeh = veh.toUpperCase();
     // Editing the plate invalidates whatever vehicle/customer was previously
     // linked to it, so clear the cart's customerName along with the lookup
@@ -1458,7 +1597,7 @@ const POSPage = () => {
         } catch {
           if (vehicleLookupRequestRef.current === requestId) setVehicleLookupStatus("idle");
         }
-      }, 600);
+      }, immediate ? 0 : 600);
     }
   };
 

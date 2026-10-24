@@ -42,6 +42,7 @@ urlpatterns = [
 
     # Repairs / labour (price recall for the POS repair modal)
     path('repairs/suggestions/', views.get_repair_suggestions, name='get_repair_suggestions'),
+    path('repairs/history/', views.get_repair_charge_history, name='get_repair_charge_history'),
     path('repairs/services/', views.get_repair_services, name='get_repair_services'),
     path('repairs/services/add/', views.add_repair_service, name='add_repair_service'),
     path('repairs/services/bulk-add/', views.bulk_add_repair_services, name='bulk_add_repair_services'),
@@ -64,11 +65,13 @@ urlpatterns = [
 
     # Purchase orders (parts ordered from suppliers)
     path('purchase-orders/', views.get_purchase_orders, name='get_purchase_orders'),
+    path('purchase-orders/part/<uuid:part_pk>/', views.get_part_purchase_order_lines, name='get_part_purchase_order_lines'),
     path('purchase-orders/add-item/', views.add_purchase_order_item, name='add_purchase_order_item'),
     path('purchase-orders/items/<int:item_pk>/delete/', views.delete_purchase_order_item, name='delete_purchase_order_item'),
     path('purchase-orders/<int:pk>/', views.get_purchase_order, name='get_purchase_order'),
     path('purchase-orders/<int:pk>/update/', views.update_purchase_order, name='update_purchase_order'),
     path('purchase-orders/<int:pk>/order/', views.mark_purchase_order_ordered, name='mark_purchase_order_ordered'),
+    path('purchase-orders/<int:pk>/to-draft/', views.revert_purchase_order_to_draft, name='revert_purchase_order_to_draft'),
     path('purchase-orders/<int:pk>/receive/', views.receive_purchase_order, name='receive_purchase_order'),
     path('purchase-orders/<int:pk>/revert/', views.revert_purchase_order, name='revert_purchase_order'),
     path('purchase-orders/<int:pk>/cancel/', views.cancel_purchase_order, name='cancel_purchase_order'),
@@ -86,6 +89,7 @@ urlpatterns = [
     # Vehicle Registry (real registered plates — independent master data)
     path('vehicles/registry/', views.get_customer_vehicles, name='get_customer_vehicles'),
     path('vehicles/registry/add/', views.add_customer_vehicle, name='add_customer_vehicle'),
+    path('vehicles/registry/suggest/', views.suggest_vehicles, name='suggest_vehicles'),
     path('vehicles/registry/lookup/', views.lookup_vehicle, name='lookup_vehicle'),
     path('vehicles/registry/<int:pk>/history/', views.get_vehicle_history, name='get_vehicle_history'),
     path('vehicles/registry/<int:pk>/estimates/', views.get_vehicle_estimates, name='get_vehicle_estimates'),

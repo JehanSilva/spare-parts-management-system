@@ -1,14 +1,189 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   fetchRepairServices,
   createRepairService,
   updateRepairService,
   deleteRepairService,
   bulkAddRepairServices,
+  fetchRepairChargeHistory,
 } from "../services/api";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
-import { Wrench, Search, Plus, Edit2, Trash2, XCircle, EyeOff, ListPlus } from "lucide-react";
+import { Wrench, Search, Plus, Edit2, Trash2, XCircle, EyeOff, ListPlus, History, Loader2 } from "lucide-react";
+
+const formatLKR = (amount) =>
+  `LKR ${Number(amount || 0).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const formatDate = (value) =>
+  value ? new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "";
+
+// Bills shown before "Show all" — the latest few are usually what matters.
+const BILLS_PREVIEW = 5;
+
+// --- One repair's past charges: stats plus every bill, newest first ---
+const ChargeHistoryCard = ({ group }) => {
+  const [showAll, setShowAll] = useState(false);
+  const bills = showAll ? group.bills : group.bills.slice(0, BILLS_PREVIEW);
+  const catalog = group.catalog_price != null ? Number(group.catalog_price) : null;
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-100 bg-gray-50 flex flex-wrap items-center gap-2">
+        <h3 className="font-bold text-gray-900">{group.description}</h3>
+        {catalog != null && (
+          <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-900 text-white">
+            Saved · {formatLKR(catalog)}
+          </span>
+        )}
+      </div>
+
+      <div className="px-5 py-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Billed</p>
+          <p className="font-bold text-gray-900">
+            {group.times_billed} time{group.times_billed === 1 ? "" : "s"}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Last</p>
+          <p className="font-bold text-gray-900">{formatLKR(group.last_price)}</p>
+          <p className="text-xs text-gray-500">{formatDate(group.last_billed_at)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Range</p>
+          <p className="font-bold text-gray-900">
+            {Number(group.min_price) === Number(group.max_price)
+              ? formatLKR(group.min_price)
+              : `${formatLKR(group.min_price)} – ${Number(group.max_price).toLocaleString("en-LK")}`}
+          </p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Average</p>
+          <p className="font-bold text-gray-900">{formatLKR(group.average_price)}</p>
+        </div>
+      </div>
+
+      <div className="px-5 pb-4 overflow-x-auto">
+        <table className="w-full text-sm min-w-[36rem]">
+          <thead>
+            <tr className="text-[10px] font-bold uppercase tracking-wider text-gray-400 text-left">
+              <th className="py-2 font-bold">Date</th>
+              <th className="py-2 font-bold">Vehicle</th>
+              <th className="py-2 font-bold">Customer</th>
+              <th className="py-2 font-bold text-right">Qty</th>
+              <th className="py-2 font-bold text-right">Unit Price</th>
+              <th className="py-2 font-bold text-right">Discount</th>
+              <th className="py-2 font-bold text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bills.map((bill, i) => {
+              // Off the saved price: worth noticing when quoting the next one.
+              const drifted = catalog != null && Number(bill.unit_price) !== catalog;
+              return (
+                <tr key={`${bill.sale_id}-${i}`} className="border-t border-gray-100">
+                  <td className="py-2 text-gray-700 whitespace-nowrap">{formatDate(bill.date)}</td>
+                  <td className="py-2 font-mono text-gray-800">{bill.vehicle_number || "—"}</td>
+                  <td className="py-2 text-gray-700">{bill.customer_name || "—"}</td>
+                  <td className="py-2 text-right text-gray-700">{bill.quantity}</td>
+                  <td
+                    className={`py-2 text-right font-semibold ${drifted ? "text-amber-600" : "text-gray-900"}`}
+                    title={drifted ? `Saved price is ${formatLKR(catalog)}` : undefined}
+                  >
+                    {Number(bill.unit_price).toLocaleString("en-LK", { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="py-2 text-right text-gray-500">
+                    {Number(bill.discount) > 0 ? Number(bill.discount).toLocaleString("en-LK") : "—"}
+                  </td>
+                  <td className="py-2 text-right font-bold text-gray-900">
+                    {Number(bill.total_price).toLocaleString("en-LK", { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {group.bills.length > BILLS_PREVIEW && (
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="mt-2 text-sm font-semibold text-red-700 hover:underline"
+          >
+            {showAll ? "Show fewer" : `Show all ${group.bills.length}`}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- Past Charges tab: search a repair and see what it was billed before ---
+const PastChargesPanel = ({ query, onQueryChange }) => {
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const requestRef = useRef(0);
+
+  useEffect(() => {
+    const requestId = ++requestRef.current;
+    if (query.trim().replace(/\s/g, "").length < 2) {
+      setResults([]);
+      setLoading(false);
+      return undefined;
+    }
+    setLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await fetchRepairChargeHistory(query);
+        if (requestRef.current !== requestId) return; // a newer search took over
+        setResults(data);
+        setError("");
+      } catch {
+        if (requestRef.current === requestId) setError("Could not load past charges. Please try again.");
+      } finally {
+        if (requestRef.current === requestId) setLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const searched = query.trim().length >= 2;
+
+  return (
+    <div>
+      <div className="relative mb-6 w-full md:max-w-md">
+        <Search className="absolute left-3 top-3 text-gray-400" size={20} />
+        <input
+          type="text"
+          autoFocus
+          placeholder="Search a repair, e.g. brake pads"
+          className="w-full pl-10 pr-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none transition"
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+        />
+        {loading && <Loader2 size={18} className="absolute right-3 top-3.5 text-gray-400 animate-spin" />}
+      </div>
+
+      {error ? (
+        <p className="text-sm text-red-600 font-medium">{error}</p>
+      ) : !searched ? (
+        <div className="text-center py-10 bg-white rounded-lg shadow border border-gray-100">
+          <History size={44} className="mx-auto text-gray-300 mb-2" />
+          <p className="text-gray-500">Type a repair to see what it has been charged before.</p>
+        </div>
+      ) : !loading && results.length === 0 ? (
+        <div className="text-center py-10 bg-white rounded-lg shadow border border-gray-100">
+          <p className="text-gray-500">No past charges found for &ldquo;{query.trim()}&rdquo;.</p>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {results.map((group) => (
+            <ChargeHistoryCard key={group.description} group={group} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const emptyForm = { name: "", default_price: "", is_active: true };
 
@@ -250,6 +425,14 @@ const RepairServicesPage = () => {
   const [loading, setLoading] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  // "services" = the saved catalogue, "history" = Past Charges.
+  const [tab, setTab] = useState("services");
+  const [historyQuery, setHistoryQuery] = useState("");
+
+  const openHistoryFor = (name) => {
+    setHistoryQuery(name);
+    setTab("history");
+  };
 
   const [showForm, setShowForm] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
@@ -443,6 +626,29 @@ const RepairServicesPage = () => {
         </div>
       )}
 
+      <div className="flex gap-2 mb-6">
+        {[
+          { key: "services", label: "Saved Services", icon: Wrench },
+          { key: "history", label: "Past Charges", icon: History },
+        ].map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`px-4 py-1.5 rounded-full text-sm font-bold border transition-colors flex items-center gap-1.5 ${
+              tab === key
+                ? "bg-gray-800 text-white border-gray-800"
+                : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+            }`}
+          >
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "history" ? (
+        <PastChargesPanel query={historyQuery} onQueryChange={setHistoryQuery} />
+      ) : (
+      <>
       <div className="relative mb-6 w-full md:max-w-md">
         <Search className="absolute left-3 top-3 text-gray-400" size={20} />
         <input
@@ -483,6 +689,13 @@ const RepairServicesPage = () => {
 
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
+                      onClick={() => openHistoryFor(service.name)}
+                      className="p-1.5 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors"
+                      title="Past charges for this repair"
+                    >
+                      <History size={14} />
+                    </button>
+                    <button
                       onClick={() => handleEdit(service)}
                       className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-full transition-colors"
                       title="Edit"
@@ -522,6 +735,8 @@ const RepairServicesPage = () => {
             ))
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

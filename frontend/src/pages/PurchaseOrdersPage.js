@@ -23,6 +23,7 @@ import {
   cancelPurchaseOrder,
   deletePurchaseOrder,
   revertPurchaseOrder,
+  sendPurchaseOrderToDraft,
 } from "../services/api";
 import { useParts } from "../context/PartsContext";
 import AlertComponent from "../components/AlertComponent";
@@ -402,13 +403,16 @@ const PurchaseOrderCard = ({ po, onChange, onAction, onError }) => {
 
       {/* Actions */}
       <div className="flex flex-wrap gap-2 px-5 py-3 border-t border-gray-100">
-        <button
-          onClick={() => onAction("print", po)}
-          disabled={po.items.length === 0}
-          className="px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
-        >
-          <Printer size={15} /> Print
-        </button>
+        {/* A cancelled order isn't going to any supplier, so there's nothing to print. */}
+        {po.status !== "CANCELLED" && (
+          <button
+            onClick={() => onAction("print", po)}
+            disabled={po.items.length === 0}
+            className="px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <Printer size={15} /> Print
+          </button>
+        )}
         {po.status === "DRAFT" && (
           <button
             onClick={() => onAction("order", po)}
@@ -419,13 +423,23 @@ const PurchaseOrderCard = ({ po, onChange, onAction, onError }) => {
             <Send size={15} /> Mark as Ordered
           </button>
         )}
-        {editable && (
+        {/* Only a placed order can arrive — a draft is marked as ordered first. */}
+        {po.status === "ORDERED" && (
           <button
             onClick={() => onAction("receive", po)}
             disabled={po.items.length === 0}
             className="px-3 py-2 text-sm font-bold rounded-xl bg-green-600 text-white hover:bg-green-700 flex items-center gap-1.5 disabled:opacity-50"
           >
             <PackageCheck size={15} /> Receive Delivery
+          </button>
+        )}
+        {(po.status === "ORDERED" || po.status === "CANCELLED") && (
+          <button
+            onClick={() => onAction("toDraft", po)}
+            className="px-3 py-2 text-sm font-semibold rounded-xl bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 flex items-center gap-1.5"
+            title="Reopen as a draft to add or change items — new items for this supplier are combined into it"
+          >
+            <Undo2 size={15} /> Back to Draft
           </button>
         )}
         {po.status === "RECEIVED" && (
@@ -491,6 +505,24 @@ const PurchaseOrdersPage = () => {
       setPrintJob({ po, at: Date.now() });
     } else if (kind === "receive") {
       setReceivingPo(po);
+    } else if (kind === "toDraft") {
+      try {
+        const { purchase_order: updated, merged_from: merged } = await sendPurchaseOrderToDraft(po.id);
+        setOrders((prev) =>
+          prev
+            .filter((o) => !merged.includes(o.po_number))
+            .map((o) => (o.id === updated.id ? updated : o))
+        );
+        setTab("DRAFT");
+        setAlertInfo({
+          type: "success",
+          message: `${po.po_number} is a draft again.${
+            merged.length ? ` Items from ${merged.join(", ")} were combined into it.` : ""
+          }`,
+        });
+      } catch (err) {
+        showError(err);
+      }
     } else if (kind === "order") {
       try {
         replaceOrder(await markPurchaseOrderOrdered(po.id));

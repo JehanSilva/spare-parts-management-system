@@ -17,6 +17,7 @@ import {
   MapPin,
 } from "lucide-react";
 import AvatarBadge from "../AvatarBadge";
+import { caseOnChange, titleCaseName } from "../titleCase";
 
 // Small uppercase section heading, matching the muted meta line on the cards.
 const SectionLabel = ({ children, action }) => (
@@ -111,6 +112,10 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
+
+  // Part names are title-cased as they're typed (the server applies the same
+  // rule on save); caseOnChange keeps the caret in place while it does.
+  const handleNameChange = caseOnChange(titleCaseName, (name) => setFormData({ ...formData, name }));
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -349,7 +354,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                   <input
                     name="name"
                     value={formData.name}
-                    onChange={handleChange}
+                    onChange={handleNameChange}
                     required
                     placeholder="Part name * — e.g. Brake Pad Set"
                     className={iconInputClass}

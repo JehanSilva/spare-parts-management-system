@@ -123,6 +123,10 @@ export const markSaleAsPaid = async (id, amount) =>
 // Past repair/labour charges, grouped by description — powers the price-recall
 // dropdown in the POS "Add Repair / Labor" modal. Pass the cart's plate to have
 // that vehicle's own bills floated to the top of each suggestion.
+// Past Charges: every completed bill for repairs matching all the typed words,
+// grouped per repair with price stats.
+export const fetchRepairChargeHistory = async (q) =>
+  (await API.get("/repairs/history/", { params: { q } })).data;
 export const fetchRepairSuggestions = async (vehicleNumber) =>
   (await API.get("/repairs/suggestions/", {
     params: vehicleNumber ? { vehicle_number: vehicleNumber } : {},
@@ -192,6 +196,10 @@ export const fetchCustomerVehicles = async (search = '') =>
   (await API.get("/vehicles/registry/", { params: search ? { search } : {} })).data;
 export const createCustomerVehicle = async (data) =>
   (await API.post("/vehicles/registry/add/", data)).data;
+// Registered plates starting with what's typed (spaces/dashes ignored), for the
+// POS plate dropdown: [{ id, vehicle_number, make, model, owner_name }].
+export const suggestVehicles = async (q) =>
+  (await API.get("/vehicles/registry/suggest/", { params: { q } })).data;
 export const lookupVehicle = async (vehicleNumber) =>
   (await API.get("/vehicles/registry/lookup/", { params: { vehicle_number: vehicleNumber } })).data;
 export const fetchVehicleHistory = async (vehicleId) =>
@@ -202,6 +210,9 @@ export const fetchVehicleEstimates = async (vehicleId) =>
 // --- PURCHASE ORDER SERVICES (parts ordered from suppliers) ---
 export const fetchPurchaseOrders = async (status = '') =>
   (await API.get("/purchase-orders/", { params: status ? { status } : {} })).data;
+// A part's lines on open (draft/ordered) purchase orders, one per supplier order.
+export const fetchPartPurchaseOrderLines = async (partId) =>
+  (await API.get(`/purchase-orders/part/${partId}/`)).data;
 // Adds to the supplier's open draft (creating one if needed). Returns { purchase_order, created }.
 export const addPurchaseOrderItem = async (partId, supplierId, quantity) =>
   (await API.post("/purchase-orders/add-item/", { part_id: partId, supplier_id: supplierId, quantity })).data;
@@ -209,6 +220,10 @@ export const updatePurchaseOrder = async (id, data) =>
   (await API.patch(`/purchase-orders/${id}/update/`, data)).data;
 export const deletePurchaseOrderItem = async (itemId) =>
   (await API.delete(`/purchase-orders/items/${itemId}/delete/`)).data;
+// Reopen an ordered PO as a draft; any newer draft for the supplier is merged in.
+// Returns { purchase_order, merged_from: ["PO-0006", ...] }.
+export const sendPurchaseOrderToDraft = async (id) =>
+  (await API.post(`/purchase-orders/${id}/to-draft/`)).data;
 export const markPurchaseOrderOrdered = async (id) =>
   (await API.post(`/purchase-orders/${id}/order/`)).data;
 export const receivePurchaseOrder = async (id, data) =>

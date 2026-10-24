@@ -1,3 +1,4 @@
+import re
 import uuid
 from collections import Counter
 from rest_framework.decorators import api_view, permission_classes
@@ -6,7 +7,7 @@ from rest_framework.response import Response
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from datetime import timedelta
-from django.db.models.functions import TruncDate, Coalesce
+from django.db.models.functions import TruncDate, Coalesce, Replace, Upper
 from rest_framework import status
 from django.db.models import Sum, F, Value, DecimalField
 from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem
@@ -136,6 +137,39 @@ def add_customer_vehicle(request):
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# Suggestions are a short pick-list, not a search page.
+VEHICLE_SUGGESTION_LIMIT = 8
+
+
+@api_view(['GET'])
+def suggest_vehicles(request):
+    """
+    GET /vehicles/registry/suggest/?q=KT — registered plates starting with what
+    has been typed so far, for the POS vehicle-number dropdown. Spaces and
+    dashes are ignored on both sides, so "KT8" and "kt-8" both find KT-8352.
+    Kept deliberately small: a few fields, at most VEHICLE_SUGGESTION_LIMIT.
+    """
+    typed = re.sub(r'[\s-]', '', request.query_params.get('q', '')).upper()
+    if not typed:
+        return Response([])
+
+    vehicles = (CustomerVehicle.objects
+                .annotate(plate_key=Upper(Replace(Replace('vehicle_number', Value('-'), Value('')), Value(' '), Value(''))))
+                .filter(plate_key__startswith=typed)
+                .select_related('customer')
+                .order_by('vehicle_number')[:VEHICLE_SUGGESTION_LIMIT])
+    return Response([
+        {
+            "id": v.id,
+            "vehicle_number": v.vehicle_number,
+            "make": v.make,
+            "model": v.model,
+            "owner_name": v.customer.display_name if v.customer else None,
+        }
+        for v in vehicles
+    ])
 
 
 @api_view(['GET'])
@@ -1230,6 +1264,79 @@ REPAIR_HISTORY_WINDOW = 5000
 REPAIR_VEHICLE_WINDOW = 500
 # Past bills shown under a suggestion.
 REPAIR_RECENT_LIMIT = 5
+# Labour lines read for a Past Charges search — every bill for one repair, but
+# bounded for a very common one.
+REPAIR_CHARGE_HISTORY_LIMIT = 500
+
+
+def _most_used_spelling(spellings):
+    """
+    The wording the shop actually uses for a repair, not whichever typo was
+    typed most recently. Rows are counted newest-first, so Counter ties break
+    towards the more recent wording.
+    """
+    return spellings.most_common(1)[0][0]
+
+
+@api_view(['GET'])
+def get_repair_charge_history(request):
+    """
+    GET /repairs/history/?q=brake pad — what a repair has actually been charged,
+    for the Past Charges tab on the Repair Services page. Every word typed must
+    start a word in the description (any order, any case) — so "pad" finds
+    "Brake pads" but "oil" doesn't drag in "Ignition coil". Matching lines from
+    completed sales are grouped the way the POS suggestions group them, each
+    group with its price stats and every bill, newest first.
+    """
+    words = (request.query_params.get('q') or '').split()
+    if len(''.join(words)) < 2:
+        return Response([])
+
+    lines = (SaleItem.objects
+             .filter(item_type='LABOR', sale__status='COMPLETED')
+             .exclude(description=''))
+    for word in words:
+        lines = lines.filter(description__iregex=r'(^|[^a-z0-9])' + re.escape(word.lower()))
+    lines = lines.select_related('sale').order_by('-sale__created_at')[:REPAIR_CHARGE_HISTORY_LIMIT]
+
+    groups = {}
+    for line in lines:
+        key = normalize_repair_description(line.description)
+        group = groups.setdefault(key, {'spellings': Counter(), 'bills': []})
+        group['spellings'][' '.join(line.description.split())] += 1
+        group['bills'].append({
+            'sale_id': str(line.sale_id),
+            'date': line.sale.created_at,
+            'vehicle_number': line.sale.vehicle_number or '',
+            'customer_name': line.sale.customer_name or '',
+            'quantity': line.quantity,
+            'unit_price': line.unit_price,
+            'discount': line.discount,
+            'total_price': line.total_price,
+        })
+
+    catalog = {
+        normalize_repair_description(s.name): s.default_price
+        for s in RepairService.objects.filter(is_active=True)
+    }
+
+    results = []
+    for key, group in groups.items():
+        bills = group['bills']
+        prices = [b['unit_price'] for b in bills]
+        results.append({
+            'description': _most_used_spelling(group['spellings']),
+            'catalog_price': catalog.get(key),
+            'times_billed': len(bills),
+            'last_price': bills[0]['unit_price'],
+            'last_billed_at': bills[0]['date'],
+            'min_price': min(prices),
+            'max_price': max(prices),
+            'average_price': round(sum(prices) / len(prices), 2),
+            'bills': bills,
+        })
+    results.sort(key=lambda g: g['last_billed_at'], reverse=True)
+    return Response(results)
 
 
 @api_view(['GET'])
@@ -1302,7 +1409,7 @@ def get_repair_suggestions(request):
         # Offer back the spelling the shop actually uses, not whichever typo
         # happened to be typed most recently. Rows were consumed newest-first,
         # so Counter ties already break towards the more recent wording.
-        bucket['description'] = bucket.pop('spellings').most_common(1)[0][0]
+        bucket['description'] = _most_used_spelling(bucket.pop('spellings'))
         # This vehicle's own bills first, each group still newest-first.
         bucket['recent'].sort(key=lambda r: (not r['is_this_vehicle'], -r['date'].timestamp()))
         bucket['recent'] = bucket['recent'][:REPAIR_RECENT_LIMIT]
@@ -2815,6 +2922,31 @@ def get_purchase_order(request, pk):
     return Response(PurchaseOrderSerializer(po).data)
 
 
+@api_view(['GET'])
+def get_part_purchase_order_lines(request, part_pk):
+    """
+    Where a part is already being ordered: its lines on open (draft or ordered)
+    purchase orders, one per supplier order, so the Add to Purchase Order popup
+    can show and adjust them. Received and cancelled orders are history.
+    """
+    items = (PurchaseOrderItem.objects
+             .filter(part_id=part_pk, purchase_order__status__in=PO_EDITABLE_STATUSES)
+             .select_related('purchase_order')
+             .order_by('purchase_order__supplier_name', 'purchase_order__created_at'))
+    return Response([
+        {
+            "item_id": item.id,
+            "purchase_order_id": item.purchase_order_id,
+            "po_number": item.purchase_order.po_number,
+            "status": item.purchase_order.status,
+            "supplier_id": item.purchase_order.supplier_id,
+            "supplier_name": item.purchase_order.supplier_name,
+            "quantity": item.quantity,
+        }
+        for item in items
+    ])
+
+
 @api_view(['POST'])
 @transaction.atomic
 def add_purchase_order_item(request):
@@ -2938,6 +3070,54 @@ def mark_purchase_order_ordered(request, pk):
 
 @api_view(['POST'])
 @transaction.atomic
+def revert_purchase_order_to_draft(request, pk):
+    """
+    Reopen an ordered or cancelled purchase order as a draft, e.g. to add more
+    items before it's actually placed, or to revive a cancelled one. While it
+    was out of draft, new items for the supplier
+    started a fresh draft — those drafts are folded into this one (a part on
+    both has its quantities combined), so the supplier is back to a single
+    open draft. This order survives: it has the older number and may already
+    have been sent.
+    """
+    po = get_object_or_404(PurchaseOrder.objects.select_for_update(), pk=pk)
+    if po.status not in (PurchaseOrder.STATUS_ORDERED, PurchaseOrder.STATUS_CANCELLED):
+        return Response({"error": "Only an ordered or cancelled purchase order can be sent back to draft."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    po.status = PurchaseOrder.STATUS_DRAFT
+    po.ordered_at = None
+
+    merged_from = []
+    other_drafts = (PurchaseOrder.objects.select_for_update()
+                    .filter(supplier=po.supplier, status=PurchaseOrder.STATUS_DRAFT)
+                    .exclude(pk=po.pk).order_by('created_at'))
+    if po.supplier_id is not None:
+        for other in other_drafts:
+            existing = {item.part_id: item for item in po.items.all() if item.part_id}
+            for item in other.items.all():
+                match = existing.get(item.part_id) if item.part_id else None
+                if match:
+                    # Keep this order's unit cost — it may already have been adjusted.
+                    match.quantity += item.quantity
+                    match.save(update_fields=['quantity'])
+                else:
+                    item.purchase_order = po
+                    item.save(update_fields=['purchase_order'])
+            if other.notes.strip():
+                po.notes = f"{po.notes}\n{other.notes}".strip()
+            merged_from.append(other.po_number)
+            other.delete()
+
+    po.save()
+    return Response({
+        "purchase_order": PurchaseOrderSerializer(_purchase_order_qs().get(pk=po.pk)).data,
+        "merged_from": merged_from,
+    })
+
+
+@api_view(['POST'])
+@transaction.atomic
 def receive_purchase_order(request, pk):
     """
     Book a delivery into stock. Each line's received quantity and actual unit
@@ -2950,9 +3130,13 @@ def receive_purchase_order(request, pk):
     Payload: { "invoice_number": "...", "items": [{ "id": 1, "received_quantity": 5, "unit_price": "1200.00", "sell_price": "1800.00" }] }
     """
     po = get_object_or_404(PurchaseOrder.objects.select_for_update(), pk=pk)
-    if po.status not in PO_EDITABLE_STATUSES:
-        return Response({"error": f"This order is already {po.get_status_display().lower()}."},
-                        status=status.HTTP_400_BAD_REQUEST)
+    # Only an order that was actually placed can arrive — a draft has to be
+    # marked as ordered first.
+    if po.status != PurchaseOrder.STATUS_ORDERED:
+        error = ("Mark this order as ordered before receiving it."
+                 if po.status == PurchaseOrder.STATUS_DRAFT
+                 else f"This order is already {po.get_status_display().lower()}.")
+        return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
 
     invoice_number = (request.data.get('invoice_number') or '').strip()
     rows = {row.get('id'): row for row in request.data.get('items', [])}

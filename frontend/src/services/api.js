@@ -102,6 +102,10 @@ export const deleteSupplier = async (id) =>
   await API.delete(`/suppliers/${id}/delete/`);
 
 export const fetchVehicles = async () => (await API.get("/vehicles/")).data;
+// Turn "Toyota Aqua, Honda Vezel 2018" into catalogue vehicles (existing ones
+// reused, the rest created). Returns { vehicles, created, skipped }.
+export const resolveVehicleList = async (text) =>
+  (await API.post("/vehicles/resolve/", { text })).data;
 export const createVehicle = async (data) =>
   (await API.post("/vehicles/add/", data)).data;
 export const updateVehicle = async (id, data) =>

@@ -82,6 +82,7 @@ urlpatterns = [
 
     # Vehicles (parts-compatibility catalog — make/model/year, no plate)
     path('vehicles/', views.get_vehicles, name='get_vehicles'),
+    path('vehicles/resolve/', views.resolve_vehicle_list, name='resolve_vehicle_list'),
     path('vehicles/add/', views.add_vehicle, name='add_vehicle'),
     path('vehicles/<int:pk>/update/', views.update_vehicle, name='update_vehicle'),
     path('vehicles/<int:pk>/delete/', views.delete_vehicle, name='delete_vehicle'),

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import SupplierSelect from "./SupplierSelect";
-import { fetchSuppliers, fetchVehicles, createVehicle } from "../../services/api";
+import { fetchSuppliers, fetchVehicles, createVehicle, resolveVehicleList } from "../../services/api";
 import {
   X,
   Car,
@@ -15,6 +15,7 @@ import {
   Tag,
   Truck,
   MapPin,
+  ListPlus,
 } from "lucide-react";
 import AvatarBadge from "../AvatarBadge";
 import { caseOnChange, titleCaseName } from "../titleCase";
@@ -26,6 +27,23 @@ const SectionLabel = ({ children, action }) => (
     {action}
   </div>
 );
+
+// Markup and supplier discount implied by a cost/selling price pair, as the
+// strings the % boxes show ("" when there's nothing to work from). Discount off
+// the selling price is the same figure as the margin.
+const toPercentString = (n) => String(Number(n.toFixed(1)));
+const pricesToPercents = (costValue, sellValue) => {
+  const cost = parseFloat(costValue);
+  const sell = parseFloat(sellValue);
+  const valid = cost > 0 && sell > 0;
+  return {
+    markup: valid ? toPercentString(((sell - cost) / cost) * 100) : "",
+    discount: valid ? toPercentString(((sell - cost) / sell) * 100) : "",
+  };
+};
+const percentOnly = (value) => value.replace(/[^0-9.]/g, "").replace(/(\..*)\./g, "$1");
+const formatLKR = (n) =>
+  `LKR ${n.toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const [suppliers, setSuppliers] = useState([]);
@@ -43,6 +61,13 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCreatingVehicle, setIsCreatingVehicle] = useState(false);
   const [vehicleSaving, setVehicleSaving] = useState(false);
+
+  // "Add list": several compatible vehicles typed as one comma-separated line.
+  const [isAddingList, setIsAddingList] = useState(false);
+  const [vehicleListText, setVehicleListText] = useState("");
+  const [vehicleListSaving, setVehicleListSaving] = useState(false);
+  const [vehicleListError, setVehicleListError] = useState("");
+  const [vehicleListSummary, setVehicleListSummary] = useState("");
 
   // New Vehicle State
   const [newVehicle, setNewVehicle] = useState({
@@ -112,6 +137,81 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
+
+  // --- Price calculator ---
+  // Markup % (under cost) works out the selling price; supplier discount %
+  // (under selling) works out the cost. Both boxes otherwise show the figure
+  // implied by the two prices — except the one being typed in, which keeps
+  // exactly what was typed. Neither is saved; they only fill in the prices.
+  const [markupInput, setMarkupInput] = useState("");
+  const [discountInput, setDiscountInput] = useState("");
+  // Max discount % a cashier may give: sets the minimum selling price.
+  const [minDiscountInput, setMinDiscountInput] = useState("");
+  const percentSource = useRef(null); // "markup" | "discount" | "minDiscount" | null (a price was typed)
+
+  useEffect(() => {
+    const { markup, discount } = pricesToPercents(formData.buy_price, formData.sell_price);
+    if (percentSource.current !== "markup") setMarkupInput(markup);
+    if (percentSource.current !== "discount") setDiscountInput(discount);
+    if (percentSource.current !== "minDiscount") {
+      const sell = parseFloat(formData.sell_price);
+      const min = parseFloat(formData.min_sell_price);
+      setMinDiscountInput(
+        sell > 0 && formData.min_sell_price !== "" && !isNaN(min) && min <= sell
+          ? toPercentString(((sell - min) / sell) * 100)
+          : ""
+      );
+    }
+  }, [formData.buy_price, formData.sell_price, formData.min_sell_price]);
+
+  const handlePriceChange = (e) => {
+    percentSource.current = null;
+    handleChange(e);
+  };
+
+  const handleMarkupChange = (e) => {
+    const value = percentOnly(e.target.value);
+    percentSource.current = "markup";
+    setMarkupInput(value);
+    const cost = parseFloat(formData.buy_price);
+    const markup = parseFloat(value);
+    if (cost > 0 && !isNaN(markup)) {
+      setFormData((prev) => ({ ...prev, sell_price: (cost * (1 + markup / 100)).toFixed(2) }));
+    }
+  };
+
+  const handleDiscountChange = (e) => {
+    const value = percentOnly(e.target.value);
+    percentSource.current = "discount";
+    setDiscountInput(value);
+    const sell = parseFloat(formData.sell_price);
+    const discount = parseFloat(value);
+    if (sell > 0 && !isNaN(discount)) {
+      setFormData((prev) => ({ ...prev, buy_price: (sell * (1 - discount / 100)).toFixed(2) }));
+    }
+  };
+
+  const handleMinDiscountChange = (e) => {
+    const value = percentOnly(e.target.value);
+    percentSource.current = "minDiscount";
+    setMinDiscountInput(value);
+    const sell = parseFloat(formData.sell_price);
+    const discount = parseFloat(value);
+    if (sell > 0 && !isNaN(discount)) {
+      setFormData((prev) => ({
+        ...prev,
+        min_sell_price: (sell * (1 - Math.min(discount, 100) / 100)).toFixed(2),
+      }));
+    } else if (value === "") {
+      // Clearing the % clears the floor too — back to "no discount limit".
+      setFormData((prev) => ({ ...prev, min_sell_price: "" }));
+    }
+  };
+
+  const costNum = parseFloat(formData.buy_price);
+  const sellNum = parseFloat(formData.sell_price);
+  const pricesValid = costNum > 0 && sellNum > 0;
+  const profit = pricesValid ? sellNum - costNum : 0;
 
   // Part names are title-cased as they're typed (the server applies the same
   // rule on save); caseOnChange keeps the caret in place while it does.
@@ -185,6 +285,37 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
       alert("Failed to create vehicle. Please try again.");
     } finally {
       setVehicleSaving(false);
+    }
+  };
+
+  const handleAddVehicleList = async () => {
+    if (!vehicleListText.trim()) return;
+    setVehicleListSaving(true);
+    setVehicleListError("");
+    try {
+      const { vehicles: resolved, created, skipped } = await resolveVehicleList(vehicleListText);
+      // Newly created models have to be known locally for their chips to name them.
+      setVehicles((prev) => [...prev, ...resolved.filter((v) => !prev.some((p) => p.id === v.id))]);
+      const added = resolved.map((v) => v.id).filter((id) => !formData.compatible_vehicles.includes(id));
+      setFormData((prev) => ({
+        ...prev,
+        compatible_vehicles: [...prev.compatible_vehicles, ...added.filter((id) => !prev.compatible_vehicles.includes(id))],
+      }));
+
+      const parts = [];
+      parts.push(`Added ${added.length} vehicle${added.length === 1 ? "" : "s"}`);
+      if (created.length) parts[0] += ` (${created.length} new model${created.length === 1 ? "" : "s"} created)`;
+      if (resolved.length > added.length) parts.push(`${resolved.length - added.length} already listed`);
+      skipped.forEach((s) => parts.push(`Skipped \u201C${s.text}\u201D: ${s.reason}`));
+      setVehicleListSummary(parts.join(". ") + ".");
+
+      setVehicleListText("");
+      setIsAddingList(false);
+    } catch (error) {
+      console.error("Failed to add vehicle list", error);
+      setVehicleListError("Couldn\u2019t add those vehicles. Please try again.");
+    } finally {
+      setVehicleListSaving(false);
     }
   };
 
@@ -411,9 +542,26 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                     type="number"
                     name="buy_price"
                     value={formData.buy_price}
-                    onChange={handleChange}
+                    onChange={handlePriceChange}
                     className="w-full p-2.5 bg-white border border-gray-200 rounded-xl text-sm font-mono focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                   />
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <label className="text-[11px] font-semibold text-gray-500 shrink-0">Markup</label>
+                    <div className="relative w-24">
+                      <input
+                        value={markupInput}
+                        onChange={handleMarkupChange}
+                        inputMode="decimal"
+                        placeholder="—"
+                        title="Markup on cost — works out the selling price"
+                        className="w-full py-1.5 pl-2.5 pr-6 bg-white border border-gray-200 rounded-lg text-xs font-mono text-right focus:border-gray-900 focus:ring-0 focus:outline-none"
+                      />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">%</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 leading-tight">
+                      {markupInput && !(costNum > 0) ? "Enter the cost price first" : "\u2192 sets selling price"}
+                    </span>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-gray-500 mb-1">Selling price (LKR)</label>
@@ -421,10 +569,38 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                     type="number"
                     name="sell_price"
                     value={formData.sell_price}
-                    onChange={handleChange}
+                    onChange={handlePriceChange}
                     className="w-full p-2.5 bg-white border border-gray-200 rounded-xl text-sm font-mono font-bold text-gray-900 focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                   />
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <label className="text-[11px] font-semibold text-gray-500 shrink-0">Supplier discount</label>
+                    <div className="relative w-24">
+                      <input
+                        value={discountInput}
+                        onChange={handleDiscountChange}
+                        inputMode="decimal"
+                        placeholder="—"
+                        title="Discount the supplier gave off the selling price — works out the cost price"
+                        className="w-full py-1.5 pl-2.5 pr-6 bg-white border border-gray-200 rounded-lg text-xs font-mono text-right focus:border-gray-900 focus:ring-0 focus:outline-none"
+                      />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">%</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 leading-tight">
+                      {discountInput && !(sellNum > 0) ? "Enter the selling price first" : "\u2192 sets cost price"}
+                    </span>
+                  </div>
                 </div>
+                {pricesValid && (
+                  <p
+                    className={`md:col-span-2 text-xs font-semibold ${
+                      profit < 0 ? "text-red-600" : "text-emerald-700"
+                    }`}
+                  >
+                    {profit < 0
+                      ? `Selling below cost \u2014 loss ${formatLKR(-profit)}`
+                      : `Profit ${formatLKR(profit)} \u00b7 Markup ${toPercentString((profit / costNum) * 100)}% \u00b7 Margin ${toPercentString((profit / sellNum) * 100)}%`}
+                  </p>
+                )}
                 <div className="md:col-span-2">
                   <label className="block text-[11px] font-semibold text-gray-500 mb-1">
                     Minimum selling price (LKR){" "}
@@ -434,7 +610,7 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                     type="number"
                     name="min_sell_price"
                     value={formData.min_sell_price}
-                    onChange={handleChange}
+                    onChange={handlePriceChange}
                     placeholder="Leave blank for no discount limit"
                     className={`w-full p-2.5 bg-white border rounded-xl text-sm font-mono focus:ring-0 focus:outline-none transition-colors ${
                       minPriceInvalid
@@ -442,11 +618,40 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                         : "border-gray-200 focus:border-gray-900"
                     }`}
                   />
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <label className="text-[11px] font-semibold text-gray-500 shrink-0">Max discount</label>
+                    <div className="relative w-24">
+                      <input
+                        value={minDiscountInput}
+                        onChange={handleMinDiscountChange}
+                        inputMode="decimal"
+                        placeholder="—"
+                        title="Largest discount off the selling price a cashier may give — works out the minimum price"
+                        className="w-full py-1.5 pl-2.5 pr-6 bg-white border border-gray-200 rounded-lg text-xs font-mono text-right focus:border-gray-900 focus:ring-0 focus:outline-none"
+                      />
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400">%</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 leading-tight">
+                      {minDiscountInput && !(sellNum > 0) ? "Enter the selling price first" : "\u2192 sets minimum price"}
+                    </span>
+                  </div>
                   <p className={`text-[10px] mt-1 ${minPriceInvalid ? "text-red-500" : "text-gray-400"}`}>
                     {minPriceInvalid
                       ? "Minimum selling price can't be above the selling price."
                       : maxDiscountHint}
                   </p>
+                  {/* What's still made if a cashier goes all the way down to the floor. */}
+                  {hasMinPrice && !minPriceInvalid && costNum > 0 && minPriceNum > 0 && (
+                    <p
+                      className={`mt-1 text-xs font-semibold ${
+                        minPriceNum < costNum ? "text-red-600" : "text-emerald-700"
+                      }`}
+                    >
+                      {minPriceNum < costNum
+                        ? `At the minimum price: below cost \u2014 loss ${formatLKR(costNum - minPriceNum)} per unit`
+                        : `At the minimum price: Profit ${formatLKR(minPriceNum - costNum)} \u00b7 Markup ${toPercentString(((minPriceNum - costNum) / costNum) * 100)}% \u00b7 Margin ${toPercentString(((minPriceNum - costNum) / minPriceNum) * 100)}%`}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-gray-500 mb-1">Current stock</label>
@@ -478,13 +683,29 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
             <div className="bg-gray-50 rounded-2xl border border-gray-100 p-4 mt-5">
               <SectionLabel
                 action={
-                  <button
-                    type="button"
-                    onClick={() => setIsCreatingVehicle(!isCreatingVehicle)}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded-full transition-colors"
-                  >
-                    <Plus size={13} /> {isCreatingVehicle ? "Cancel" : "New model"}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddingList(!isAddingList);
+                        setIsCreatingVehicle(false);
+                        setVehicleListError("");
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded-full transition-colors"
+                    >
+                      <ListPlus size={13} /> {isAddingList ? "Cancel" : "Add list"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingVehicle(!isCreatingVehicle);
+                        setIsAddingList(false);
+                      }}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded-full transition-colors"
+                    >
+                      <Plus size={13} /> {isCreatingVehicle ? "Cancel" : "New model"}
+                    </button>
+                  </div>
                 }
               >
                 Fits Vehicles
@@ -538,6 +759,36 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                       >
                         {vehicleSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
                         Save &amp; add
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Several vehicles at once, typed as a list */}
+                {isAddingList && (
+                  <div className="mt-3 p-4 bg-white border border-gray-200 rounded-2xl animate-fade-in-down">
+                    <SectionLabel>Add a list of vehicles</SectionLabel>
+                    <textarea
+                      value={vehicleListText}
+                      onChange={(e) => setVehicleListText(e.target.value)}
+                      rows={3}
+                      autoFocus
+                      placeholder="Toyota Aqua, Honda Vezel, Toyota Corolla 2018"
+                      className="w-full p-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
+                    />
+                    <p className="mt-1 text-xs text-gray-400">
+                      Make then model, separated by commas. A year is optional. Models not in the list yet are created.
+                    </p>
+                    {vehicleListError && <p className="mt-2 text-xs text-red-600 font-medium">{vehicleListError}</p>}
+                    <div className="mt-3 flex md:justify-end">
+                      <button
+                        type="button"
+                        onClick={handleAddVehicleList}
+                        disabled={vehicleListSaving || !vehicleListText.trim()}
+                        className="flex items-center justify-center gap-1.5 bg-gray-900 hover:bg-black disabled:bg-gray-400 text-white text-xs font-bold px-5 py-2.5 rounded-full transition-colors w-full md:w-auto"
+                      >
+                        {vehicleListSaving ? <Loader2 size={13} className="animate-spin" /> : <ListPlus size={13} />}
+                        Add all
                       </button>
                     </div>
                   </div>
@@ -597,6 +848,9 @@ const AddPartForm = ({ onSubmit, onCancel, editingPart }) => {
                   </span>
                 )}
               </div>
+              {vehicleListSummary && (
+                <p className="mt-2 text-xs text-gray-500">{vehicleListSummary}</p>
+              )}
             </div>
           </div>
         </div>

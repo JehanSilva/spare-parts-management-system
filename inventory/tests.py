@@ -262,6 +262,45 @@ class PartNameTitleCaseTest(TestCase):
         self.assertEqual(Part.objects.get(part_number="OS-TC-1").name, "Oxygen Sensor (Front)")
 
 
+class ResolveVehicleListAPITest(TestCase):
+    """Typing a part's compatible vehicles as one comma-separated list."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="fitsuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.aqua = Vehicle.objects.create(make="Toyota", model="Aqua")
+
+    def _resolve(self, text):
+        response = self.client.post(reverse('resolve_vehicle_list'), {"text": text}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_reuses_existing_and_creates_new(self):
+        data = self._resolve("Toyota Aqua, Honda Vezel")
+        self.assertEqual([v['model'] for v in data['vehicles']], ["Aqua", "Vezel"])
+        self.assertEqual(data['vehicles'][0]['id'], self.aqua.id)
+        self.assertTrue(Vehicle.objects.filter(make="Honda", model="Vezel").exists())
+        self.assertEqual(len(data['created']), 1)
+        self.assertEqual(data['skipped'], [])
+
+    def test_duplicates_collapse_and_new_names_are_title_cased(self):
+        data = self._resolve("toyota aqua; TOYOTA AQUA\nhonda fit")
+        self.assertEqual(len(data['vehicles']), 2)
+        self.assertEqual(Vehicle.objects.filter(make__iexact="toyota", model__iexact="aqua").count(), 1)
+        self.assertTrue(Vehicle.objects.filter(make="Honda", model="Fit").exists())
+
+    def test_year_is_picked_up(self):
+        data = self._resolve("Toyota Corolla (2018)")
+        self.assertEqual(data['vehicles'][0]['year'], 2018)
+        self.assertEqual(data['vehicles'][0]['model'], "Corolla")
+
+    def test_a_make_alone_is_skipped(self):
+        data = self._resolve("Toyota, Honda Vezel")
+        self.assertEqual(data['skipped'], [{"text": "Toyota", "reason": "needs a make and a model"}])
+        self.assertEqual(len(data['vehicles']), 1)
+
+
 class PartCalculationAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()

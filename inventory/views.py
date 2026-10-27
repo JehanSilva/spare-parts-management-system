@@ -14,6 +14,7 @@ from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attend
 from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context, PurchaseOrderSerializer
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle, normalize_repair_description
+from .text import title_case_name
 from .serializers import VehicleSerializer
 from django.shortcuts import get_object_or_404
 from django.db.models import Sum, F
@@ -318,6 +319,43 @@ def delete_vehicle(request, pk):
     vehicle = get_object_or_404(Vehicle, pk=pk)
     vehicle.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+@api_view(['POST'])
+@transaction.atomic
+def resolve_vehicle_list(request):
+    """
+    POST /vehicles/resolve/ {"text": "Toyota Aqua, Honda Vezel 2018"} — turn a
+    typed list of compatible vehicles (make then model, optional year; split on
+    commas, semicolons or new lines) into catalogue Vehicles, reusing existing
+    ones and creating the rest — the same parsing the Excel import uses. Entries
+    that aren't a make *and* a model are returned under "skipped" with a reason.
+    """
+    text = request.data.get('text') or ''
+    existing_makes = list(Vehicle.objects.values_list('make', flat=True).distinct())
+
+    vehicles, created, skipped, seen = [], [], [], set()
+    for entry in re.split(r'[,;\n]+', text):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parsed = parse_vehicle_string(entry, existing_makes)
+        # A lone word ("Toyota") parses with an invented model of "Unknown".
+        if not parsed or (parsed['model'] == "Unknown" and 'unknown' not in entry.lower()):
+            skipped.append({'text': entry, 'reason': 'needs a make and a model'})
+            continue
+        vehicle, was_created = _get_or_create_vehicle(parsed, existing_makes)
+        if was_created:
+            created.append(str(vehicle))
+        if vehicle.id not in seen:
+            seen.add(vehicle.id)
+            vehicles.append(vehicle)
+
+    return Response({
+        'vehicles': VehicleSerializer(vehicles, many=True).data,
+        'created': created,
+        'skipped': skipped,
+    })
+
 
 @api_view(['GET'])
 def get_vehicles(request):
@@ -2013,6 +2051,31 @@ def parse_vehicle_string(vehicle_str, existing_makes):
         'year': year
     }
 
+
+def _get_or_create_vehicle(parsed, existing_makes):
+    """
+    The catalogue Vehicle for a parsed "make model (year)", matched
+    case-insensitively, or a new one. New entries are title-cased like part
+    names, so "toyota aqua" is stored as "Toyota Aqua". `existing_makes` is
+    extended in place so later entries in the same batch match the new make.
+    Returns (vehicle, created).
+    """
+    vehicle = Vehicle.objects.filter(
+        make__iexact=parsed['make'],
+        model__iexact=parsed['model'],
+        year=parsed['year'],
+    ).first()
+    if vehicle is None:
+        vehicle = Vehicle.objects.create(
+            make=title_case_name(parsed['make']),
+            model=title_case_name(parsed['model']),
+            year=parsed['year'],
+        )
+        if vehicle.make not in existing_makes:
+            existing_makes.append(vehicle.make)
+        return vehicle, True
+    return vehicle, False
+
 @api_view(['POST'])
 def bulk_upload_parts(request):
     """
@@ -2123,22 +2186,7 @@ def bulk_upload_parts(request):
                         for v_str in vehicle_strs:
                             parsed = parse_vehicle_string(v_str, existing_makes)
                             if parsed:
-                                v_obj = Vehicle.objects.filter(
-                                    make__iexact=parsed['make'],
-                                    model__iexact=parsed['model'],
-                                    year=parsed['year']
-                                ).first()
-                                
-                                if not v_obj:
-                                    v_obj = Vehicle.objects.create(
-                                        make=parsed['make'],
-                                        model=parsed['model'],
-                                        year=parsed['year']
-                                    )
-                                    if parsed['make'] not in existing_makes:
-                                        existing_makes.append(parsed['make'])
-                                        
-                                vehicle_objs.append(v_obj)
+                                vehicle_objs.append(_get_or_create_vehicle(parsed, existing_makes)[0])
                                 
                 # Find if part already exists
                 existing_part = Part.objects.filter(part_number=part_number).first()
@@ -2288,20 +2336,7 @@ def resolve_bulk_upload_conflicts(request):
                     parsed = parse_vehicle_string(str(v_str), existing_makes)
                     if not parsed:
                         continue
-                    v_obj = Vehicle.objects.filter(
-                        make__iexact=parsed['make'],
-                        model__iexact=parsed['model'],
-                        year=parsed['year']
-                    ).first()
-                    if not v_obj:
-                        v_obj = Vehicle.objects.create(
-                            make=parsed['make'],
-                            model=parsed['model'],
-                            year=parsed['year']
-                        )
-                        if parsed['make'] not in existing_makes:
-                            existing_makes.append(parsed['make'])
-                    vehicle_objs.append(v_obj)
+                    vehicle_objs.append(_get_or_create_vehicle(parsed, existing_makes)[0])
                 part.compatible_vehicles.set(vehicle_objs)
 
             updated_count += 1

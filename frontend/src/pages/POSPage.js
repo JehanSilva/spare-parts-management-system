@@ -102,8 +102,35 @@ const toCartPayload = (cart) => ({
 // the five places a blank cart is born (first load, the + button, discarding
 // the last cart, and after a checkout) — every field a cart carries has to be
 // present in all of them or the tabs drift apart.
+// When a repair tab was opened — shown on the tab and in the cart header so a
+// job left open for days is recognisable. The server's ActiveCart.created_at is
+// the source of truth; a brand-new tab uses "now" until its first sync.
+const dayDiff = (iso) => {
+  const opened = new Date(iso);
+  const startOf = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return Math.round((startOf(new Date()) - startOf(opened)) / 86400000);
+};
+const openedAgo = (iso) => {
+  if (!iso) return "";
+  const days = dayDiff(iso);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+};
+const openedFull = (iso) =>
+  iso
+    ? new Date(iso).toLocaleString("en-GB", {
+        weekday: "short", day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      })
+    : "";
+
+// Today as YYYY-MM-DD in local time — the format the Sale Date picker uses.
+const localToday = () => new Date().toLocaleDateString("en-CA");
+
 const makeEmptyCart = (id) => ({
   id,
+  createdAt: new Date().toISOString(),
   customerName: "",
   vehicleNumber: "",
   customerId: null,
@@ -111,7 +138,9 @@ const makeEmptyCart = (id) => ({
   items: [],
   mileage: "",
   notes: "",
-  saleDate: "",
+  // A new job is dated the day its tab was opened, so a bill finished days
+  // later still lands on the day the work came in. Changeable in Payment.
+  saleDate: localToday(),
   paymentMode: "PAID",
   partialAmountPaid: "",
   creditNote: "",
@@ -736,7 +765,7 @@ const PaymentModal = ({
   if (!isOpen) return null;
 
   // A sale can be dated back to a job finished earlier, but never forward.
-  const todayISO = new Date().toLocaleDateString("en-CA");
+  const todayISO = localToday();
 
   return (
     <div
@@ -826,10 +855,10 @@ const PaymentModal = ({
                 onChange={(e) => setSaleDate(e.target.value)}
                 className="flex-1 px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-gray-400"
               />
-              {saleDate && (
+              {saleDate !== todayISO && (
                 <button
                   type="button"
-                  onClick={() => setSaleDate("")}
+                  onClick={() => setSaleDate(todayISO)}
                   className="px-2.5 py-2 text-[11px] font-bold text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
                   title="Back to today"
                 >
@@ -838,9 +867,11 @@ const PaymentModal = ({
               )}
             </div>
             <p className="text-[11px] text-gray-400 mt-1">
-              {saleDate
-                ? "This bill will be recorded — and reported — on the date above."
-                : "Leave blank to record this sale now."}
+              {!saleDate
+                ? "Leave blank to record this sale now."
+                : saleDate === todayISO
+                  ? "This bill will be recorded today."
+                  : "This bill will be recorded \u2014 and reported \u2014 on the date above."}
             </p>
           </div>
 
@@ -1227,6 +1258,7 @@ const POSPage = () => {
           paymentMode: c.payment_mode || "PAID",
           partialAmountPaid: c.partial_amount_paid || "",
           creditNote: c.credit_note || "",
+          createdAt: c.created_at || null,
         }));
 
         if (mapped.length > 0) {
@@ -1304,6 +1336,7 @@ const POSPage = () => {
         paymentMode: c.payment_mode || "PAID",
         partialAmountPaid: c.partial_amount_paid || "",
         creditNote: c.credit_note || "",
+        createdAt: c.created_at || null,
       }));
       if (mapped.length > 0) {
         setCarts(mapped);
@@ -1429,6 +1462,22 @@ const POSPage = () => {
   // the "Active Repairs" tab bar can show make/model for every repair tab,
   // not just the currently active one.
   const [vehicleInfoByNumber, setVehicleInfoByNumber] = useState({});
+
+  // Same plate already on another open tab: { cartId, plate, matches } while
+  // the "already has an open job" prompt is up. cartsRef lets the delayed plate
+  // check see the current tabs; dismissedDupRef remembers "open another job"
+  // per cart + plate so it isn't asked twice.
+  const [dupPlatePrompt, setDupPlatePrompt] = useState(null);
+  const cartsRef = useRef(carts);
+  cartsRef.current = carts;
+  const dismissedDupRef = useRef(new Set());
+
+  const checkDuplicatePlate = (cartId, plate) => {
+    const key = plateKey(plate);
+    if (key.length < 3 || dismissedDupRef.current.has(`${cartId}:${key}`)) return;
+    const matches = cartsRef.current.filter((c) => c.id !== cartId && plateKey(c.vehicleNumber) === key);
+    if (matches.length > 0) setDupPlatePrompt({ cartId, plate, matches });
+  };
   const cacheVehicleInfo = useCallback((veh, vehicle) => {
     const key = (veh || "").trim().toUpperCase();
     if (!key) return;
@@ -1571,9 +1620,12 @@ const POSPage = () => {
     // guards against a slower request resolving after a newer edit and
     // clobbering the current (correct) state with stale results.
     const requestId = ++vehicleLookupRequestRef.current;
+    const cartIdAtEdit = activeCartId;
     if (upperVeh.length >= 3) {
       setVehicleLookupStatus("searching");
       vehicleLookupTimer.current = setTimeout(async () => {
+        // Once the plate has settled, warn if another tab already has it.
+        if (vehicleLookupRequestRef.current === requestId) checkDuplicatePlate(cartIdAtEdit, upperVeh);
         try {
           const result = await lookupVehicle(upperVeh);
           if (vehicleLookupRequestRef.current !== requestId) return; // superseded by a newer edit
@@ -2070,13 +2122,27 @@ const POSPage = () => {
   };
 
   const executeClearCart = () => {
+    // A cleared tab is a fresh job, so it gets a fresh id — the server then
+    // stamps a new creation date instead of keeping the old job's.
+    const newId = "cart_" + Date.now();
     setCarts((prev) =>
       prev.map((c) =>
         c.id === activeCartId
-          ? { ...c, customerName: "", vehicleNumber: "", items: [], mileage: "", notes: "", saleDate: "" }
+          ? {
+              ...c,
+              id: newId,
+              createdAt: new Date().toISOString(),
+              customerName: "",
+              vehicleNumber: "",
+              items: [],
+              mileage: "",
+              notes: "",
+              saleDate: localToday(),
+            }
           : c
       )
     );
+    setActiveCartId(newId);
     setShowConfirm(false);
     setAlertInfo({ type: "success", message: "Cart cleared successfully." });
   };
@@ -2400,9 +2466,19 @@ const POSPage = () => {
                     <span className="text-xs font-bold whitespace-nowrap leading-none">
                       {displayName}
                     </span>
-                    {subText && (
-                      <span className="text-[9px] text-gray-400 font-medium whitespace-nowrap leading-none mt-1">
+                    {(subText || c.createdAt) && (
+                      <span
+                        className="text-[9px] text-gray-400 font-medium whitespace-nowrap leading-none mt-1"
+                        title={c.createdAt ? `Job opened ${openedFull(c.createdAt)}` : undefined}
+                      >
                         {subText}
+                        {subText && c.createdAt && " · "}
+                        {c.createdAt && (
+                          // Left open more than a day — worth a second look.
+                          <span className={dayDiff(c.createdAt) >= 2 ? "text-amber-600 font-bold" : ""}>
+                            {openedAgo(c.createdAt)}
+                          </span>
+                        )}
                       </span>
                     )}
                   </div>
@@ -2609,6 +2685,85 @@ const POSPage = () => {
         tone="info"
       />
 
+      {dupPlatePrompt && (() => {
+        const existing = dupPlatePrompt.matches[0]; // carts are newest-first
+        const info = vehicleInfoByNumber[existing.vehicleNumber.trim().toUpperCase()];
+        const makeModel = info ? [info.make, info.model].filter(Boolean).join(" ") : "";
+        const itemCount = existing.items.length;
+        const others = dupPlatePrompt.matches.length - 1;
+
+        const goToExisting = () => {
+          // Drop the new tab's pending registry lookup so its reply can't land
+          // on the tab being switched to.
+          clearTimeout(vehicleLookupTimer.current);
+          ++vehicleLookupRequestRef.current;
+          const current = cartsRef.current.find((c) => c.id === dupPlatePrompt.cartId);
+          if (current && current.items.length === 0) {
+            // Opened just for this vehicle — don't leave an empty tab behind.
+            setCarts((prev) => prev.filter((c) => c.id !== dupPlatePrompt.cartId));
+          } else {
+            handleVehicleNumberChange("");
+          }
+          setActiveCartId(existing.id);
+          setVehicleModalOpen(false);
+          setDupPlatePrompt(null);
+        };
+        const openAnother = () => {
+          dismissedDupRef.current.add(`${dupPlatePrompt.cartId}:${plateKey(dupPlatePrompt.plate)}`);
+          setDupPlatePrompt(null);
+        };
+
+        return (
+          <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+              <div className="p-4 border-b border-amber-100 bg-amber-50 flex items-center gap-3">
+                <div className="p-2 rounded-full bg-amber-100 text-amber-600">
+                  <AlertTriangle size={20} />
+                </div>
+                <h3 className="font-bold text-gray-900">
+                  <span className="font-mono">{dupPlatePrompt.plate}</span> already has an open job
+                </h3>
+                <button
+                  onClick={() => setDupPlatePrompt(null)}
+                  className="ml-auto text-gray-400 hover:text-gray-600"
+                  title="Close"
+                >
+                  <XCircle size={20} />
+                </button>
+              </div>
+              <div className="px-5 py-4 text-sm text-gray-600 space-y-2">
+                <p>This vehicle is already being worked on in another repair tab:</p>
+                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                  <Car size={14} className="text-gray-400 shrink-0" />
+                  <span className="font-mono font-bold text-gray-900">{existing.vehicleNumber}</span>
+                  {makeModel && <span className="text-gray-500 truncate">· {makeModel}</span>}
+                  <span className="ml-auto text-xs text-gray-500 shrink-0">
+                    {itemCount} item{itemCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {others > 0 && <p className="text-xs text-gray-400">(and {others} more tab{others === 1 ? "" : "s"})</p>}
+                <p>Go to that job, or open another one for the same vehicle?</p>
+              </div>
+              <div className="px-5 pb-5 flex flex-col sm:flex-row gap-2 sm:justify-end">
+                <button
+                  onClick={openAnother}
+                  className="px-4 py-2 text-sm font-semibold rounded-xl bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Open another job
+                </button>
+                <button
+                  onClick={goToExisting}
+                  className="px-4 py-2 text-sm font-bold rounded-xl bg-gray-900 text-white hover:bg-black"
+                  autoFocus
+                >
+                  Go to existing job
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       <VehicleCustomerModal
         isOpen={vehicleModalOpen}
         onClose={() => setVehicleModalOpen(false)}
@@ -2774,9 +2929,20 @@ const POSPage = () => {
           </div>
 
           <div className="hidden md:flex p-4 bg-gray-900 text-white shadow-md z-10 justify-between items-center">
-            <h2 className="text-lg font-bold flex items-center gap-2">
-              <ShoppingCart className="w-5 h-5" /> Current Sale
-            </h2>
+            <div>
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <ShoppingCart className="w-5 h-5" /> Current Sale
+              </h2>
+              {activeCart.createdAt && (
+                <p className="text-[11px] text-gray-400 mt-0.5 flex items-center gap-1">
+                  <CalendarDays size={11} className="shrink-0" />
+                  Job opened {openedFull(activeCart.createdAt)}
+                  <span className={dayDiff(activeCart.createdAt) >= 2 ? "text-amber-400 font-semibold" : ""}>
+                    ({openedAgo(activeCart.createdAt)})
+                  </span>
+                </p>
+              )}
+            </div>
             {cart.length > 0 && (
               <button
                 onClick={handleClearCartRequest}
@@ -3198,7 +3364,9 @@ const POSPage = () => {
                 {/* A backdate is easy to set and then forget, and it decides
                     which day's report this bill lands in — so it stays visible
                     on the summary, not just inside the modal. */}
-                {saleDate && (
+                {/* Today's date is the default, not a backdate — only flag
+                    a different day. */}
+                {saleDate && saleDate !== localToday() && (
                   <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-900 text-white text-[10px] font-bold">
                     <CalendarDays size={10} />
                     {new Date(`${saleDate}T00:00:00`).toLocaleDateString("en-GB", {

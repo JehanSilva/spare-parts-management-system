@@ -206,6 +206,16 @@ class SaleItem(models.Model):
     # SNAPSHOT: The standard price at the moment of sale
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
 
+    # The part's catalog price when it went into the cart. Only differs from
+    # unit_price when the cashier raised the price for this one sale. Empty
+    # for labor lines and for sales made before this was recorded.
+    list_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    # SNAPSHOT: what one unit cost the shop when it was sold (the part's
+    # buy_price at that moment). Profit reads this, so later changes to the
+    # part's buy price don't rewrite old sales' profit. Labour lines stay 0.
+    unit_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
     # NEW: The discount given just for this specific line item
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
 
@@ -222,7 +232,20 @@ class SaleItem(models.Model):
         qty = self.quantity or 1
 
         self.total_price = (price - disc) * qty
+
+        # Snapshot the cost once, on first save, from whichever path created
+        # the line (POS checkout, serializer, admin).
+        if self.unit_cost is None:
+            self.unit_cost = (self.part.buy_price or 0) if self.part_id else 0
         super().save(*args, **kwargs)
+
+    @property
+    def cost_price(self):
+        """Unit cost for profit maths: the snapshot, falling back to the
+        part's current buy price only if a row somehow has none."""
+        if self.unit_cost is not None:
+            return self.unit_cost
+        return (self.part.buy_price or 0) if self.part_id else 0
 
     def __str__(self):
         return f"{self.part.name if self.part else self.description} (x{self.quantity})"

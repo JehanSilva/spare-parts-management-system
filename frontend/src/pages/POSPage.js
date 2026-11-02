@@ -37,6 +37,7 @@ import {
   Gauge,
   StickyNote,
   Pencil,
+  ArrowUp,
   MessageCircle,
   CalendarDays,
   ArrowUpRight,
@@ -80,6 +81,99 @@ const maxUnitDiscount = (item, livePart) => {
 // the percent input doesn't light up as a violation.
 const isOverDiscountLimit = (discount, limit) =>
   limit !== null && discount > limit + 0.01;
+
+// The catalog price a part line was carted at. Lines carted before list_price
+// existed fall back to their sell_price (they can't have been raised).
+const cartLineListPrice = (item) =>
+  parseFloat(item.list_price ?? item.sell_price) || 0;
+
+// Click-to-edit unit price for a part line. Raise-only: the price can go up
+// for this one sale, but never below the catalog price — lowering is what the
+// discount box is for, so the min-price rules stay in one place.
+const UnitPriceEditor = ({ item, onCommit, onReject }) => {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const listPrice = cartLineListPrice(item);
+  const unitPrice = parseFloat(item.sell_price) || 0;
+  const raised = unitPrice > listPrice + 0.001;
+
+  const start = () => {
+    setDraft(String(unitPrice));
+    setEditing(true);
+  };
+
+  const commit = () => {
+    setEditing(false);
+    const value = parseFloat(draft);
+    if (draft.trim() === "" || isNaN(value) || value === unitPrice) return;
+    if (value < listPrice) {
+      onReject(
+        `Price can't go below the catalog price (LKR ${listPrice.toLocaleString()}). Use the discount box to lower it.`
+      );
+      return;
+    }
+    onCommit(Math.round(value * 100) / 100);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1 mt-0.5">
+        <span className="text-[10px] font-bold text-gray-500">LKR</span>
+        <input
+          type="number"
+          min={listPrice}
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+            if (e.key === "Escape") {
+              setDraft(String(unitPrice));
+              setEditing(false);
+            }
+          }}
+          className="w-20 h-6 px-1.5 border border-amber-400 rounded-md text-[11px] font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-amber-200"
+        />
+        <span className="text-[9px] text-gray-400">Enter to save · Esc to cancel</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+      <button
+        type="button"
+        onClick={start}
+        title="Raise the unit price for this sale only"
+        className={`group flex items-center gap-1 text-[10px] font-semibold rounded px-1 -ml-1 transition-colors ${raised
+          ? "text-amber-700 hover:bg-amber-50"
+          : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
+          }`}
+      >
+        Unit LKR {unitPrice.toLocaleString()}
+        <Pencil size={10} className="opacity-50 group-hover:opacity-100" />
+      </button>
+      {raised && (
+        <>
+          <span
+            title={`Catalog price is LKR ${listPrice.toLocaleString()}. Raised for this sale only.`}
+            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-bold whitespace-nowrap"
+          >
+            <ArrowUp size={9} /> from {listPrice.toLocaleString()}
+          </span>
+          <button
+            type="button"
+            onClick={() => onCommit(listPrice)}
+            className="text-[9px] text-gray-400 hover:text-gray-700 underline"
+          >
+            Reset
+          </button>
+        </>
+      )}
+    </div>
+  );
+};
 
 // The row shape ActiveCart stores. Defined once because every path that
 // persists a cart — the debounced sync, the first-cart bootstrap, and leaving
@@ -1939,7 +2033,13 @@ const POSPage = () => {
             return c;
           }
           newItems = [
-            { ...part, quantity: 1, discountAmount: 0, discountPercentInput: "" },
+            {
+              ...part,
+              list_price: part.sell_price,
+              quantity: 1,
+              discountAmount: 0,
+              discountPercentInput: "",
+            },
             ...prevCart,
           ];
         }
@@ -2072,6 +2172,35 @@ const POSPage = () => {
             };
           }
           return item;
+        });
+        return { ...c, items: newItems };
+      })
+    );
+  };
+
+  // 5.55 Raise a part line's unit price for this sale only. The catalog
+  // price is kept on the line as list_price; an existing rupee discount is
+  // kept and its percent recalculated against the new price.
+  const updateUnitPrice = (id, newPrice) => {
+    setCarts((prev) =>
+      prev.map((c) => {
+        if (c.id !== activeCartId) return c;
+        const newItems = c.items.map((item) => {
+          if (item.id !== id) return item;
+          const listPrice = cartLineListPrice(item);
+          const price = Math.max(newPrice, listPrice);
+          let discountAmount = parseFloat(item.discountAmount) || 0;
+          if (discountAmount > price) discountAmount = price;
+          return {
+            ...item,
+            list_price: item.list_price ?? item.sell_price,
+            sell_price: price,
+            discountAmount,
+            discountPercentInput:
+              discountAmount > 0 && price > 0
+                ? parseFloat(((discountAmount / price) * 100).toFixed(2)).toString()
+                : "",
+          };
         });
         return { ...c, items: newItems };
       })
@@ -2328,6 +2457,7 @@ const POSPage = () => {
           part_id: item.id,
           quantity: parseInt(item.quantity),
           unit_price: originalPrice,
+          list_price: cartLineListPrice(item),
           discount: discountAmount,
           warranty: item.warranty || 0,
         };
@@ -3124,6 +3254,13 @@ const POSPage = () => {
                             <CopyButton text={item.part_number} label="part number" size={11} />
                             {item.brand && <span className="truncate">• {item.brand}</span>}
                           </div>
+                        )}
+                        {item.item_type !== "LABOR" && (
+                          <UnitPriceEditor
+                            item={item}
+                            onCommit={(price) => updateUnitPrice(item.id, price)}
+                            onReject={(message) => setAlertInfo({ type: "error", message })}
+                          />
                         )}
                       </div>
 

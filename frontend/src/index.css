@@ -316,9 +316,32 @@
     display: none !important;
   }
 
+  .print-metric-card .metric-sub {
+    font-size: 7pt !important;
+    color: #4b5563 !important;
+    margin-top: 2px !important;
+  }
+
   /* --- TABLE --- */
+  /* A busy day's table runs past one page, so let it break between rows
+     (rows themselves still avoid splitting). */
   .print-table-section {
-    page-break-inside: avoid !important;
+    page-break-inside: auto !important;
+  }
+
+  .print-table-section > div {
+    overflow: visible !important;
+  }
+
+  .print-table-section table {
+    min-width: 0 !important;
+  }
+
+  .print-table-section .sale-group-row td {
+    background: #f3f4f6 !important;
+    border-top: 1.5px solid #9ca3af !important;
+    font-size: 9pt !important;
+    padding: 6px 10px !important;
   }
 
   .print-table-section table {

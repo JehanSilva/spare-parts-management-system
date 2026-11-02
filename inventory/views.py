@@ -26,12 +26,16 @@ def buy_price_expr():
     """
     A SaleItem's unit cost, with labour treated as costing nothing.
 
+    Prefers the cost snapshotted on the line at sale time (unit_cost); the
+    part's current buy_price is only a fallback for a row without one.
+
     LABOR lines have no `part`, so a bare F('part__buy_price') is NULL and the
     whole profit expression collapses to NULL — which Sum() then skips, quietly
     dropping the row from every profit aggregate. Coalescing to zero keeps
     labour in the totals, where it counts as pure profit (there is no COGS).
     """
     return Coalesce(
+        F('unit_cost'),
         F('part__buy_price'),
         Value(0),
         output_field=DecimalField(max_digits=12, decimal_places=2),
@@ -444,13 +448,13 @@ def get_parts(request):
         ))
     ).values('total')
     
-    # Subquery to calculate total_cost: Sum(part__buy_price * quantity)
+    # Subquery to calculate total_cost: Sum(cost at time of sale * quantity)
     cost_subquery = SaleItem.objects.filter(
         part=OuterRef('pk'),
         sale__status='COMPLETED'
     ).values('part').annotate(
         total=Sum(ExpressionWrapper(
-            F('part__buy_price') * F('quantity'),
+            buy_price_expr() * F('quantity'),
             output_field=FloatField()
         ))
     ).values('total')
@@ -459,9 +463,8 @@ def get_parts(request):
     # part, at the price actually paid on each restock. RestockRecord.quantity
     # is never decremented on a return — the returned units live in
     # returned_quantity — so the units kept (and therefore paid for) are the
-    # difference. This is the only historical cost data in the system:
-    # SaleItem has no cost snapshot, so every other cost figure here is
-    # re-priced at the part's current weighted-average buy_price.
+    # difference. (Sold-unit cost above comes from SaleItem.unit_cost, the
+    # buy price snapshotted at the time of each sale.)
     invested_subquery = RestockRecord.objects.filter(
         part=OuterRef('pk')
     ).values('part').annotate(
@@ -1101,6 +1104,9 @@ def create_sale(request):
             item_type='PART',
             quantity=item['quantity'],
             unit_price=item['unit_price'],
+            # Catalog price at the time it was carted; unit_price is higher
+            # only when the cashier raised the price for this sale.
+            list_price=item.get('list_price') or part.sell_price,
             discount=item.get('discount', 0), # Fixed: Pass discount to model
             # Map 'warranty' (from Frontend) to 'warranty_period_months' (in DB)
             warranty_period_months=item.get('warranty', 0)
@@ -1746,17 +1752,15 @@ def dashboard_stats(request):
     # Total Revenue
     total_sales = Sale.objects.aggregate(Sum('total_amount'))['total_amount__sum'] or 0
     
-    # Calculate Profit: (Sell Price - Buy Price) * Qty Sold
-    # Note: This is a simplified calculation based on current part buy_price
-    # For exact historical profit, you should store 'buy_price' in SaleItem too.
+    # Calculate Profit: (Sell Price - cost at time of sale) * Qty Sold
     profit = 0
     sale_items = SaleItem.objects.all()
     for item in sale_items:
         # Profit = (Revenue with discount) - (Cost)
         # item.unit_price is the marked sell price. item.discount is the deduction.
-        # item.part.buy_price is the purchase cost.
+        # item.cost_price is the cost snapshotted at the time of sale.
         actual_revenue = (item.unit_price - item.discount) * item.quantity
-        total_cost = (item.part.buy_price if item.part else 0) * item.quantity
+        total_cost = item.cost_price * item.quantity
         profit += (actual_revenue - total_cost)
 
     # Low Stock Items
@@ -1888,107 +1892,166 @@ def get_dashboard_stats(request):
 @api_view(['GET'])
 def daily_report(request):
     """
-    Generate comprehensive daily sales report for a specific date (defaults to today).
+    End-of-day report for one shop-local date (defaults to today).
+
+    Profit uses each line's cost snapshotted at the time of sale
+    (SaleItem.unit_cost). Labour lines have no cost, so they count fully as
+    profit.
     """
+    from datetime import datetime
+
     date_str = request.query_params.get('date')
-    
     if date_str:
         try:
-            from datetime import datetime
             target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-            start_date = timezone.make_aware(datetime.combine(target_date, datetime.min.time()))
         except ValueError:
             return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
     else:
-        now = timezone.now()
-        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        target_date = start_date.date()
-        
-    end_date = start_date + timedelta(days=1)
+        # localdate(), not now().replace(hour=0): the latter is UTC midnight,
+        # which puts Colombo's 00:00-05:30 sales on the wrong day.
+        target_date = timezone.localdate()
 
-    # Filter target date's sales and items
-    target_sales = Sale.objects.filter(status='COMPLETED', created_at__gte=start_date, created_at__lt=end_date)
-    target_items = SaleItem.objects.filter(sale__status='COMPLETED', sale__created_at__gte=start_date, sale__created_at__lt=end_date)
+    tz = timezone.get_current_timezone()
+    start_date = timezone.make_aware(datetime.combine(target_date, datetime.min.time()), tz)
+    end_date = timezone.make_aware(datetime.combine(target_date + timedelta(days=1), datetime.min.time()), tz)
+    day_filter = Q(created_at__gte=start_date, created_at__lt=end_date)
 
-    # Calculate metrics
-    sales_data = target_sales.aggregate(total=Sum('total_amount'))
-    target_revenue = sales_data['total'] or 0
-
-    profit_cost_data = target_items.aggregate(
-        total_profit=Sum((F('unit_price') - F('discount') - buy_price_expr()) * F('quantity')),
-        total_cost=Sum(buy_price_expr() * F('quantity'))
+    target_sales = (
+        Sale.objects.filter(day_filter, status='COMPLETED')
+        .order_by('created_at')
+        .prefetch_related('items__part')
     )
-    target_profit = profit_cost_data['total_profit'] or 0
-    total_investment = profit_cost_data['total_cost'] or 0 # Investment of the items sold that day
+    cancelled_count = Sale.objects.filter(day_filter, status='CANCELLED').count()
 
-    target_sales_count = target_sales.count()
+    zero = Decimal('0')
+    revenue = zero
+    collected = zero
+    profit = zero
+    cogs = zero
+    parts_revenue = zero
+    labor_revenue = zero
+    discount_total = zero
+    units_sold = 0
+    raised_lines = 0
 
-    # Percentage comparison to all-time average daily revenue
-    first_sale = Sale.objects.filter(status='COMPLETED').order_by('created_at').first()
-    all_time_revenue = Sale.objects.filter(status='COMPLETED').aggregate(total=Sum('total_amount'))['total'] or 0
-    
-    avg_daily_revenue = 0
-    percentage_change = 0
-    
-    if first_sale and all_time_revenue > 0:
-        now_date = timezone.now().date()
-        days_active = (now_date - first_sale.created_at.date()).days
-        if days_active < 1:
-            days_active = 1
-        avg_daily_revenue = float(all_time_revenue) / days_active
-        
-        if avg_daily_revenue > 0:
-            percentage_change = ((float(target_revenue) - avg_daily_revenue) / avg_daily_revenue) * 100
-
-    # List of target's sales items
+    # Hourly buckets: shop hours always shown, plus any other hour with sales.
+    hours = {h: {"hour": f"{h:02d}:00", "revenue": 0.0, "profit": 0.0, "sales": 0} for h in range(8, 20)}
     items_list = []
-    for item in target_items:
-        # Net Profit = ((Sell Price - Discount) - Buy Price) * Quantity.
-        # Labour lines have no part, so no buy price and no name of their own —
-        # they cost nothing to provide and are billed under their description.
-        buy_price = item.part.buy_price if item.part else 0
-        item_profit = (item.unit_price - item.discount - buy_price) * item.quantity
-        items_list.append({
-            "part_name": item.part.name if item.part else item.description,
-            "part_number": item.part.part_number if item.part else "",
-            "unit_price": item.unit_price,
-            "quantity": item.quantity,
-            "discount": item.discount,
-            "total_price": item.total_price,
-            "profit": item_profit
+    sales_list = []
+
+    for sale in target_sales:
+        local_time = timezone.localtime(sale.created_at, tz)
+        hour = hours.setdefault(local_time.hour, {
+            "hour": f"{local_time.hour:02d}:00", "revenue": 0.0, "profit": 0.0, "sales": 0,
+        })
+        sale_total = sale.total_amount or zero
+        revenue += sale_total
+        collected += min(sale.amount_paid or zero, sale_total)
+        hour["revenue"] += float(sale_total)
+        hour["sales"] += 1
+
+        sale_profit = zero
+        sale_items = []
+        for item in sale.items.all():
+            is_labor = item.item_type == 'LABOR' or item.part_id is None
+            buy_price = zero if is_labor else (item.cost_price or zero)
+            net_unit = item.unit_price - item.discount
+            line_total = item.total_price
+            line_profit = (net_unit - buy_price) * item.quantity
+            line_discount = item.discount * item.quantity
+            raised = (
+                not is_labor and item.list_price is not None
+                and item.unit_price > item.list_price
+            )
+
+            sale_profit += line_profit
+            discount_total += line_discount
+            if is_labor:
+                labor_revenue += line_total
+            else:
+                parts_revenue += line_total
+                cogs += buy_price * item.quantity
+                units_sold += item.quantity
+            if raised:
+                raised_lines += 1
+
+            row = {
+                "sale_id": str(sale.id),
+                "time": local_time.strftime('%H:%M'),
+                "vehicle_number": sale.vehicle_number or "",
+                "item_type": 'LABOR' if is_labor else 'PART',
+                "part_name": item.description if is_labor else item.part.name,
+                "part_number": "" if is_labor else item.part.part_number,
+                "unit_price": item.unit_price,
+                "list_price": item.list_price,
+                "price_raised": raised,
+                "quantity": item.quantity,
+                "discount": item.discount,
+                "discount_total": line_discount,
+                "total_price": line_total,
+                "unit_cost": buy_price,
+                "profit": line_profit,
+            }
+            items_list.append(row)
+            sale_items.append(row)
+
+        profit += sale_profit
+        hour["profit"] += float(sale_profit)
+        sales_list.append({
+            "id": str(sale.id),
+            "time": local_time.strftime('%H:%M'),
+            "customer_name": sale.customer_name,
+            "vehicle_number": sale.vehicle_number or "",
+            "payment_status": sale.payment_status,
+            "total_amount": sale_total,
+            "amount_paid": min(sale.amount_paid or zero, sale_total),
+            "balance_due": max(sale_total - (sale.amount_paid or zero), zero),
+            "profit": sale_profit,
+            "items": sale_items,
         })
 
-    # Chart Data (Sales by hour)
-    hours = {i: {"hour": f"{i:02d}:00", "revenue": 0, "profit": 0} for i in range(8, 20)}
-    
-    for sale in target_sales:
-        hour = sale.created_at.astimezone(timezone.get_current_timezone()).hour
-        if hour not in hours:
-            hours[hour] = {"hour": f"{hour:02d}:00", "revenue": 0, "profit": 0}
-        hours[hour]["revenue"] += sale.total_amount
-        
-    for item in target_items:
-        hour = item.sale.created_at.astimezone(timezone.get_current_timezone()).hour
-        buy_price = item.part.buy_price if item.part else 0
-        profit = (item.unit_price - item.discount - buy_price) * item.quantity
-        if hour in hours:
-            hours[hour]["profit"] += profit
+    # Compare against the average day *before* the target date: the target
+    # day itself (possibly still in progress) shouldn't drag its own baseline.
+    earlier = Sale.objects.filter(status='COMPLETED', created_at__lt=start_date)
+    first_sale = earlier.order_by('created_at').first()
+    avg_daily_revenue = None
+    percentage_change = None
+    if first_sale:
+        first_day = timezone.localtime(first_sale.created_at, tz).date()
+        days_before = max((target_date - first_day).days, 1)
+        earlier_revenue = earlier.aggregate(total=Sum('total_amount'))['total'] or zero
+        avg_daily_revenue = float(earlier_revenue) / days_before
+        if avg_daily_revenue > 0:
+            percentage_change = round((float(revenue) - avg_daily_revenue) / avg_daily_revenue * 100, 2)
+        avg_daily_revenue = round(avg_daily_revenue, 2)
 
-    chart_data = [hours[h] for h in sorted(hours.keys())]
-
-    # Calculate ROI on COGS percentage
-    roi_percentage = (float(target_profit) / float(total_investment) * 100) if total_investment > 0 else 0.0
+    roi_percentage = float(profit) / float(cogs) * 100 if cogs > 0 else 0.0
+    margin_percentage = float(profit) / float(revenue) * 100 if revenue > 0 else 0.0
+    sales_count = len(sales_list)
 
     return Response({
-        "today_revenue": target_revenue,
-        "today_profit": target_profit,
-        "today_sales_count": target_sales_count,
-        "total_investment": total_investment,
+        "date": target_date.isoformat(),
+        "is_today": target_date == timezone.localdate(),
+        "today_revenue": revenue,
+        "today_profit": profit,
+        "today_sales_count": sales_count,
+        "total_investment": cogs,
         "roi_percentage": round(roi_percentage, 2),
-        "percentage_change": round(percentage_change, 2),
-        "avg_daily_revenue": round(avg_daily_revenue, 2),
+        "margin_percentage": round(margin_percentage, 2),
+        "average_sale": round(float(revenue) / sales_count, 2) if sales_count else 0,
+        "parts_revenue": parts_revenue,
+        "labor_revenue": labor_revenue,
+        "discount_total": discount_total,
+        "collected": collected,
+        "balance_due": max(revenue - collected, zero),
+        "units_sold": units_sold,
+        "price_raised_lines": raised_lines,
+        "cancelled_count": cancelled_count,
+        "percentage_change": percentage_change,
+        "avg_daily_revenue": avg_daily_revenue,
         "items": items_list,
-        "chart_data": chart_data
+        "sales": sales_list,
+        "chart_data": [hours[h] for h in sorted(hours)],
     })
 
 def parse_vehicle_string(vehicle_str, existing_makes):

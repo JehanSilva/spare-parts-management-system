@@ -986,6 +986,16 @@ const SalesHistoryPage = () => {
                                 {getPartNumber(item.part || item.part_id)}
                               </p>
 
+                              {item.list_price != null &&
+                                originalPrice > parseFloat(item.list_price) && (
+                                  <span
+                                    title="Unit price was raised above the catalog price for this sale"
+                                    className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-bold"
+                                  >
+                                    ↑ Price raised from {formatLKR(parseFloat(item.list_price))}
+                                  </span>
+                                )}
+
                               {/* Price Calculation Display */}
                               <div className="text-xs text-gray-500 mt-0.5">
                                 {item.quantity} x
@@ -1283,6 +1293,15 @@ const SalesHistoryPage = () => {
                                             item.part || item.part_id,
                                           )}
                                         </div>
+                                        {item.list_price != null &&
+                                          originalPrice > parseFloat(item.list_price) && (
+                                            <span
+                                              title="Unit price was raised above the catalog price for this sale"
+                                              className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-bold"
+                                            >
+                                              ↑ Price raised from {formatLKR(parseFloat(item.list_price))}
+                                            </span>
+                                          )}
                                       </td>
                                       <td className="py-2 text-center">
                                         {item.quantity}

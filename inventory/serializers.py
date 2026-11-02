@@ -132,10 +132,15 @@ class SaleItemSerializer(serializers.ModelSerializer):
             'part_number',
             'quantity',
             'unit_price',
+            'list_price',
+            'unit_cost',
             'discount',      # <--- CRITICAL: Allows discount to be saved
             'total_price',   # <--- Calculated field from model
             'warranty_period_months'
         ]
+        # Snapshotted by SaleItem.save() from the part's buy price; never
+        # taken from the client.
+        read_only_fields = ['unit_cost']
 
     def get_part_name(self, obj):
         return obj.part.name if obj.part else obj.description

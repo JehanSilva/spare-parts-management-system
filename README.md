@@ -17,3 +17,7 @@ npm start
 
 # to test in the phone
 python manage.py runserver 0.0.0.0:8000
+
+## mac os
+source .venv/bin/activate
+python manage.py runserver

@@ -4,13 +4,15 @@ from django.core.mail import send_mail
 from django.utils import timezone
 from django.db.models import Sum, F
 from inventory.models import Sale, SaleItem, Part
+from inventory.views import buy_price_expr
 from django.conf import settings
 
 class Command(BaseCommand):
     help = 'Sends a daily summary of sales and low stock alerts to the admin email.'
 
     def handle(self, *args, **kwargs):
-        now = timezone.now()
+        now = timezone.localtime()
+        # Shop-local midnight (now() is UTC, whose midnight is 05:30 here).
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
         # 1. Today's Sales
@@ -20,7 +22,7 @@ class Command(BaseCommand):
         # 2. Today's Profit
         todays_items = SaleItem.objects.filter(sale__status='COMPLETED', sale__created_at__gte=start_of_day)
         total_profit = todays_items.aggregate(
-            profit=Sum((F('unit_price') - F('part__buy_price')) * F('quantity'))
+            profit=Sum((F('unit_price') - F('discount') - buy_price_expr()) * F('quantity'))
         )['profit'] or 0
 
         # 3. Stock Alerts

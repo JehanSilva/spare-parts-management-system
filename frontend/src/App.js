@@ -18,6 +18,7 @@ import SalesHistoryPage from "./pages/SalesHistoryPage";
 import LoginPage from "./pages/LoginPage";
 import EmployeePage from "./pages/EmployeePage";
 import DailyReportPage from "./pages/DailyReportPage";
+import InsightsPage from "./pages/InsightsPage";
 import OptionsPage from "./pages/OptionsPage";
 import EstimatePage from "./pages/EstimatePage";
 import EstimateListPage from "./pages/EstimateListPage";
@@ -134,6 +135,14 @@ const AppRoutes = () => (
         element={
           <PrivateRoute>
             <SalesHistoryPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/insights"
+        element={
+          <PrivateRoute>
+            <InsightsPage />
           </PrivateRoute>
         }
       />

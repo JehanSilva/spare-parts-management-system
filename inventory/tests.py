@@ -701,6 +701,113 @@ class DailyReportAPITest(TestCase):
         self.assertEqual(float(response_no_date.data['total_investment']), 200.00)
         self.assertEqual(float(response_no_date.data['roi_percentage']), 40.00)
 
+class DailyReportDetailsAPITest(TestCase):
+    """Day boundaries, payments, cancellations and the average-day baseline."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="reportuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.part = Part.objects.create(
+            name="Filter", part_number="F-1", buy_price=600, sell_price=1000, stock_qty=50,
+        )
+        self.day = timezone.localdate() - timedelta(days=3)
+
+    def _at(self, day, hour, minute=0):
+        from datetime import datetime
+        return timezone.make_aware(datetime.combine(day, datetime.min.time()).replace(hour=hour, minute=minute))
+
+    def _sale(self, when, total=1000, paid=None, payment_status='PAID', status_='COMPLETED'):
+        sale = Sale.objects.create(
+            customer_name="C", vehicle_number="CAB-1", total_amount=total, created_at=when,
+            payment_status=payment_status, amount_paid=total if paid is None else paid, status=status_,
+        )
+        SaleItem.objects.create(sale=sale, part=self.part, quantity=1, unit_price=total, discount=0)
+        return sale
+
+    def _report(self, day):
+        response = self.client.get(reverse('daily_report'), {"date": day.isoformat()})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_just_after_local_midnight_counts_on_that_day(self):
+        self._sale(self._at(self.day, 0, 30))
+        data = self._report(self.day)
+        self.assertEqual(data['today_sales_count'], 1)
+        self.assertEqual(self._report(self.day - timedelta(days=1))['today_sales_count'], 0)
+
+    def test_late_night_sale_profit_is_charted(self):
+        self._sale(self._at(self.day, 22))
+        hour = next(h for h in self._report(self.day)['chart_data'] if h['hour'] == '22:00')
+        self.assertEqual(hour['revenue'], 1000)
+        self.assertEqual(hour['profit'], 400)
+
+    def test_credit_and_cancelled_sales(self):
+        self._sale(self._at(self.day, 10), total=1000)
+        self._sale(self._at(self.day, 11), total=2000, paid=500, payment_status='PARTIAL')
+        self._sale(self._at(self.day, 12), total=5000, status_='CANCELLED')
+        data = self._report(self.day)
+        self.assertEqual(data['today_sales_count'], 2)
+        self.assertEqual(float(data['today_revenue']), 3000)
+        self.assertEqual(float(data['collected']), 1500)
+        self.assertEqual(float(data['balance_due']), 1500)
+        self.assertEqual(data['cancelled_count'], 1)
+        self.assertEqual(len(data['sales']), 2)
+        self.assertEqual(float(data['sales'][1]['balance_due']), 1500)
+
+    def test_average_day_excludes_the_report_day(self):
+        self._sale(self._at(self.day - timedelta(days=2), 10), total=1000)
+        self._sale(self._at(self.day, 10), total=3000)
+        data = self._report(self.day)
+        # 1000 over the 2 days before the report day = 500/day.
+        self.assertEqual(data['avg_daily_revenue'], 500)
+        self.assertEqual(data['percentage_change'], 500)
+
+    def test_no_baseline_without_earlier_sales(self):
+        self._sale(self._at(self.day, 10))
+        data = self._report(self.day)
+        self.assertIsNone(data['avg_daily_revenue'])
+        self.assertIsNone(data['percentage_change'])
+
+
+class SaleCostSnapshotTest(TestCase):
+    """Profit uses the cost at the time of sale, not the part's current cost."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="costuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.part = Part.objects.create(
+            name="Coil", part_number="C-1", buy_price=600, sell_price=1000, stock_qty=10,
+        )
+
+    def test_cost_is_snapshotted_and_survives_a_buy_price_change(self):
+        response = self.client.post(reverse('create_sale'), {
+            "customer_name": "A", "vehicle_number": "CAB-9",
+            "items": [
+                {"part_id": str(self.part.id), "quantity": 2, "unit_price": 1000, "discount": 0},
+                {"item_type": "LABOR", "description": "Fitting", "quantity": 1, "unit_price": 500, "discount": 0},
+            ],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        part_line = sale.items.get(item_type='PART')
+        self.assertEqual(part_line.unit_cost, 600)
+        self.assertEqual(sale.items.get(item_type='LABOR').unit_cost, 0)
+
+        # A later restock re-averages the part's cost.
+        self.part.buy_price = 900
+        self.part.save()
+
+        report = self.client.get(reverse('daily_report')).data
+        # (1000-600)*2 + 500 labour = 1300, unaffected by the new 900 cost.
+        self.assertEqual(float(report['today_profit']), 1300)
+        self.assertEqual(float(report['total_investment']), 1200)
+
+        stats = self.client.get(reverse('dashboard_stats')).data
+        self.assertEqual(float(stats['total_profit']), 1300)
+
+
 class HolidayAndCalendarAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -849,6 +956,41 @@ class SalePaymentAPITest(TestCase):
         self.assertEqual(sale.payment_status, "PAID")
         self.assertEqual(sale.amount_paid, sale.total_amount)
         self.assertIsNotNone(sale.credit_settled_at)
+
+
+class RaisedPriceSaleAPITest(TestCase):
+    """A cashier can raise a part's price for one sale; the catalog price is
+    kept on the sale line and the part itself is left unchanged."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="testuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.part = Part.objects.create(
+            name="Ignition Coil", part_number="IC-1", buy_price=9000, sell_price=12000, stock_qty=5,
+        )
+
+    def _post(self, item):
+        payload = {"customer_name": "A", "vehicle_number": "KS-6385",
+                   "items": [{"part_id": str(self.part.id), "quantity": 2, "discount": 0, **item}]}
+        return self.client.post(reverse('create_sale'), payload, format='json')
+
+    def test_raised_price_is_charged_and_list_price_recorded(self):
+        response = self._post({"unit_price": 13500, "list_price": 12000})
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sale = Sale.objects.get(pk=response.data['id'])
+        line = sale.items.get()
+        self.assertEqual(line.unit_price, 13500)
+        self.assertEqual(line.list_price, 12000)
+        self.assertEqual(sale.total_amount, 27000)
+        self.assertEqual(response.data['items'][0]['list_price'], '12000.00')
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.sell_price, 12000)
+
+    def test_list_price_falls_back_to_catalog_price(self):
+        response = self._post({"unit_price": 12000})
+        line = Sale.objects.get(pk=response.data['id']).items.get()
+        self.assertEqual(line.list_price, 12000)
 
 
 class BackdatedSaleAPITest(TestCase):

@@ -14,8 +14,9 @@ from rest_framework import status
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
 from .text import title_case_name
-from .models import Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, inspection_overall_rating, PurchaseOrder
+from .models import InterchangeGroup, Part, Vehicle, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, inspection_overall_rating, PurchaseOrder
 
 class PartMinimalAPITest(TestCase):
     def setUp(self):
@@ -530,123 +531,6 @@ class EmployeeManagementAPITest(TestCase):
         self.assertEqual(Employee.objects.count(), 1)
 
 
-class AttendanceAPITest(TestCase):
-    def setUp(self):
-        self.client = APIClient()
-        self.user = User.objects.create_user(username="testuser", password="password")
-        self.client.force_authenticate(user=self.user)
-
-        self.employee1 = Employee.objects.create(first_name="John", last_name="Doe", role="Mechanic")
-        self.employee2 = Employee.objects.create(first_name="Jane", last_name="Smith", role="Cashier")
-
-        self.sheet_url = reverse('get_attendance_sheet')
-        self.mark_url = reverse('mark_attendance_sheet')
-
-    def test_get_attendance_sheet_template(self):
-        # Get sheet for a date where no records exist - should return defaults for both employees
-        response = self.client.get(self.sheet_url, {"date": "2026-05-26"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
-        # Defaults to PRESENT
-        self.assertEqual(response.data[0]['status'], 'PRESENT')
-
-    def test_mark_attendance_sheet(self):
-        payload = {
-            "date": "2026-05-26",
-            "attendances": [
-                {"employee": self.employee1.id, "status": "PRESENT", "notes": "On time"},
-                {"employee": self.employee2.id, "status": "HALF_DAY", "notes": "Left early"}
-            ]
-        }
-        response = self.client.post(self.mark_url, payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(Attendance.objects.count(), 2)
-
-        att1 = Attendance.objects.get(employee=self.employee1, date="2026-05-26")
-        self.assertEqual(att1.status, 'PRESENT')
-        self.assertEqual(att1.notes, 'On time')
-
-
-class PayrollAPITest(TestCase):
-    def setUp(self):
-        self.client = APIClient()
-        self.user = User.objects.create_user(username="testuser", password="password")
-        self.client.force_authenticate(user=self.user)
-
-        # 1. Daily rate employee
-        self.emp_daily = Employee.objects.create(
-            first_name="John",
-            last_name="Doe",
-            role="Mechanic",
-            salary_type="DAILY",
-            salary_rate=1500.00
-        )
-        # 2. Monthly fixed employee
-        self.emp_monthly = Employee.objects.create(
-            first_name="Jane",
-            last_name="Smith",
-            role="Cashier",
-            salary_type="MONTHLY",
-            salary_rate=45000.00
-        )
-
-        # Setup attendance for month=5, year=2026
-        # John (daily) is present 3 times, half-day 1 time, absent 1 time.
-        # Present + Paid Leave count = 3 (present) * 1.0 + 1 (half) * 0.5 = 3.5 days.
-        # Base Salary should be 3.5 * 1500.00 = 5250.00.
-        Attendance.objects.create(employee=self.emp_daily, date="2026-05-01", status="PRESENT")
-        Attendance.objects.create(employee=self.emp_daily, date="2026-05-02", status="PRESENT")
-        Attendance.objects.create(employee=self.emp_daily, date="2026-05-03", status="PRESENT")
-        Attendance.objects.create(employee=self.emp_daily, date="2026-05-04", status="HALF_DAY")
-        Attendance.objects.create(employee=self.emp_daily, date="2026-05-05", status="ABSENT")
-
-        # Jane (monthly) is present 2 times.
-        # Base Salary should be 45000.00 regardless of attendance.
-        Attendance.objects.create(employee=self.emp_monthly, date="2026-05-01", status="PRESENT")
-        Attendance.objects.create(employee=self.emp_monthly, date="2026-05-02", status="PRESENT")
-
-        self.list_url = reverse('get_payroll_list')
-        self.generate_url = reverse('generate_payroll_drafts')
-
-    def test_generate_payroll_drafts(self):
-        payload = {"month": 5, "year": 2026}
-        response = self.client.post(self.generate_url, payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(Payroll.objects.count(), 2)
-
-        # John (daily) calculations
-        payroll_daily = Payroll.objects.get(employee=self.emp_daily, month=5, year=2026)
-        self.assertEqual(float(payroll_daily.days_present), 3.5) # 3.0 + 0.5
-        self.assertEqual(float(payroll_daily.base_salary), 5250.00) # 3.5 * 1500
-
-        # Jane (monthly) calculations
-        payroll_monthly = Payroll.objects.get(employee=self.emp_monthly, month=5, year=2026)
-        self.assertEqual(float(payroll_monthly.base_salary), 45000.00) # fixed rate
-
-    def test_update_and_pay_payroll(self):
-        payload = {"month": 5, "year": 2026}
-        self.client.post(self.generate_url, payload, format='json')
-
-        payroll = Payroll.objects.get(employee=self.emp_daily, month=5, year=2026)
-        update_url = reverse('update_payroll_record', kwargs={'pk': payroll.pk})
-        pay_url = reverse('pay_payroll_record', kwargs={'pk': payroll.pk})
-
-        # Update allowances/deductions
-        update_payload = {"allowances": 1000.00, "deductions": 250.00}
-        response = self.client.put(update_url, update_payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
-        payroll.refresh_from_db()
-        self.assertEqual(float(payroll.net_salary), 6000.00) # 5250 + 1000 - 250
-
-        # Pay
-        response = self.client.post(pay_url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        payroll.refresh_from_db()
-        self.assertEqual(payroll.status, 'PAID')
-        self.assertIsNotNone(payroll.paid_date)
-
-
 class DailyReportAPITest(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -768,6 +652,137 @@ class DailyReportDetailsAPITest(TestCase):
         data = self._report(self.day)
         self.assertIsNone(data['avg_daily_revenue'])
         self.assertIsNone(data['percentage_change'])
+
+
+class MonthlyReportAPITest(TestCase):
+    """Month totals, boundaries, best sellers, comparison and salaries."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="monthuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.part = Part.objects.create(name="Filter", part_number="F-1", buy_price=600, sell_price=1000, stock_qty=500)
+        self.pad = Part.objects.create(name="Brake Pad", part_number="BP-1", buy_price=300, sell_price=500, stock_qty=500)
+
+    def _at(self, y, m, d, hour=10, minute=0):
+        from datetime import datetime
+        return timezone.make_aware(datetime(y, m, d, hour, minute))
+
+    def _sale(self, when, part=None, qty=1, unit=1000, paid=None, status_='COMPLETED', labour=0):
+        part = part or self.part
+        total = unit * qty + labour
+        sale = Sale.objects.create(
+            customer_name="C", vehicle_number="CAB-1", total_amount=total, created_at=when,
+            amount_paid=total if paid is None else paid, status=status_,
+        )
+        SaleItem.objects.create(sale=sale, part=part, quantity=qty, unit_price=unit, discount=0)
+        if labour:
+            SaleItem.objects.create(sale=sale, item_type='LABOR', description="Service", quantity=1, unit_price=labour, discount=0)
+        return sale
+
+    def _report(self, month, year):
+        response = self.client.get(reverse('monthly_report'), {"month": month, "year": year})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_totals_match_the_daily_reports(self):
+        self._sale(self._at(2026, 2, 3), qty=2)
+        self._sale(self._at(2026, 2, 3, 15), part=self.pad, unit=500, paid=200, labour=1500)
+        self._sale(self._at(2026, 2, 17), qty=1)
+        data = self._report(2, 2026)
+
+        days = [self.client.get(reverse('daily_report'), {"date": d}).data for d in ("2026-02-03", "2026-02-17")]
+        for key in ("today_revenue", "today_profit", "collected", "balance_due", "total_investment", "labor_revenue"):
+            self.assertEqual(Decimal(str(data[key])), sum(Decimal(str(d[key])) for d in days), key)
+        self.assertEqual(data['today_sales_count'], 3)
+        self.assertEqual(data['days_with_sales'], 2)
+        self.assertEqual(len(data['daily']), 28)
+        self.assertEqual(data['daily'][2]['sales'], 2)
+        self.assertEqual(data['best_day']['date'], "2026-02-03")
+
+    def test_month_boundaries_are_local_and_cancelled_excluded(self):
+        self._sale(self._at(2026, 3, 1, 0, 15))        # just after local midnight on the 1st
+        self._sale(self._at(2026, 3, 31, 23, 45))      # late on the last day
+        self._sale(self._at(2026, 4, 1, 0, 5))         # next month
+        self._sale(self._at(2026, 3, 10), status_='CANCELLED')
+        data = self._report(3, 2026)
+        self.assertEqual(data['today_sales_count'], 2)
+        self.assertEqual(data['cancelled_count'], 1)
+        self.assertEqual(data['daily'][0]['sales'], 1)
+        self.assertEqual(data['daily'][30]['sales'], 1)
+
+    def test_top_parts_by_quantity_without_labour(self):
+        self._sale(self._at(2026, 2, 5), part=self.pad, qty=5, unit=500, labour=2000)
+        self._sale(self._at(2026, 2, 6), qty=2)
+        data = self._report(2, 2026)
+        self.assertEqual([p['part_number'] for p in data['top_parts']], ["BP-1", "F-1"])
+        self.assertEqual(data['top_parts'][0]['quantity'], 5)
+        self.assertEqual(Decimal(str(data['top_parts'][0]['profit'])), Decimal('1000'))
+        self.assertEqual(Decimal(str(data['labor_revenue'])), Decimal('2000'))
+
+    def test_previous_month_comparison(self):
+        from datetime import date
+        from unittest import mock
+        self._sale(self._at(2026, 2, 5), unit=1000)
+        self._sale(self._at(2026, 2, 20), unit=4000)    # after the 10th: left out of a partial comparison
+        self._sale(self._at(2026, 3, 4), unit=1500)
+        with mock.patch('django.utils.timezone.localdate', return_value=date(2026, 3, 10)):
+            data = self._report(3, 2026)
+        prev = data['previous']
+        self.assertTrue(data['is_current_month'])
+        self.assertEqual((prev['month'], prev['through_day'], prev['partial']), (2, 10, True))
+        self.assertEqual(Decimal(str(prev['revenue'])), Decimal('1000'))
+        self.assertEqual(prev['revenue_change'], 50.0)
+
+        full = self._report(3, 2026)
+        self.assertFalse(full['previous']['partial'])
+        self.assertEqual(Decimal(str(full['previous']['revenue'])), Decimal('5000'))
+
+        self.assertIsNone(self._report(2, 2026)['previous']['revenue'])
+        self.assertIsNone(self._report(2, 2026)['previous']['revenue_change'])
+
+    def test_salaries_from_saved_payroll(self):
+        from datetime import date
+        self._sale(self._at(2026, 2, 5), qty=100)        # profit 40,000
+        emp = Employee.objects.create(first_name="A", last_name="B", salary_type="MONTHLY", salary_rate=30000,
+                                      date_joined=date(2025, 1, 1), working_days=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
+        Payroll.objects.create(employee=emp, month=2, year=2026, earnings=30000, allowances=2000, deductions=500,
+                               advances=10000, epf_employee=2400, epf_employer=3600, etf_employer=900, status='PAID')
+        data = self._report(2, 2026)
+        # 30000 + 2000 - 500 gross + 4500 employer; the advance isn't a cost.
+        self.assertEqual(Decimal(str(data['salary_cost'])), Decimal('36000'))
+        self.assertEqual(data['salary_source'], 'payroll')
+        self.assertEqual(data['salaries_paid_count'], 1)
+        self.assertEqual(Decimal(str(data['profit_after_salaries'])), Decimal('4000'))
+        self.assertEqual(data['profit_after_salaries_margin'], 4.0)    # 4000 of 100,000 revenue
+
+    def test_salaries_estimated_without_saving_and_mixed(self):
+        from datetime import date
+        weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        Employee.objects.create(first_name="Day", last_name="Worker", salary_type="DAILY", salary_rate=1000,
+                                        date_joined=date(2025, 1, 1), working_days=weekdays)
+        data = self._report(2, 2026)
+        self.assertEqual(data['salary_source'], 'estimate')
+        self.assertEqual(Decimal(str(data['salary_cost'])), Decimal('20000'))   # 20 weekdays in Feb 2026
+        self.assertEqual(Decimal(str(data['profit_after_salaries'])), Decimal('-20000'))
+        self.assertFalse(Payroll.objects.exists())
+
+        other = Employee.objects.create(first_name="Paid", last_name="Monthly", salary_type="MONTHLY", salary_rate=50000,
+                                        date_joined=date(2025, 1, 1), working_days=weekdays)
+        Payroll.objects.create(employee=other, month=2, year=2026, earnings=50000)
+        data = self._report(2, 2026)
+        self.assertEqual(data['salary_source'], 'mixed')
+        self.assertEqual({r['source'] for r in data['salary_breakdown']}, {'ESTIMATED', 'CALCULATED'})
+        self.assertEqual(Decimal(str(data['salary_cost'])), Decimal('70000'))
+        # Someone who joined after the month isn't counted.
+        Employee.objects.create(first_name="New", last_name="Hire", salary_type="DAILY", salary_rate=1000,
+                                date_joined=date(2026, 5, 1), working_days=weekdays)
+        self.assertEqual(len(self._report(2, 2026)['salary_breakdown']), 2)
+        self.assertEqual(Payroll.objects.count(), 1)
+
+    def test_bad_month(self):
+        response = self.client.get(reverse('monthly_report'), {"month": 13, "year": 2026})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class SaleCostSnapshotTest(TestCase):
@@ -3600,3 +3615,248 @@ class PurchaseOrderAPITest(TestCase):
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0]['status'], PurchaseOrder.STATUS_DRAFT)
 
+
+
+class CompatiblePartsAPITest(TestCase):
+    """Interchangeable-part groups: link, join, merge, unlink, delete."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="compatuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.a, self.b, self.c, self.d = [
+            Part.objects.create(name=f"Filter {x}", part_number=f"F-{x}", buy_price=100, sell_price=200, stock_qty=1)
+            for x in "ABCD"
+        ]
+
+    def _link(self, part, other):
+        return self.client.post(reverse('link_compatible_part', args=[part.pk]), {"part_id": str(other.pk)}, format='json')
+
+    def _unlink(self, part):
+        return self.client.post(reverse('unlink_compatible_part', args=[part.pk]))
+
+    def _group(self, part):
+        part.refresh_from_db()
+        return part.interchange_group_id
+
+    def test_linking_two_parts_creates_a_group(self):
+        response = self._link(self.a, self.b)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(self._group(self.a))
+        self.assertEqual(self._group(self.a), self._group(self.b))
+        self.assertEqual([p['part_number'] for p in response.data['compatible']], ["F-B"])
+
+    def test_joining_an_existing_group_links_to_every_member(self):
+        self._link(self.b, self.c)
+        response = self._link(self.a, self.b)
+        self.assertEqual(self._group(self.a), self._group(self.c))
+        self.assertEqual(sorted(p['part_number'] for p in response.data['compatible']), ["F-B", "F-C"])
+
+    def test_linking_two_groups_merges_them(self):
+        self._link(self.a, self.b)
+        self._link(self.c, self.d)
+        self._link(self.a, self.c)
+        groups = {self._group(p) for p in (self.a, self.b, self.c, self.d)}
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(InterchangeGroup.objects.count(), 1)
+
+    def test_unlinking_down_to_one_part_dissolves_the_group(self):
+        self._link(self.a, self.b)
+        self._link(self.a, self.c)
+        self._unlink(self.c)
+        self.assertIsNone(self._group(self.c))
+        self.assertEqual(self._group(self.a), self._group(self.b))
+        self._unlink(self.b)
+        self.assertIsNone(self._group(self.a))
+        self.assertEqual(InterchangeGroup.objects.count(), 0)
+
+    def test_deleting_a_part_dissolves_a_two_part_group(self):
+        self._link(self.a, self.b)
+        self.client.delete(reverse('delete_part', args=[self.b.pk]))
+        self.assertIsNone(self._group(self.a))
+        self.assertEqual(InterchangeGroup.objects.count(), 0)
+
+    def test_cannot_link_a_part_to_itself(self):
+        self.assertEqual(self._link(self.a, self.a).status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_editing_a_part_keeps_its_links(self):
+        self._link(self.a, self.b)
+        group = self._group(self.a)
+        response = self.client.put(reverse('update_part', args=[self.a.pk]), {
+            "name": "Filter A2", "part_number": "F-A", "buy_price": 100, "sell_price": 250,
+            "stock_qty": 1, "interchange_group": None,
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._group(self.a), group)
+        self.assertEqual(response.data['interchange_group'], group)
+
+
+class PayrollCalculationTest(TestCase):
+    """inventory/payroll.py rules, on February 2026 (20 weekdays, starts Sunday)."""
+
+    def setUp(self):
+        from datetime import date
+        self.d = lambda day: date(2026, 2, day)
+        self.today = date(2026, 3, 1)
+        self.weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
+        # Poya on Mon 2nd (paid for daily staff), shop closed Tue 3rd (unpaid).
+        self.holidays = {
+            self.d(2): Holiday.objects.create(date=self.d(2), name="Navam Poya", holiday_type="POYA", is_paid=True),
+            self.d(3): Holiday.objects.create(date=self.d(3), name="Closed", holiday_type="SHOP_CLOSED", is_paid=False),
+        }
+
+    def _emp(self, **kw):
+        from datetime import date
+        defaults = dict(first_name="E", last_name="X", role="Mechanic", working_days=self.weekdays,
+                        date_joined=date(2025, 1, 1), salary_type="DAILY", salary_rate=1000)
+        defaults.update(kw)
+        return Employee.objects.create(**defaults)
+
+    def _mark(self, emp, day, status_, paid=False, informed=None):
+        return Attendance.objects.create(employee=emp, date=self.d(day), status=status_, is_paid=paid, informed=informed)
+
+    def _calc(self, emp, holidays=None):
+        from .payroll import calculate_payroll
+        marks = {a.date: a for a in emp.attendances.all()}
+        return calculate_payroll(emp, 2026, 2, marks, self.holidays if holidays is None else holidays, today=self.today)
+
+    def test_daily_paid_month(self):
+        emp = self._emp()
+        self._mark(emp, 4, "HALF_DAY", paid=False)
+        self._mark(emp, 5, "ABSENT", paid=True, informed=True)
+        self._mark(emp, 6, "SHORT_LEAVE", paid=False, informed=False)
+        self._mark(emp, 7, "PRESENT")  # Saturday, a day off -> extra day
+        r = self._calc(emp)
+        self.assertEqual(r['scheduled_days'], 18)
+        self.assertEqual(r['holidays'], 2)
+        self.assertEqual(r['paid_holidays'], 1)
+        self.assertEqual(r['days_worked'], Decimal('16.25'))   # 15 unmarked + 0.5 + 0.75
+        self.assertEqual(r['paid_leave_days'], Decimal('1'))
+        self.assertEqual(r['unpaid_leave_days'], Decimal('0.75'))
+        self.assertEqual(r['uninformed_absences'], Decimal('0.25'))
+        self.assertEqual(r['extra_days'], Decimal('1'))
+        self.assertEqual(r['unmarked_days'], 15)
+        # 1000 x (16.25 worked + 1 paid leave + 1 extra + 1 paid Poya)
+        self.assertEqual(r['earnings'], Decimal('19250.00'))
+
+    def test_monthly_full_month_is_exactly_the_salary(self):
+        emp = self._emp(salary_type="MONTHLY", salary_rate=40000)
+        self.assertEqual(self._calc(emp)['earnings'], Decimal('40000.00'))
+
+    def test_monthly_unpaid_leave_and_extra_day(self):
+        emp = self._emp(salary_type="MONTHLY", salary_rate=40000)
+        self._mark(emp, 4, "ABSENT", paid=False)
+        self._mark(emp, 5, "SHORT_LEAVE", paid=False)
+        r = self._calc(emp)
+        self.assertEqual(r['day_value'], Decimal('2222.22'))     # 40000 / 18
+        self.assertEqual(r['earnings'], Decimal('37222.22'))     # minus 1.25 days
+        self._mark(emp, 7, "PRESENT")                            # worked a Saturday
+        self.assertEqual(self._calc(emp)['earnings'], Decimal('39444.44'))
+
+    def test_monthly_holidays_and_paid_leave_cost_nothing(self):
+        emp = self._emp(salary_type="MONTHLY", salary_rate=40000)
+        self._mark(emp, 4, "ABSENT", paid=True)
+        self.assertEqual(self._calc(emp)['earnings'], Decimal('40000.00'))
+
+    def test_monthly_joined_mid_month_is_prorated(self):
+        from datetime import date
+        emp = self._emp(salary_type="MONTHLY", salary_rate=40000, date_joined=date(2026, 2, 16))
+        r = self._calc(emp, holidays={})
+        self.assertEqual(r['scheduled_days'], 10)
+        self.assertEqual(r['earnings'], Decimal('20000.00'))     # 10 of 20 days
+
+    def test_epf_only_for_registered(self):
+        emp = self._emp(epf_registered=True)
+        r = self._calc(emp, holidays={})
+        self.assertEqual(r['earnings'], Decimal('20000.00'))
+        self.assertEqual(r['epf_employee'], Decimal('1600.00'))
+        self.assertEqual(r['epf_employer'], Decimal('2400.00'))
+        self.assertEqual(r['etf_employer'], Decimal('600.00'))
+        self.assertEqual(self._calc(self._emp(), holidays={})['epf_employee'], Decimal('0.00'))
+
+
+class AttendanceAPITest(TestCase):
+    def setUp(self):
+        from datetime import date
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="attuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.john = Employee.objects.create(first_name="John", last_name="Doe", role="Mechanic", date_joined=date(2025, 1, 1))
+        self.jane = Employee.objects.create(first_name="Jane", last_name="Smith", role="Cashier", date_joined=date(2025, 1, 1),
+                                            working_days=["Monday"])
+
+    def _mark(self, *rows, day="2026-05-26"):
+        return self.client.post(reverse('mark_attendance_sheet'), {"date": day, "attendances": list(rows)}, format='json')
+
+    def test_sheet_lists_everyone_with_no_marks_yet(self):
+        Holiday.objects.create(date="2026-05-26", name="Test Poya", holiday_type="POYA")
+        data = self.client.get(reverse('get_attendance_sheet'), {"date": "2026-05-26"}).data
+        self.assertEqual(data['holiday']['name'], "Test Poya")
+        rows = {r['employee_name']: r for r in data['rows']}
+        self.assertIsNone(rows["John Doe"]['attendance'])
+        self.assertTrue(rows["John Doe"]['is_working_day'])     # Tuesday
+        self.assertFalse(rows["Jane Smith"]['is_working_day'])  # only Mondays
+
+    def test_marking_leave_details_and_clearing(self):
+        response = self._mark(
+            {"employee": self.john.id, "status": "ABSENT", "leave_reason": "SICK", "informed": True, "is_paid": True, "notes": "Fever"},
+            {"employee": self.jane.id, "status": "PRESENT", "leave_reason": "SICK", "is_paid": True},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        john = Attendance.objects.get(employee=self.john)
+        self.assertEqual((john.status, john.leave_reason, john.informed, john.is_paid, john.notes),
+                         ("ABSENT", "SICK", True, True, "Fever"))
+        jane = Attendance.objects.get(employee=self.jane)
+        self.assertEqual((jane.leave_reason, jane.informed, jane.is_paid), ("", None, False))  # present clears leave
+
+        self._mark({"employee": self.john.id, "clear": True})
+        self.assertFalse(Attendance.objects.filter(employee=self.john).exists())
+
+    def test_rejects_unknown_status(self):
+        self.assertEqual(self._mark({"employee": self.john.id, "status": "PAID_LEAVE"}).status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_month_view(self):
+        self._mark({"employee": self.john.id, "status": "HALF_DAY", "is_paid": False})
+        data = self.client.get(reverse('get_attendance_month'), {"month": 5, "year": 2026}).data
+        self.assertEqual(len(data['days']), 31)
+        john = next(e for e in data['employees'] if e['id'] == self.john.id)
+        self.assertEqual(john['records']['2026-05-26']['status'], "HALF_DAY")
+
+
+class PayrollAPITest(TestCase):
+    def setUp(self):
+        from datetime import date
+        self.client = APIClient()
+        self.user = User.objects.create_user(username="payuser", password="password")
+        self.client.force_authenticate(user=self.user)
+        self.emp = Employee.objects.create(first_name="John", last_name="Doe", role="Mechanic", salary_type="DAILY",
+                                           salary_rate=1000, date_joined=date(2025, 1, 1),
+                                           working_days=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
+        self.generate = lambda: self.client.post(reverse('generate_payroll_drafts'), {"month": 2, "year": 2026}, format='json')
+
+    def test_generate_keeps_manual_amounts_and_skips_paid(self):
+        self.assertEqual(self.generate().status_code, status.HTTP_200_OK)
+        payroll = Payroll.objects.get(employee=self.emp, month=2, year=2026)
+        self.assertEqual(payroll.earnings, Decimal('20000.00'))
+
+        response = self.client.put(reverse('update_payroll_record', args=[payroll.pk]),
+                                   {"allowances": 1000, "advances": 3000, "deductions": 500, "notes": "Bonus"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payroll.refresh_from_db()
+        self.assertEqual(payroll.net_salary, Decimal('17500.00'))   # 20000 + 1000 - 3000 - 500
+
+        # New absence, recalculate: amounts typed in survive.
+        Attendance.objects.create(employee=self.emp, date="2026-02-02", status="ABSENT", is_paid=False)
+        self.generate()
+        payroll.refresh_from_db()
+        self.assertEqual(payroll.earnings, Decimal('19000.00'))
+        self.assertEqual((payroll.allowances, payroll.advances, payroll.notes), (Decimal('1000.00'), Decimal('3000.00'), "Bonus"))
+
+        self.client.post(reverse('pay_payroll_record', args=[payroll.pk]))
+        Attendance.objects.create(employee=self.emp, date="2026-02-03", status="ABSENT", is_paid=False)
+        self.generate()
+        payroll.refresh_from_db()
+        self.assertEqual(payroll.status, 'PAID')
+        self.assertEqual(payroll.earnings, Decimal('19000.00'))     # frozen once paid
+        self.assertEqual(self.client.put(reverse('update_payroll_record', args=[payroll.pk]),
+                                         {"allowances": 5}, format='json').status_code, status.HTTP_400_BAD_REQUEST)

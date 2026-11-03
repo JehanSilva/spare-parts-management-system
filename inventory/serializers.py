@@ -82,6 +82,9 @@ class PartSerializer(serializers.ModelSerializer):
     class Meta:
         model = Part
         fields = '__all__'
+        # Links are changed only through the link/unlink endpoints, so the
+        # Edit Part form (a full update) can never wipe them.
+        read_only_fields = ['interchange_group']
 
     def to_representation(self, instance):
         response = super().to_representation(instance)

@@ -10,7 +10,7 @@
  *  - Auto-refreshing every 5 minutes in the background
  *  - Refetching when the browser tab regains focus (if data > 2 min stale)
  */
-import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { fetchParts } from "../services/api";
 
@@ -104,8 +104,60 @@ export const PartsProvider = ({ children }) => {
     doFetch(false);
   }, [doFetch]);
 
+  // Interchangeable parts, grouped by interchange_group id.
+  const partsByGroup = useMemo(() => {
+    const map = new Map();
+    allParts.forEach((p) => {
+      if (p.interchange_group == null) return;
+      if (!map.has(p.interchange_group)) map.set(p.interchange_group, []);
+      map.get(p.interchange_group).push(p);
+    });
+    return map;
+  }, [allParts]);
+
+  /**
+   * The other parts that can stand in for this one (same interchange group),
+   * in-stock first, then by name. Pass a groupId to override a stale
+   * snapshot of the part (e.g. straight after linking).
+   */
+  const alternativesFor = useCallback(
+    (part, groupId) => {
+      const group = groupId !== undefined ? groupId : part?.interchange_group;
+      if (!part || group == null) return [];
+      return (partsByGroup.get(group) || [])
+        .filter((p) => p.id !== part.id)
+        .sort((a, b) => (b.stock_qty > 0) - (a.stock_qty > 0) || a.name.localeCompare(b.name));
+    },
+    [partsByGroup]
+  );
+
+  /**
+   * Search results with each match's compatible parts slotted in right after
+   * it. Returns entries { part, compatibleWith } — compatibleWith is the
+   * matched part a row was pulled in for (null for a direct match). A part
+   * already in the results, or already added, isn't repeated.
+   */
+  const withCompatibleParts = useCallback(
+    (results) => {
+      const seen = new Set(results.map((p) => p.id));
+      const out = [];
+      results.forEach((match) => {
+        out.push({ part: match, compatibleWith: null });
+        alternativesFor(match).forEach((alt) => {
+          if (seen.has(alt.id)) return;
+          seen.add(alt.id);
+          out.push({ part: alt, compatibleWith: match });
+        });
+      });
+      return out;
+    },
+    [alternativesFor]
+  );
+
   return (
-    <PartsContext.Provider value={{ allParts, partsLoading, invalidateParts, refreshParts }}>
+    <PartsContext.Provider
+      value={{ allParts, partsLoading, invalidateParts, refreshParts, alternativesFor, withCompatibleParts }}
+    >
       {children}
     </PartsContext.Provider>
   );

@@ -43,6 +43,7 @@ import {
   ArrowUpRight,
   X,
   User,
+  Link2,
 } from "lucide-react";
 
 // Plates are compared without spaces or dashes, so "KT8" matches "KT-8352".
@@ -251,7 +252,7 @@ const cartCustomerFields = (customer) => ({
 });
 
 // --- MEMOIZED PRODUCT ITEM COMPONENT ---
-const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => {
+const ProductItem = memo(({ part, cartQty = 0, alternativeCount = 0, compatibleWith = null, onAddToCart, onShowDetails }) => {
   const [imgLoaded, setImgLoaded] = useState(false);
   const pressTimer = useRef(null);
   const isLongPress = useRef(false);
@@ -290,7 +291,7 @@ const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => 
       onTouchStart={startPress}
       onTouchEnd={endPress}
       onTouchMove={endPress}
-      className={`bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation border ${cartQty > 0 ? "border-red-300" : "border-gray-200"
+      className={`bg-white rounded-xl shadow-sm hover:shadow-lg transition-all duration-200 flex flex-col relative group cursor-pointer active:scale-95 touch-manipulation border ${cartQty > 0 ? "border-red-300" : compatibleWith ? "border-violet-300 ring-1 ring-violet-200" : "border-gray-200"
         }`}
     >
       {/* Notification-style count of how many are already in the cart. Sits
@@ -325,6 +326,25 @@ const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => 
           <div className="w-full h-full flex items-center justify-center text-gray-300 bg-gray-50">
             <Package size={24} />
           </div>
+        )}
+        {/* Pulled into the search results as a compatible part. */}
+        {compatibleWith && (
+          <span
+            title={`Compatible with ${compatibleWith.name} (${compatibleWith.part_number})`}
+            className="absolute top-1.5 left-1.5 max-w-[calc(100%-0.75rem)] bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm"
+          >
+            <Link2 size={10} className="shrink-0" />
+            <span className="truncate">Compatible with {compatibleWith.part_number}</span>
+          </span>
+        )}
+        {/* Out of stock, but a linked compatible part is on the shelf. */}
+        {!compatibleWith && part.stock_qty <= 0 && alternativeCount > 0 && (
+          <span
+            title="Tap to see compatible parts that are in stock"
+            className="absolute top-1.5 left-1.5 bg-violet-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm"
+          >
+            <Link2 size={10} /> {alternativeCount} alternative{alternativeCount === 1 ? "" : "s"}
+          </span>
         )}
         <div className="absolute bottom-1.5 left-1.5">
           {part.stock_qty <= 0 ? (
@@ -380,6 +400,98 @@ const ProductItem = memo(({ part, cartQty = 0, onAddToCart, onShowDetails }) => 
     </div>
   );
 });
+
+// Shown when an out-of-stock part is tapped and it has linked compatible
+// parts: pick one to add instead. Out-of-stock alternatives are listed but
+// can't be picked.
+const AlternativesModal = ({ part, alternatives, cartQtyByPartId, onPick, onShowDetails, onClose }) => {
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="p-4 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-red-600 flex items-center gap-1">
+              <AlertTriangle size={12} /> Out of stock
+            </p>
+            <h3 className="font-bold text-gray-900 leading-snug truncate">{part.name}</h3>
+            <p className="text-xs text-gray-500 font-mono">{part.part_number}</p>
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700 rounded-full hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <p className="px-4 pt-3 text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+          <Link2 size={13} className="text-violet-600" /> Compatible parts — tap one to add it instead
+        </p>
+
+        <div className="p-3 space-y-2 overflow-y-auto">
+          {alternatives.map((alt) => {
+            const inCart = cartQtyByPartId[alt.id] || 0;
+            const available = alt.stock_qty - inCart;
+            const canAdd = available > 0;
+            return (
+              <div
+                key={alt.id}
+                className={`flex items-center gap-3 p-2.5 rounded-xl border transition-colors ${canAdd ? "border-gray-200 hover:border-violet-400 hover:bg-violet-50/50" : "border-gray-100 bg-gray-50 opacity-60"
+                  }`}
+              >
+                <button
+                  type="button"
+                  disabled={!canAdd}
+                  onClick={() => onPick(alt)}
+                  className="flex items-center gap-3 flex-1 min-w-0 text-left disabled:cursor-not-allowed"
+                >
+                  {alt.image ? (
+                    <img src={alt.image} alt="" className="w-12 h-12 rounded-lg object-cover border border-gray-100 shrink-0" />
+                  ) : (
+                    <span className="w-12 h-12 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-300 shrink-0">
+                      <Package size={18} />
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-bold text-gray-800 truncate">{alt.name}</span>
+                    <span className="block text-[11px] text-gray-500 font-mono truncate">
+                      {alt.part_number}
+                      {alt.brand ? ` · ${alt.brand}` : ""}
+                    </span>
+                    <span
+                      className={`inline-block mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full ${canAdd ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
+                        }`}
+                    >
+                      {alt.stock_qty <= 0
+                        ? "Out of stock"
+                        : canAdd
+                          ? `${available} available${inCart ? ` (${inCart} in cart)` : ""}`
+                          : "All in cart"}
+                    </span>
+                  </span>
+                  <span className="text-sm font-black text-red-600 shrink-0">
+                    {parseFloat(alt.sell_price).toLocaleString()}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onShowDetails(alt)}
+                  className="text-[10px] font-semibold text-gray-400 hover:text-gray-700 underline shrink-0"
+                >
+                  Details
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // --- VEHICLE / CUSTOMER LOOKUP MODAL ---
 const VehicleCustomerModal = ({
@@ -1321,10 +1433,12 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
 const POSPage = () => {
   const navigate = useNavigate();
   // ── Parts cache ──────────────────────────────────────────────────────────
-  const { allParts, partsLoading, invalidateParts } = useParts();
+  const { allParts, partsLoading, invalidateParts, alternativesFor, withCompatibleParts } = useParts();
   // Billing method (Home → Options): "Receipt" or "Invoice".
   const { documentLabel } = useSettings();
   const [selectedPart, setSelectedPart] = useState(null);
+  // Out-of-stock part whose compatible alternatives are being offered.
+  const [alternativesPart, setAlternativesPart] = useState(null);
 
   const [carts, setCarts] = useState([]);
   const [activeCartId, setActiveCartId] = useState("");
@@ -2050,6 +2164,19 @@ const POSPage = () => {
     setCartTab("PARTS");
   }, [activeCartId]);
 
+  // Tapping a tile: an out-of-stock part with an in-stock compatible part
+  // offers the alternatives instead of just the "Out of Stock" error.
+  const handleTileClick = useCallback(
+    (part) => {
+      if (part.stock_qty < 1 && alternativesFor(part).some((a) => a.stock_qty > 0)) {
+        setAlternativesPart(part);
+        return;
+      }
+      addToCart(part);
+    },
+    [alternativesFor, addToCart]
+  );
+
   // 3.5 Add (or edit) a Repair/Labor line item — priced by hand, not tied to
   // the Part catalog or stock. Shaped with the same field names (name/
   // sell_price/quantity/discountAmount/discountPercentInput) a Part-spread
@@ -2520,9 +2647,19 @@ const POSPage = () => {
   };
 
   // --- MAIN LAYOUT DATA ---
+  // While searching, each match is followed by its compatible parts, shown
+  // as such on the tile.
+  const partEntries = useMemo(
+    () =>
+      searchTerm.trim()
+        ? withCompatibleParts(filteredParts)
+        : filteredParts.map((part) => ({ part, compatibleWith: null })),
+    [filteredParts, searchTerm, withCompatibleParts]
+  );
+
   const visibleParts = useMemo(() => {
-    return filteredParts.slice(0, visibleCount);
-  }, [filteredParts, visibleCount]);
+    return partEntries.slice(0, visibleCount);
+  }, [partEntries, visibleCount]);
 
   // --- MAIN LAYOUT & SUCCESS SCREEN ---
   const successDue = saleSuccess
@@ -2755,6 +2892,22 @@ const POSPage = () => {
   ) : (
     <div className="flex flex-col h-[calc(100vh-64px)] bg-gray-100 overflow-hidden relative">
       <PartDetailsModal part={selectedPart} onClose={() => setSelectedPart(null)} />
+      {alternativesPart && (
+        <AlternativesModal
+          part={alternativesPart}
+          alternatives={alternativesFor(alternativesPart)}
+          cartQtyByPartId={cartQtyByPartId}
+          onPick={(alt) => {
+            addToCart(alt);
+            setAlternativesPart(null);
+          }}
+          onShowDetails={(alt) => {
+            setAlternativesPart(null);
+            setSelectedPart(alt);
+          }}
+          onClose={() => setAlternativesPart(null)}
+        />
+      )}
       {alertInfo.message && (
         <AlertComponent
           type={alertInfo.type}
@@ -3007,12 +3160,18 @@ const POSPage = () => {
                   </div>
                 ))
               ) : (
-                visibleParts.map((part) => (
+                visibleParts.map(({ part, compatibleWith }) => (
                   <ProductItem
                     key={part.id}
                     part={part}
+                    compatibleWith={compatibleWith}
                     cartQty={cartQtyByPartId[part.id] || 0}
-                    onAddToCart={addToCart}
+                    alternativeCount={
+                      part.stock_qty <= 0
+                        ? alternativesFor(part).filter((a) => a.stock_qty > 0).length
+                        : 0
+                    }
+                    onAddToCart={handleTileClick}
                     onShowDetails={setSelectedPart}
                   />
                 ))
@@ -3020,10 +3179,10 @@ const POSPage = () => {
             </div>
 
             {/* Load More Button */}
-            {visibleCount < filteredParts.length && (
+            {visibleCount < partEntries.length && (
               <div className="mt-6 flex flex-col items-center justify-center pb-8">
                 <p className="text-xs text-gray-400 mb-2 font-medium">
-                  Showing {visibleCount} of {filteredParts.length} parts
+                  Showing {visibleCount} of {partEntries.length} parts
                 </p>
                 <button
                   onClick={() => setVisibleCount((prev) => prev + 20)}
@@ -3031,7 +3190,7 @@ const POSPage = () => {
                 >
                   <span>Load More Parts</span>
                   <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-extrabold group-hover:bg-red-200 transition-colors">
-                    +{filteredParts.length - visibleCount}
+                    +{partEntries.length - visibleCount}
                   </span>
                   <ChevronUp className="rotate-180 w-4 h-4" />
                 </button>

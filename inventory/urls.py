@@ -27,6 +27,8 @@ urlpatterns = [
     path('parts/bulk-upload/cancel/', views.cancel_bulk_upload, name='cancel_bulk_upload'),
     path('parts/<uuid:pk>/update/', views.update_part, name='update_part'),
     path('parts/<uuid:pk>/delete/', views.delete_part, name='delete_part'),
+    path('parts/<uuid:pk>/compatible/link/', views.link_compatible_part, name='link_compatible_part'),
+    path('parts/<uuid:pk>/compatible/unlink/', views.unlink_compatible_part, name='unlink_compatible_part'),
     path('parts/<uuid:pk>/restock/', views.restock_part, name='restock_part'),
     path('parts/<uuid:pk>/restock-history/', views.get_restock_history, name='get_restock_history'),
     path('parts/<uuid:part_pk>/restock/<int:record_pk>/return/', views.return_restock_record, name='return_restock_record'),
@@ -101,6 +103,7 @@ urlpatterns = [
     
     # Daily Report
     path('reports/daily/', views.daily_report, name='daily_report'),
+    path('reports/monthly/', views.monthly_report, name='monthly_report'),
 
     # Active Carts (POS Sync)
     path('active-carts/', views.get_active_carts, name='get_active_carts'),
@@ -116,10 +119,12 @@ urlpatterns = [
     # Attendance
     path('attendance/', views.get_attendance_sheet, name='get_attendance_sheet'),
     path('attendance/mark/', views.mark_attendance_sheet, name='mark_attendance_sheet'),
+    path('attendance/month/', views.get_attendance_month, name='get_attendance_month'),
 
     # Holidays
     path('holidays/', views.get_holidays, name='get_holidays'),
     path('holidays/add/', views.add_holiday, name='add_holiday'),
+    path('holidays/<int:pk>/update/', views.update_holiday, name='update_holiday'),
     path('holidays/<int:pk>/delete/', views.delete_holiday, name='delete_holiday'),
 
     # Payroll

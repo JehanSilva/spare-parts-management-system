@@ -402,6 +402,33 @@
     padding: 10px !important;
   }
 
+  /* --- MONTHLY REPORT --- */
+  .print-salary-section {
+    page-break-inside: avoid !important;
+    border: 1.5px solid #d1d5db !important;
+    border-radius: 8px !important;
+    padding: 12px 16px !important;
+  }
+
+  /* 28-31 day rows: keep them compact, and print the totals once at the
+     end rather than repeating them on every page. */
+  .print-month-table table {
+    font-size: 9pt !important;
+  }
+
+  .print-month-table th,
+  .print-month-table td {
+    padding: 4px 8px !important;
+  }
+
+  .print-month-table tfoot {
+    display: table-row-group !important;
+  }
+
+  .print-month-table tfoot td {
+    padding: 6px 8px !important;
+  }
+
   /* Hide mobile labels in print */
   .mobile-label {
     display: none !important;

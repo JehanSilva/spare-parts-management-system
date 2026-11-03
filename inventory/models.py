@@ -51,6 +51,20 @@ class Vehicle(models.Model):
     def __str__(self):
         return f"{self.make} {self.model} ({self.year or 'Unknown'})"
 
+class InterchangeGroup(models.Model):
+    """
+    A set of parts that can stand in for one another (e.g. the same OEM item
+    from different brands). Every part in the group is an alternative for
+    every other one, so linking A to B also makes A an alternative for
+    everything already linked to B. Managed by the link/unlink endpoints;
+    a group never keeps fewer than two parts.
+    """
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Interchange group #{self.pk}"
+
+
 class Part(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
@@ -75,6 +89,11 @@ class Part(models.Model):
     image = models.ImageField(upload_to='parts/', blank=True, null=True)
     
     compatible_vehicles = models.ManyToManyField(Vehicle, related_name='compatible_parts', blank=True)
+
+    # Interchangeable parts (not vehicle fitment — see compatible_vehicles).
+    interchange_group = models.ForeignKey(
+        InterchangeGroup, on_delete=models.SET_NULL, null=True, blank=True, related_name='parts'
+    )
 
     def save(self, *args, **kwargs):
         # Every write path — the Add/Edit form, Excel import, conflict
@@ -453,6 +472,10 @@ class Employee(models.Model):
     salary_type = models.CharField(max_length=10, choices=SALARY_TYPE_CHOICES, default='DAILY')
     salary_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text="Daily rate or Monthly salary depending on salary_type")
     working_days = models.JSONField(default=default_working_days, blank=True, null=True, help_text="List of working days of the week")
+    # EPF/ETF: only registered employees have the 8% EPF deducted and the
+    # employer's 12% EPF + 3% ETF worked out on their payroll.
+    epf_registered = models.BooleanField(default=False)
+    epf_number = models.CharField(max_length=30, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -461,22 +484,55 @@ class Employee(models.Model):
         return f"{self.first_name} {self.last_name} ({self.role})"
 
 class Holiday(models.Model):
+    TYPE_CHOICES = [
+        ('POYA', 'Poya Day'),
+        ('PUBLIC', 'Public Holiday'),
+        ('MERCANTILE', 'Mercantile Holiday'),
+        ('SHOP_CLOSED', 'Shop Closed'),
+        ('OTHER', 'Other'),
+    ]
     date = models.DateField(unique=True)
     name = models.CharField(max_length=100, blank=True)
+    holiday_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='POYA')
+    # Whether daily-paid staff get their day rate for this holiday. Monthly
+    # staff are never cut for a holiday either way, and a holiday is never an
+    # absence for anyone.
+    is_paid = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.date} - {self.name or 'Holiday'}"
 
 class Attendance(models.Model):
+    # How much of the day each status is worked; the rest is leave, paid or
+    # unpaid per is_paid. Kept in step with inventory/payroll.py.
     STATUS_CHOICES = [
         ('PRESENT', 'Present'),
         ('HALF_DAY', 'Half Day'),
+        ('SHORT_LEAVE', 'Short Leave'),
         ('ABSENT', 'Absent'),
-        ('PAID_LEAVE', 'Paid Leave'),
+    ]
+    REASON_CHOICES = [
+        ('SICK', 'Sick'),
+        ('MEDICAL', 'Medical appointment'),
+        ('PERSONAL', 'Personal matter'),
+        ('FAMILY', 'Family matter'),
+        ('FUNERAL', 'Funeral'),
+        ('WEDDING', 'Wedding'),
+        ('RELIGIOUS', 'Religious observance'),
+        ('TRANSPORT', 'Transport problem'),
+        ('WEATHER', 'Bad weather'),
+        ('ANNUAL', 'Annual leave'),
+        ('CASUAL', 'Casual leave'),
+        ('NO_REASON', 'No reason given'),
+        ('OTHER', 'Other'),
     ]
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='attendances')
     date = models.DateField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PRESENT')
+    # Leave details — only meaningful when status isn't PRESENT.
+    leave_reason = models.CharField(max_length=20, choices=REASON_CHOICES, blank=True)
+    informed = models.BooleanField(null=True, blank=True, help_text="Did they let you know beforehand?")
+    is_paid = models.BooleanField(default=False, help_text="Is the leave part of the day paid?")
     check_in_time = models.TimeField(null=True, blank=True)
     check_out_time = models.TimeField(null=True, blank=True)
     notes = models.TextField(blank=True, null=True)
@@ -495,13 +551,34 @@ class Payroll(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='payrolls')
     month = models.PositiveIntegerField() # 1-12
     year = models.PositiveIntegerField()
-    days_present = models.DecimalField(max_digits=4, decimal_places=1, default=0.0)
-    days_paid_leave = models.DecimalField(max_digits=4, decimal_places=1, default=0.0)
-    days_absent = models.DecimalField(max_digits=4, decimal_places=1, default=0.0)
+    # Legacy summary columns, still filled in for old screens/reports.
+    days_present = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
+    days_paid_leave = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
+    days_absent = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
     base_salary = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    # Attendance breakdown (see inventory/payroll.py for the rules).
+    scheduled_days = models.PositiveIntegerField(default=0, help_text="Working days in the month, excluding holidays")
+    days_worked = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    paid_leave_days = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    unpaid_leave_days = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    holidays = models.PositiveIntegerField(default=0, help_text="Holidays that fell on their working days")
+    paid_holidays = models.PositiveIntegerField(default=0)
+    extra_days = models.DecimalField(max_digits=5, decimal_places=2, default=0, help_text="Worked on a holiday or day off")
+    unmarked_days = models.PositiveIntegerField(default=0, help_text="Working days with no attendance marked (counted as present)")
+    uninformed_absences = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    day_value = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+
+    # Money.
+    earnings = models.DecimalField(max_digits=12, decimal_places=2, default=0, help_text="Attendance-based pay")
     allowances = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    advances = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Salary advances already given")
     deductions = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    epf_employee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="8% deducted from the employee")
+    epf_employer = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="12% paid by the employer")
+    etf_employer = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="3% paid by the employer")
     net_salary = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    notes = models.TextField(blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='DRAFT')
     paid_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -512,10 +589,11 @@ class Payroll(models.Model):
 
     def save(self, *args, **kwargs):
         from decimal import Decimal
-        base = Decimal(str(self.base_salary or 0.00))
-        allow = Decimal(str(self.allowances or 0.00))
-        deduct = Decimal(str(self.deductions or 0.00))
-        self.net_salary = base + allow - deduct
+        d = lambda v: Decimal(str(v or 0))
+        self.net_salary = (
+            d(self.earnings) + d(self.allowances)
+            - d(self.advances) - d(self.deductions) - d(self.epf_employee)
+        )
         super().save(*args, **kwargs)
 
     def __str__(self):

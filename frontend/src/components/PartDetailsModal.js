@@ -18,6 +18,8 @@ import {
   ChevronUp,
   PackagePlus,
   Wallet,
+  Link2,
+  Search,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -25,7 +27,10 @@ import {
   returnRestockRecord,
   editRestockRecord,
   fetchSuppliers,
+  linkCompatiblePart,
+  unlinkCompatiblePart,
 } from "../services/api";
+import { useParts } from "../context/PartsContext";
 import SupplierSelect from "./forms/SupplierSelect";
 import CopyButton from "./CopyButton";
 
@@ -407,8 +412,195 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
   );
 };
 
+// ─── Compatible (interchangeable) parts ──────────────────────────────────────
+// Parts in the same interchange group can stand in for one another. Linking
+// joins (or merges) groups on the server, so linking A to B also links A to
+// everything already linked to B.
+const CompatiblePartsSection = ({ part, editable, onOpenPart, onChanged }) => {
+  const { allParts, alternativesFor, invalidateParts } = useParts();
+  // Server's answer from the last link/unlink. Used until the modal moves to
+  // another part, because the parts cache refreshes a moment later.
+  const [override, setOverride] = useState(null);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setOverride(null);
+    setQuery("");
+    setError("");
+  }, [part.id]);
+
+  const linked = override ?? alternativesFor(part);
+  const linkedIds = new Set(linked.map((p) => p.id));
+
+  const q = query.trim().toLowerCase();
+  const candidates = q
+    ? allParts
+        .filter(
+          (p) =>
+            p.id !== part.id &&
+            !linkedIds.has(p.id) &&
+            [p.name, p.part_number, p.brand].some((f) => (f || "").toLowerCase().includes(q))
+        )
+        .slice(0, 8)
+    : [];
+
+  const afterChange = (list) => {
+    setOverride(list);
+    invalidateParts();
+    onChanged?.();
+  };
+
+  const handleLink = async (other) => {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await linkCompatiblePart(part.id, other.id);
+      setQuery("");
+      afterChange(res.compatible);
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not link this part.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUnlink = async (other) => {
+    setBusy(true);
+    setError("");
+    try {
+      await unlinkCompatiblePart(other.id);
+      afterChange(linked.filter((p) => p.id !== other.id));
+    } catch (err) {
+      setError(err.response?.data?.error || "Could not remove this link.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-1.5 border-b pb-2 shrink-0">
+        <Link2 size={15} className="text-violet-600" />
+        Compatible Parts
+        <span className="text-xs text-gray-400 font-normal">(can be used instead)</span>
+        {busy && <Loader2 size={13} className="animate-spin text-gray-400 ml-auto" />}
+      </h4>
+
+      {linked.length > 0 ? (
+        <div className="space-y-1.5 mt-3">
+          {linked.map((p) => (
+            <div
+              key={p.id}
+              className="flex items-center gap-3 p-2 rounded-lg border border-gray-200 hover:border-violet-300 hover:bg-violet-50/40 transition-colors"
+            >
+              <button
+                type="button"
+                onClick={() => onOpenPart(p)}
+                className="flex items-center gap-3 flex-1 min-w-0 text-left"
+                title="Open this part"
+              >
+                {p.image ? (
+                  <img src={p.image} alt="" className="w-10 h-10 rounded-md object-cover border border-gray-100 shrink-0" />
+                ) : (
+                  <span className="w-10 h-10 rounded-md bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-300 shrink-0">
+                    <Package size={16} />
+                  </span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-gray-800 truncate">{p.name}</span>
+                  <span className="block text-[11px] text-gray-500 font-mono truncate">
+                    {p.part_number}
+                    {p.brand ? ` · ${p.brand}` : ""}
+                  </span>
+                </span>
+                <span className="text-right shrink-0">
+                  <span
+                    className={`block text-[10px] font-bold px-1.5 py-0.5 rounded-full ${p.stock_qty > 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
+                      }`}
+                  >
+                    {p.stock_qty > 0 ? `${p.stock_qty} in stock` : "Out of stock"}
+                  </span>
+                  <span className="block text-xs font-bold text-gray-700 mt-0.5">{formatLKR(p.sell_price)}</span>
+                </span>
+              </button>
+              {editable && (
+                <button
+                  type="button"
+                  onClick={() => handleUnlink(p)}
+                  disabled={busy}
+                  className="p-1 text-gray-300 hover:text-red-600 hover:bg-red-50 rounded-full disabled:opacity-40"
+                  title="Remove link"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500 italic mt-3">No compatible parts linked.</p>
+      )}
+
+      {editable && (
+        <div className="relative mt-3">
+          <div className="flex items-center gap-2 border border-gray-200 rounded-lg px-2.5 h-9 focus-within:ring-2 focus-within:ring-violet-200 focus-within:border-violet-400">
+            <Search size={14} className="text-gray-400 shrink-0" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Link a compatible part — search name, number or brand"
+              className="flex-1 text-sm outline-none bg-transparent"
+            />
+          </div>
+          {q && (
+            <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 max-h-60 overflow-y-auto">
+              {candidates.length > 0 ? (
+                candidates.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => handleLink(p)}
+                    className="w-full flex items-center justify-between gap-3 px-3 py-2 text-left hover:bg-violet-50 disabled:opacity-50"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-gray-800 truncate">{p.name}</span>
+                      <span className="block text-[11px] text-gray-500 font-mono truncate">
+                        {p.part_number}
+                        {p.brand ? ` · ${p.brand}` : ""}
+                        {p.interchange_group != null ? " · already in a group (will merge)" : ""}
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-gray-500 shrink-0">{p.stock_qty} in stock</span>
+                  </button>
+                ))
+              ) : (
+                <p className="px-3 py-2 text-sm text-gray-400">No matching parts.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+    </div>
+  );
+};
+
 // ─── Main Modal ───────────────────────────────────────────────────────────────
-const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
+// Clicking a compatible part swaps the modal over to that part, until the
+// parent opens a different one.
+const PartDetailsModal = (props) => {
+  const [openedPart, setOpenedPart] = useState(null);
+  useEffect(() => {
+    setOpenedPart(null);
+  }, [props.part]);
+  if (!props.part) return null;
+  return <PartDetailsView {...props} part={openedPart || props.part} onOpenPart={setOpenedPart} />;
+};
+
+const PartDetailsView = ({ part, onClose, onPartUpdated, onRestock, onOpenPart }) => {
   const navigate = useNavigate();
   const pressTimer = useRef(null);
   const isLongPress = useRef(false);
@@ -478,10 +670,9 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
   const buyPrice = parseFloat(part.buy_price || 0);
 
   // Lifetime money put into this part, from the purchase history at the prices
-  // actually paid (net of returns). The sold/in-stock split underneath it is a
-  // different basis — there's no cost snapshot on a sale, so those two are
-  // priced at the current average buy price and won't add up to the lifetime
-  // figure exactly once the buy price has moved.
+  // actually paid (net of returns). The split underneath is a different basis:
+  // sold units at their cost when sold, stock at the current average buy
+  // price, so the two needn't add up to the lifetime figure exactly.
   const totalInvested = parseFloat(part.total_invested || 0);
   const totalPurchased = part.total_purchased || 0;
   const stockValue = buyPrice * (part.stock_qty || 0);
@@ -688,7 +879,7 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
 
             <div
               className="bg-amber-50 p-3 rounded-xl border border-amber-100 flex flex-col"
-              title={`Everything bought of this part across ${totalPurchased} unit(s), at the price paid on each restock and net of returns. The split below is priced at the current average buy price, so it may not add up exactly.`}
+              title={`Everything bought of this part across ${totalPurchased} unit(s), at the price paid on each restock and net of returns. Below: sold units at their cost when sold, stock at the current average buy price, so it may not add up exactly.`}
             >
               <p className="text-xs text-amber-600 mb-1 shrink-0 font-semibold flex items-center gap-1">
                 <Wallet size={11} /> Total Invested
@@ -704,7 +895,7 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
                 ? "bg-red-50 border-red-100"
                 : "bg-green-50 border-green-100"
                 }`}
-              title="Revenue from completed sales of this part, less what those units cost at the current average buy price."
+              title="Revenue from completed sales of this part, less what those units cost when they were sold."
             >
               <p className={`text-xs mb-1 shrink-0 font-semibold flex items-center gap-1 ${totalProfit < 0 ? "text-red-500" : "text-green-600"
                 }`}>
@@ -740,6 +931,14 @@ const PartDetailsModal = ({ part, onClose, onPartUpdated, onRestock }) => {
             </h4>
             <RestockHistorySection partId={part.id} onRefresh={onPartUpdated} />
           </div>
+
+          {/* ── Compatible (interchangeable) Parts ── */}
+          <CompatiblePartsSection
+            part={part}
+            editable={!!onPartUpdated}
+            onOpenPart={onOpenPart}
+            onChanged={onPartUpdated}
+          />
 
           {/* ── Compatible Vehicles ── */}
           <div>

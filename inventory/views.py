@@ -1,4 +1,5 @@
 import re
+import calendar
 import uuid
 from collections import Counter
 from rest_framework.decorators import api_view, permission_classes
@@ -6,11 +7,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
-from datetime import timedelta
+from datetime import date, timedelta
 from django.db.models.functions import TruncDate, Coalesce, Replace, Upper
 from rest_framework import status
 from django.db.models import Sum, F, Value, DecimalField
-from .models import Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem
+from .models import InterchangeGroup, Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem
 from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context, PurchaseOrderSerializer
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle, normalize_repair_description
@@ -19,6 +20,7 @@ from .serializers import VehicleSerializer
 from django.shortcuts import get_object_or_404
 from django.db.models import Sum, F
 from django.db import transaction
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 
 
@@ -623,13 +625,86 @@ def update_part(request, pk):
         return Response(serializer.data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+# --- COMPATIBLE (INTERCHANGEABLE) PARTS ---
+def _compatible_payload(part):
+    """The part's group id and the other parts in its group."""
+    others = []
+    if part.interchange_group_id:
+        others = PartSerializer(
+            Part.objects.filter(interchange_group_id=part.interchange_group_id).exclude(pk=part.pk).order_by('name'),
+            many=True,
+        ).data
+    return {"interchange_group": part.interchange_group_id, "compatible": others}
+
+
+def _dissolve_if_lonely(group_id):
+    """A group with one part (or none) links nothing — clear it away."""
+    if group_id is None:
+        return
+    members = Part.objects.filter(interchange_group_id=group_id)
+    if members.count() < 2:
+        members.update(interchange_group=None)
+        InterchangeGroup.objects.filter(pk=group_id).delete()
+
+
+@api_view(['POST'])
+@transaction.atomic
+def link_compatible_part(request, pk):
+    """
+    Link two parts as interchangeable. Body: { "part_id": "<uuid>" }.
+    Groups are shared: if either part is already linked, the other joins its
+    group, and two existing groups are merged into one.
+    """
+    part = get_object_or_404(Part.objects.select_for_update(), pk=pk)
+    other_id = request.data.get('part_id')
+    if not other_id:
+        return Response({"error": "part_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        other = Part.objects.select_for_update().get(pk=other_id)
+    except (Part.DoesNotExist, ValueError, DjangoValidationError):
+        return Response({"error": "Part to link was not found."}, status=status.HTTP_404_NOT_FOUND)
+    if other.pk == part.pk:
+        return Response({"error": "A part can't be linked to itself."}, status=status.HTTP_400_BAD_REQUEST)
+
+    a, b = part.interchange_group_id, other.interchange_group_id
+    if a and b and a != b:
+        # Merge: everything in this part's group moves to the other's.
+        Part.objects.filter(interchange_group_id=a).update(interchange_group_id=b)
+        InterchangeGroup.objects.filter(pk=a).delete()
+    elif b and not a:
+        Part.objects.filter(pk=part.pk).update(interchange_group_id=b)
+    elif a and not b:
+        Part.objects.filter(pk=other.pk).update(interchange_group_id=a)
+    elif not a and not b:
+        group = InterchangeGroup.objects.create()
+        Part.objects.filter(pk__in=[part.pk, other.pk]).update(interchange_group=group)
+
+    part.refresh_from_db()
+    return Response(_compatible_payload(part))
+
+
+@api_view(['POST'])
+@transaction.atomic
+def unlink_compatible_part(request, pk):
+    """Take this part out of its interchange group."""
+    part = get_object_or_404(Part.objects.select_for_update(), pk=pk)
+    group_id = part.interchange_group_id
+    if group_id:
+        Part.objects.filter(pk=part.pk).update(interchange_group=None)
+        _dissolve_if_lonely(group_id)
+    part.refresh_from_db()
+    return Response(_compatible_payload(part))
+
+
 @api_view(['DELETE'])
 def delete_part(request, pk):
     part = get_object_or_404(Part, pk=pk)
     # Check if part has sales history to prevent breaking reports
     if part.saleitem_set.exists():
         return Response({"error": "Cannot delete part with sales history."}, status=status.HTTP_400_BAD_REQUEST)
+    group_id = part.interchange_group_id
     part.delete()
+    _dissolve_if_lonely(group_id)
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1888,16 +1963,130 @@ def get_dashboard_stats(request):
         "sales_trend": sales_trend
     })
 
-# Daily Report View
+# --- SALES REPORTS (daily & monthly) ---
+def _local_midnight(day):
+    from datetime import datetime
+    return timezone.make_aware(datetime.combine(day, datetime.min.time()), timezone.get_current_timezone())
+
+
+def _sales_summary(start, end):
+    """
+    Sales maths shared by the daily and monthly reports, for completed sales
+    in [start, end). Profit uses each line's cost snapshotted at the time of
+    sale (SaleItem.cost_price); labour has no cost, so it's all profit.
+
+    Returns (totals, sales, items). Each sale carries a `_local` datetime for
+    bucketing by hour/day — strip it before sending.
+    """
+    tz = timezone.get_current_timezone()
+    window = Q(created_at__gte=start, created_at__lt=end)
+    completed = (
+        Sale.objects.filter(window, status='COMPLETED')
+        .order_by('created_at')
+        .prefetch_related('items__part')
+    )
+
+    zero = Decimal('0')
+    t = {
+        "revenue": zero, "collected": zero, "profit": zero, "cogs": zero,
+        "parts_revenue": zero, "labor_revenue": zero, "discount_total": zero,
+        "units_sold": 0, "raised_lines": 0,
+    }
+    sales, items = [], []
+
+    for sale in completed:
+        local = timezone.localtime(sale.created_at, tz)
+        sale_total = sale.total_amount or zero
+        paid = min(sale.amount_paid or zero, sale_total)
+        t["revenue"] += sale_total
+        t["collected"] += paid
+
+        sale_profit = zero
+        sale_items = []
+        for item in sale.items.all():
+            is_labor = item.item_type == 'LABOR' or item.part_id is None
+            buy_price = zero if is_labor else (item.cost_price or zero)
+            line_total = item.total_price
+            line_profit = (item.unit_price - item.discount - buy_price) * item.quantity
+            line_discount = item.discount * item.quantity
+            raised = not is_labor and item.list_price is not None and item.unit_price > item.list_price
+
+            sale_profit += line_profit
+            t["discount_total"] += line_discount
+            if is_labor:
+                t["labor_revenue"] += line_total
+            else:
+                t["parts_revenue"] += line_total
+                t["cogs"] += buy_price * item.quantity
+                t["units_sold"] += item.quantity
+            if raised:
+                t["raised_lines"] += 1
+
+            row = {
+                "sale_id": str(sale.id),
+                "time": local.strftime('%H:%M'),
+                "vehicle_number": sale.vehicle_number or "",
+                "item_type": 'LABOR' if is_labor else 'PART',
+                "part_id": None if is_labor else str(item.part_id),
+                "part_name": item.description if is_labor else item.part.name,
+                "part_number": "" if is_labor else item.part.part_number,
+                "unit_price": item.unit_price,
+                "list_price": item.list_price,
+                "price_raised": raised,
+                "quantity": item.quantity,
+                "discount": item.discount,
+                "discount_total": line_discount,
+                "total_price": line_total,
+                "unit_cost": buy_price,
+                "profit": line_profit,
+            }
+            items.append(row)
+            sale_items.append(row)
+
+        t["profit"] += sale_profit
+        sales.append({
+            "_local": local,
+            "id": str(sale.id),
+            "time": local.strftime('%H:%M'),
+            "customer_name": sale.customer_name,
+            "vehicle_number": sale.vehicle_number or "",
+            "payment_status": sale.payment_status,
+            "total_amount": sale_total,
+            "amount_paid": paid,
+            "balance_due": max(sale_total - paid, zero),
+            "profit": sale_profit,
+            "items": sale_items,
+        })
+
+    count = len(sales)
+    revenue, profit, cogs = t["revenue"], t["profit"], t["cogs"]
+    totals = {
+        "today_revenue": revenue,
+        "today_profit": profit,
+        "today_sales_count": count,
+        "total_investment": cogs,
+        "roi_percentage": round(float(profit) / float(cogs) * 100, 2) if cogs > 0 else 0.0,
+        "margin_percentage": round(float(profit) / float(revenue) * 100, 2) if revenue > 0 else 0.0,
+        "average_sale": round(float(revenue) / count, 2) if count else 0,
+        "parts_revenue": t["parts_revenue"],
+        "labor_revenue": t["labor_revenue"],
+        "discount_total": t["discount_total"],
+        "collected": t["collected"],
+        "balance_due": max(revenue - t["collected"], zero),
+        "units_sold": t["units_sold"],
+        "price_raised_lines": t["raised_lines"],
+        "cancelled_count": Sale.objects.filter(window, status='CANCELLED').count(),
+    }
+    return totals, sales, items
+
+
+def _strip_local(sales):
+    return [{k: v for k, v in s.items() if k != '_local'} for s in sales]
+
+
 @api_view(['GET'])
 def daily_report(request):
-    """
-    End-of-day report for one shop-local date (defaults to today).
-
-    Profit uses each line's cost snapshotted at the time of sale
-    (SaleItem.unit_cost). Labour lines have no cost, so they count fully as
-    profit.
-    """
+    """End-of-day report for one shop-local date (defaults to today)."""
     from datetime import datetime
 
     date_str = request.query_params.get('date')
@@ -1911,107 +2100,21 @@ def daily_report(request):
         # which puts Colombo's 00:00-05:30 sales on the wrong day.
         target_date = timezone.localdate()
 
-    tz = timezone.get_current_timezone()
-    start_date = timezone.make_aware(datetime.combine(target_date, datetime.min.time()), tz)
-    end_date = timezone.make_aware(datetime.combine(target_date + timedelta(days=1), datetime.min.time()), tz)
-    day_filter = Q(created_at__gte=start_date, created_at__lt=end_date)
-
-    target_sales = (
-        Sale.objects.filter(day_filter, status='COMPLETED')
-        .order_by('created_at')
-        .prefetch_related('items__part')
-    )
-    cancelled_count = Sale.objects.filter(day_filter, status='CANCELLED').count()
-
-    zero = Decimal('0')
-    revenue = zero
-    collected = zero
-    profit = zero
-    cogs = zero
-    parts_revenue = zero
-    labor_revenue = zero
-    discount_total = zero
-    units_sold = 0
-    raised_lines = 0
+    start_date = _local_midnight(target_date)
+    totals, sales, items = _sales_summary(start_date, _local_midnight(target_date + timedelta(days=1)))
 
     # Hourly buckets: shop hours always shown, plus any other hour with sales.
     hours = {h: {"hour": f"{h:02d}:00", "revenue": 0.0, "profit": 0.0, "sales": 0} for h in range(8, 20)}
-    items_list = []
-    sales_list = []
-
-    for sale in target_sales:
-        local_time = timezone.localtime(sale.created_at, tz)
-        hour = hours.setdefault(local_time.hour, {
-            "hour": f"{local_time.hour:02d}:00", "revenue": 0.0, "profit": 0.0, "sales": 0,
-        })
-        sale_total = sale.total_amount or zero
-        revenue += sale_total
-        collected += min(sale.amount_paid or zero, sale_total)
-        hour["revenue"] += float(sale_total)
-        hour["sales"] += 1
-
-        sale_profit = zero
-        sale_items = []
-        for item in sale.items.all():
-            is_labor = item.item_type == 'LABOR' or item.part_id is None
-            buy_price = zero if is_labor else (item.cost_price or zero)
-            net_unit = item.unit_price - item.discount
-            line_total = item.total_price
-            line_profit = (net_unit - buy_price) * item.quantity
-            line_discount = item.discount * item.quantity
-            raised = (
-                not is_labor and item.list_price is not None
-                and item.unit_price > item.list_price
-            )
-
-            sale_profit += line_profit
-            discount_total += line_discount
-            if is_labor:
-                labor_revenue += line_total
-            else:
-                parts_revenue += line_total
-                cogs += buy_price * item.quantity
-                units_sold += item.quantity
-            if raised:
-                raised_lines += 1
-
-            row = {
-                "sale_id": str(sale.id),
-                "time": local_time.strftime('%H:%M'),
-                "vehicle_number": sale.vehicle_number or "",
-                "item_type": 'LABOR' if is_labor else 'PART',
-                "part_name": item.description if is_labor else item.part.name,
-                "part_number": "" if is_labor else item.part.part_number,
-                "unit_price": item.unit_price,
-                "list_price": item.list_price,
-                "price_raised": raised,
-                "quantity": item.quantity,
-                "discount": item.discount,
-                "discount_total": line_discount,
-                "total_price": line_total,
-                "unit_cost": buy_price,
-                "profit": line_profit,
-            }
-            items_list.append(row)
-            sale_items.append(row)
-
-        profit += sale_profit
-        hour["profit"] += float(sale_profit)
-        sales_list.append({
-            "id": str(sale.id),
-            "time": local_time.strftime('%H:%M'),
-            "customer_name": sale.customer_name,
-            "vehicle_number": sale.vehicle_number or "",
-            "payment_status": sale.payment_status,
-            "total_amount": sale_total,
-            "amount_paid": min(sale.amount_paid or zero, sale_total),
-            "balance_due": max(sale_total - (sale.amount_paid or zero), zero),
-            "profit": sale_profit,
-            "items": sale_items,
-        })
+    for sale in sales:
+        h = sale["_local"].hour
+        bucket = hours.setdefault(h, {"hour": f"{h:02d}:00", "revenue": 0.0, "profit": 0.0, "sales": 0})
+        bucket["revenue"] += float(sale["total_amount"])
+        bucket["profit"] += float(sale["profit"])
+        bucket["sales"] += 1
 
     # Compare against the average day *before* the target date: the target
     # day itself (possibly still in progress) shouldn't drag its own baseline.
+    tz = timezone.get_current_timezone()
     earlier = Sale.objects.filter(status='COMPLETED', created_at__lt=start_date)
     first_sale = earlier.order_by('created_at').first()
     avg_daily_revenue = None
@@ -2019,39 +2122,181 @@ def daily_report(request):
     if first_sale:
         first_day = timezone.localtime(first_sale.created_at, tz).date()
         days_before = max((target_date - first_day).days, 1)
-        earlier_revenue = earlier.aggregate(total=Sum('total_amount'))['total'] or zero
+        earlier_revenue = earlier.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
         avg_daily_revenue = float(earlier_revenue) / days_before
         if avg_daily_revenue > 0:
-            percentage_change = round((float(revenue) - avg_daily_revenue) / avg_daily_revenue * 100, 2)
+            percentage_change = round((float(totals["today_revenue"]) - avg_daily_revenue) / avg_daily_revenue * 100, 2)
         avg_daily_revenue = round(avg_daily_revenue, 2)
-
-    roi_percentage = float(profit) / float(cogs) * 100 if cogs > 0 else 0.0
-    margin_percentage = float(profit) / float(revenue) * 100 if revenue > 0 else 0.0
-    sales_count = len(sales_list)
 
     return Response({
         "date": target_date.isoformat(),
         "is_today": target_date == timezone.localdate(),
-        "today_revenue": revenue,
-        "today_profit": profit,
-        "today_sales_count": sales_count,
-        "total_investment": cogs,
-        "roi_percentage": round(roi_percentage, 2),
-        "margin_percentage": round(margin_percentage, 2),
-        "average_sale": round(float(revenue) / sales_count, 2) if sales_count else 0,
-        "parts_revenue": parts_revenue,
-        "labor_revenue": labor_revenue,
-        "discount_total": discount_total,
-        "collected": collected,
-        "balance_due": max(revenue - collected, zero),
-        "units_sold": units_sold,
-        "price_raised_lines": raised_lines,
-        "cancelled_count": cancelled_count,
+        **totals,
         "percentage_change": percentage_change,
         "avg_daily_revenue": avg_daily_revenue,
-        "items": items_list,
-        "sales": sales_list,
+        "items": items,
+        "sales": _strip_local(sales),
         "chart_data": [hours[h] for h in sorted(hours)],
+    })
+
+
+def _month_salary_cost(year, month):
+    """
+    What the month's wages cost the shop: gross pay (attendance pay +
+    allowances - deductions) plus employer EPF 12% and ETF 3%. The employee's
+    8% EPF comes out of their gross pay, so it isn't added again; salary
+    advances only change when the money goes out, not how much.
+
+    Saved Payroll rows are used where they exist; anyone else currently
+    employed is estimated from attendance with the same rules (nothing saved).
+    """
+    from .payroll import calculate_payroll
+
+    zero = Decimal('0')
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    payrolls = {p.employee_id: p for p in Payroll.objects.filter(year=year, month=month).select_related('employee')}
+    employees = list(
+        Employee.objects.filter(Q(is_active=True, date_joined__lte=month_end) | Q(id__in=payrolls.keys()))
+        .distinct().order_by('first_name', 'last_name')
+    )
+
+    holidays = marks = None
+    rows, total = [], zero
+    for emp in employees:
+        p = payrolls.get(emp.id)
+        if p:
+            gross = (p.earnings or zero) + (p.allowances or zero) - (p.deductions or zero)
+            employer = (p.epf_employer or zero) + (p.etf_employer or zero)
+            source = 'PAID' if p.status == 'PAID' else 'CALCULATED'
+        else:
+            if holidays is None:
+                holidays = {h.date: h for h in Holiday.objects.filter(date__year=year, date__month=month)}
+                marks = {}
+                for att in Attendance.objects.filter(date__year=year, date__month=month):
+                    marks.setdefault(att.employee_id, {})[att.date] = att
+            calc = calculate_payroll(emp, year, month, marks.get(emp.id, {}), holidays)
+            gross = calc['earnings']
+            employer = calc['epf_employer'] + calc['etf_employer']
+            source = 'ESTIMATED'
+        cost = gross + employer
+        total += cost
+        rows.append({
+            "employee": emp.id,
+            "name": f"{emp.first_name} {emp.last_name}".strip(),
+            "role": emp.role,
+            "gross_pay": gross,
+            "employer_contributions": employer,
+            "cost": cost,
+            "source": source,
+        })
+
+    sources = {r["source"] for r in rows}
+    if not rows:
+        salary_source = 'none'
+    elif sources == {'ESTIMATED'}:
+        salary_source = 'estimate'
+    elif 'ESTIMATED' in sources:
+        salary_source = 'mixed'
+    else:
+        salary_source = 'payroll'
+    return {
+        "salary_cost": total,
+        "salary_source": salary_source,
+        "salaries_paid_count": sum(1 for r in rows if r["source"] == 'PAID'),
+        "salary_breakdown": rows,
+    }
+
+
+@api_view(['GET'])
+def monthly_report(request):
+    """Month-to-date or whole-month report (?month=&year=, defaults to now)."""
+    today = timezone.localdate()
+    parsed = _parse_month(request.query_params) if request.query_params.get('month') else (today.year, today.month)
+    if not parsed:
+        return Response({"error": "month (1-12) and year are required."}, status=status.HTTP_400_BAD_REQUEST)
+    year, month = parsed
+
+    days_in_month = calendar.monthrange(year, month)[1]
+    first = date(year, month, 1)
+    next_first = first + timedelta(days=days_in_month)
+    totals, sales, items = _sales_summary(_local_midnight(first), _local_midnight(next_first))
+    is_current = (year, month) == (today.year, today.month)
+
+    # Day by day.
+    zero = Decimal('0')
+    daily = {
+        d: {"date": date(year, month, d).isoformat(), "sales": 0, "revenue": zero,
+            "profit": zero, "collected": zero, "balance_due": zero}
+        for d in range(1, days_in_month + 1)
+    }
+    for sale in sales:
+        row = daily[sale["_local"].day]
+        row["sales"] += 1
+        row["revenue"] += sale["total_amount"]
+        row["profit"] += sale["profit"]
+        row["collected"] += sale["amount_paid"]
+        row["balance_due"] += sale["balance_due"]
+    daily_rows = [daily[d] for d in sorted(daily)]
+    trading = [r for r in daily_rows if r["sales"]]
+    best_day = max(trading, key=lambda r: r["revenue"]) if trading else None
+
+    # Best sellers by quantity; labour is one line on its own.
+    parts = {}
+    for row in items:
+        if row["item_type"] != 'PART':
+            continue
+        p = parts.setdefault(row["part_id"], {
+            "part_id": row["part_id"], "part_name": row["part_name"], "part_number": row["part_number"],
+            "quantity": 0, "revenue": zero, "profit": zero,
+        })
+        p["quantity"] += row["quantity"]
+        p["revenue"] += row["total_price"]
+        p["profit"] += row["profit"]
+    top_parts = sorted(parts.values(), key=lambda p: (-p["quantity"], -p["revenue"]))[:10]
+
+    # Previous month — up to the same day of the month while this one is
+    # still running, so a half month isn't measured against a whole one.
+    prev_last = first - timedelta(days=1)
+    prev_first = prev_last.replace(day=1)
+    prev_end_day = min(today.day, prev_last.day) if is_current else prev_last.day
+    prev_totals, _, _ = _sales_summary(
+        _local_midnight(prev_first), _local_midnight(prev_first + timedelta(days=prev_end_day))
+    )
+    has_earlier = Sale.objects.filter(status='COMPLETED', created_at__lt=_local_midnight(first)).exists()
+
+    def change(now_v, before_v):
+        if not has_earlier or not before_v:
+            return None
+        return round((float(now_v) - float(before_v)) / abs(float(before_v)) * 100, 2)
+
+    salaries = _month_salary_cost(year, month)
+    after = totals["today_profit"] - salaries["salary_cost"]
+
+    return Response({
+        "year": year,
+        "month": month,
+        "is_current_month": is_current,
+        **totals,
+        "days_with_sales": len(trading),
+        "average_per_trading_day": round(float(totals["today_revenue"]) / len(trading), 2) if trading else 0,
+        "best_day": best_day,
+        "daily": daily_rows,
+        "top_parts": top_parts,
+        "previous": {
+            "year": prev_first.year,
+            "month": prev_first.month,
+            "through_day": prev_end_day,
+            "partial": is_current,
+            "revenue": prev_totals["today_revenue"] if has_earlier else None,
+            "profit": prev_totals["today_profit"] if has_earlier else None,
+            "revenue_change": change(totals["today_revenue"], prev_totals["today_revenue"]),
+            "profit_change": change(totals["today_profit"], prev_totals["today_profit"]),
+        },
+        **salaries,
+        "profit_after_salaries": after,
+        "profit_after_salaries_margin": (
+            round(float(after) / float(totals["today_revenue"]) * 100, 2) if totals["today_revenue"] > 0 else 0.0
+        ),
     })
 
 def parse_vehicle_string(vehicle_str, existing_makes):
@@ -2567,237 +2812,279 @@ def get_employee_attendance(request, pk):
     serializer = AttendanceSerializer(attendances, many=True)
     return Response(serializer.data)
 
+def _parse_iso_date(value):
+    from datetime import datetime
+    try:
+        return datetime.strptime(value or '', '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
+def _parse_month(request_data):
+    try:
+        month = int(request_data.get('month'))
+        year = int(request_data.get('year'))
+        if not 1 <= month <= 12:
+            raise ValueError
+        return year, month
+    except (TypeError, ValueError):
+        return None
+
+
+def _employee_label(emp):
+    return f"{emp.first_name} {emp.last_name}".strip()
+
+
+# --- HOLIDAYS ---
 @api_view(['GET'])
 def get_holidays(request):
-    """List all global holidays"""
+    """List holidays, optionally for one year (?year=2026)."""
     holidays = Holiday.objects.all().order_by('date')
-    serializer = HolidaySerializer(holidays, many=True)
-    return Response(serializer.data)
+    year = request.query_params.get('year')
+    if year and year.isdigit():
+        holidays = holidays.filter(date__year=int(year))
+    return Response(HolidaySerializer(holidays, many=True).data)
+
 
 @api_view(['POST'])
 def add_holiday(request):
-    """Add a new holiday"""
+    """Mark a date as a holiday (Poya, public, mercantile, shop closed...)."""
     serializer = HolidaySerializer(data=request.data)
     if serializer.is_valid():
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+@api_view(['PUT', 'PATCH'])
+def update_holiday(request, pk):
+    holiday = get_object_or_404(Holiday, pk=pk)
+    serializer = HolidaySerializer(holiday, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 @api_view(['DELETE'])
 def delete_holiday(request, pk):
-    """Delete a holiday"""
-    holiday = get_object_or_404(Holiday, pk=pk)
-    holiday.delete()
+    get_object_or_404(Holiday, pk=pk).delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# --- ATTENDANCE VIEWS ---
+# --- ATTENDANCE ---
+_ATTENDANCE_STATUSES = {c[0] for c in Attendance.STATUS_CHOICES}
+_LEAVE_REASONS = {c[0] for c in Attendance.REASON_CHOICES}
+
 
 @api_view(['GET'])
 def get_attendance_sheet(request):
     """
-    Get the attendance list for a specific date.
-    If no records exist in DB for some active employees for that date,
-    returns placeholder/default records with status='PRESENT' as a template.
+    One day's attendance: a row per active employee with their mark (or null
+    if not marked yet), whether it's their working day, and the holiday on
+    that date, if any.
     """
-    date_str = request.query_params.get('date')
-    if not date_str:
-        return Response({"error": "Date parameter is required (YYYY-MM-DD)"}, status=status.HTTP_400_BAD_REQUEST)
-    
-    try:
-        from datetime import datetime
-        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-    except ValueError:
-        return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+    target_date = _parse_iso_date(request.query_params.get('date'))
+    if not target_date:
+        return Response({"error": "A valid date (YYYY-MM-DD) is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Fetch active employees
-    active_employees = Employee.objects.filter(is_active=True).order_by('first_name')
-    
-    # Get existing records for this date
-    existing_attendances = {
-        att.employee_id: att for att in Attendance.objects.filter(date=target_date)
-    }
+    holiday = Holiday.objects.filter(date=target_date).first()
+    marks = {a.employee_id: a for a in Attendance.objects.filter(date=target_date)}
+    weekday = target_date.strftime('%A')
 
-    results = []
-    for emp in active_employees:
-        if emp.id in existing_attendances:
-            results.append(existing_attendances[emp.id])
-        else:
-            # Return unsaved template record
-            results.append(Attendance(
-                employee=emp,
-                date=target_date,
-                status='PRESENT'
-            ))
+    rows = []
+    for emp in Employee.objects.filter(is_active=True).order_by('first_name', 'last_name'):
+        if emp.date_joined and emp.date_joined > target_date:
+            continue
+        mark = marks.get(emp.id)
+        rows.append({
+            "employee": emp.id,
+            "employee_name": _employee_label(emp),
+            "employee_role": emp.role,
+            "is_working_day": weekday in (emp.working_days or []),
+            "attendance": AttendanceSerializer(mark).data if mark else None,
+        })
 
-    serializer = AttendanceSerializer(results, many=True)
-    return Response(serializer.data)
+    return Response({
+        "date": target_date.isoformat(),
+        "holiday": HolidaySerializer(holiday).data if holiday else None,
+        "rows": rows,
+    })
+
 
 @api_view(['POST'])
 @transaction.atomic
 def mark_attendance_sheet(request):
     """
-    Save or update attendance in bulk for a specific date.
+    Save attendance for one date — one employee or many.
+    Body: { date, attendances: [{ employee, status, leave_reason, informed,
+            is_paid, notes } | { employee, clear: true }] }
     """
-    data = request.data
-    date_str = data.get('date')
-    attendances_data = data.get('attendances', [])
+    target_date = _parse_iso_date(request.data.get('date'))
+    if not target_date:
+        return Response({"error": "A valid date (YYYY-MM-DD) is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-    if not date_str:
-        return Response({"error": "Date is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-    try:
-        from datetime import datetime
-        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-    except ValueError:
-        return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
-
-    for att in attendances_data:
-        emp_id = att.get('employee')
-        status_val = att.get('status', 'PRESENT')
-        notes = att.get('notes', '')
-        
+    saved = []
+    for item in request.data.get('attendances', []):
+        emp_id = item.get('employee')
         if not emp_id:
             continue
-            
-        Attendance.objects.update_or_create(
-            employee_id=emp_id,
-            date=target_date,
-            defaults={
+        if item.get('clear'):
+            Attendance.objects.filter(employee_id=emp_id, date=target_date).delete()
+            continue
+
+        status_val = item.get('status', 'PRESENT')
+        if status_val not in _ATTENDANCE_STATUSES:
+            return Response({"error": f"Unknown status '{status_val}'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if status_val == 'PRESENT':
+            defaults = {'status': 'PRESENT', 'leave_reason': '', 'informed': None, 'is_paid': False}
+        else:
+            reason = item.get('leave_reason') or ''
+            if reason and reason not in _LEAVE_REASONS:
+                return Response({"error": f"Unknown leave reason '{reason}'."}, status=status.HTTP_400_BAD_REQUEST)
+            informed = item.get('informed')
+            defaults = {
                 'status': status_val,
-                'notes': notes
+                'leave_reason': reason,
+                'informed': None if informed is None else bool(informed),
+                'is_paid': bool(item.get('is_paid', False)),
             }
-        )
+        defaults['notes'] = item.get('notes', '') or ''
 
-    return Response({"message": "Attendance marked successfully"}, status=status.HTTP_200_OK)
+        att, _ = Attendance.objects.update_or_create(employee_id=emp_id, date=target_date, defaults=defaults)
+        saved.append(att)
 
+    return Response({"saved": AttendanceSerializer(saved, many=True).data})
 
-# --- PAYROLL VIEWS ---
 
 @api_view(['GET'])
+def get_attendance_month(request):
+    """
+    A month at a glance for the calendar grid: every day, the holidays, and
+    each employee's marks keyed by date. Includes inactive employees only if
+    they have marks that month.
+    """
+    parsed = _parse_month(request.query_params)
+    if not parsed:
+        return Response({"error": "month (1-12) and year are required."}, status=status.HTTP_400_BAD_REQUEST)
+    year, month = parsed
+
+    from .payroll import month_days
+    days = month_days(year, month)
+    holidays = Holiday.objects.filter(date__year=year, date__month=month).order_by('date')
+    marks = Attendance.objects.filter(date__year=year, date__month=month).select_related('employee')
+
+    by_employee = {}
+    for att in marks:
+        by_employee.setdefault(att.employee_id, {})[att.date.isoformat()] = AttendanceSerializer(att).data
+
+    employees = Employee.objects.filter(Q(is_active=True) | Q(id__in=by_employee.keys())).order_by('first_name', 'last_name')
+    return Response({
+        "year": year,
+        "month": month,
+        "days": [{"date": d.isoformat(), "weekday": d.strftime('%A')} for d in days],
+        "holidays": HolidaySerializer(holidays, many=True).data,
+        "employees": [{
+            "id": emp.id,
+            "name": _employee_label(emp),
+            "role": emp.role,
+            "is_active": emp.is_active,
+            "date_joined": emp.date_joined.isoformat() if emp.date_joined else None,
+            "working_days": emp.working_days or [],
+            "records": by_employee.get(emp.id, {}),
+        } for emp in employees],
+    })
+
+
+@api_view(['GET'])
+def get_employee_attendance(request, pk):
+    """One employee's marks for a month (?month=&year=)."""
+    employee = get_object_or_404(Employee, pk=pk)
+    parsed = _parse_month(request.query_params)
+    if not parsed:
+        return Response({"error": "month (1-12) and year are required."}, status=status.HTTP_400_BAD_REQUEST)
+    year, month = parsed
+    marks = Attendance.objects.filter(employee=employee, date__year=year, date__month=month).order_by('date')
+    return Response(AttendanceSerializer(marks, many=True).data)
+
+
+# --- PAYROLL ---
+@api_view(['GET'])
 def get_payroll_list(request):
-    """List payroll records for a selected month and year"""
-    month = request.query_params.get('month')
-    year = request.query_params.get('year')
-    
-    if not month or not year:
-        return Response({"error": "Month and Year parameters are required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-    payroll_records = Payroll.objects.filter(month=month, year=year).order_by('employee__first_name')
-    serializer = PayrollSerializer(payroll_records, many=True)
-    return Response(serializer.data)
+    parsed = _parse_month(request.query_params)
+    if not parsed:
+        return Response({"error": "month (1-12) and year are required."}, status=status.HTTP_400_BAD_REQUEST)
+    year, month = parsed
+    records = Payroll.objects.filter(month=month, year=year).select_related('employee').order_by('employee__first_name')
+    return Response(PayrollSerializer(records, many=True).data)
+
 
 @api_view(['POST'])
 @transaction.atomic
 def generate_payroll_drafts(request):
     """
-    Calculate and generate draft payroll records for a given month/year.
+    (Re)calculate the month's salaries from attendance and holidays for every
+    active employee (see inventory/payroll.py). Allowances, advances,
+    deductions and notes typed in are kept; paid months are never touched.
     """
-    month = request.data.get('month')
-    year = request.data.get('year')
-    
-    if not month or not year:
-        return Response({"error": "Month and Year are required"}, status=status.HTTP_400_BAD_REQUEST)
-        
-    try:
-        month = int(month)
-        year = int(year)
-    except ValueError:
-        return Response({"error": "Month and Year must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+    parsed = _parse_month(request.data)
+    if not parsed:
+        return Response({"error": "month (1-12) and year are required."}, status=status.HTTP_400_BAD_REQUEST)
+    year, month = parsed
 
-    active_employees = Employee.objects.filter(is_active=True)
-    payroll_records = []
-    
-    for emp in active_employees:
-        # Calculate attendance counts for this month/year
-        attendances = Attendance.objects.filter(
-            employee=emp,
-            date__month=month,
-            date__year=year
-        )
-        
-        # Present: 1.0, Half-day: 0.5, Paid Leave: 1.0, Absent: 0.0
-        days_present = Decimal('0.0')
-        days_paid_leave = Decimal('0.0')
-        days_absent = Decimal('0.0')
-        
-        for att in attendances:
-            if att.status == 'PRESENT':
-                days_present += Decimal('1.0')
-            elif att.status == 'HALF_DAY':
-                days_present += Decimal('0.5')
-            elif att.status == 'PAID_LEAVE':
-                days_paid_leave += Decimal('1.0')
-            elif att.status == 'ABSENT':
-                days_absent += Decimal('1.0')
+    from .payroll import calculate_payroll
+    holidays = {h.date: h for h in Holiday.objects.filter(date__year=year, date__month=month)}
+    marks = {}
+    for att in Attendance.objects.filter(date__year=year, date__month=month):
+        marks.setdefault(att.employee_id, {})[att.date] = att
 
-        # Calculate base salary depending on salary_type
-        if emp.salary_type == 'DAILY':
-            base_salary = (days_present + days_paid_leave) * emp.salary_rate
-        else: # MONTHLY paid
-            base_salary = emp.salary_rate
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    records = []
+    for emp in Employee.objects.filter(is_active=True).order_by('first_name', 'last_name'):
+        if emp.date_joined and emp.date_joined > month_end:
+            continue
+        payroll, _ = Payroll.objects.get_or_create(employee=emp, month=month, year=year)
+        if payroll.status != 'PAID':
+            for field, value in calculate_payroll(emp, year, month, marks.get(emp.id, {}), holidays).items():
+                setattr(payroll, field, value)
+            payroll.save()
+        records.append(payroll)
 
-        # Get or create payroll record
-        payroll, created = Payroll.objects.get_or_create(
-            employee=emp,
-            month=month,
-            year=year,
-            defaults={
-                'days_present': days_present,
-                'days_paid_leave': days_paid_leave,
-                'days_absent': days_absent,
-                'base_salary': base_salary,
-                'allowances': Decimal('0.00'),
-                'deductions': Decimal('0.00'),
-                'status': 'DRAFT'
-            }
-        )
-        
-        if not created:
-            # Update dynamic fields but preserve manually added allowances/deductions
-            if payroll.status != 'PAID':
-                payroll.days_present = days_present
-                payroll.days_paid_leave = days_paid_leave
-                payroll.days_absent = days_absent
-                payroll.base_salary = base_salary
-                payroll.save()
-                
-        payroll_records.append(payroll)
-        
-    serializer = PayrollSerializer(payroll_records, many=True)
-    return Response(serializer.data)
+    return Response(PayrollSerializer(records, many=True).data)
 
-@api_view(['PUT'])
+
+@api_view(['PUT', 'PATCH'])
 def update_payroll_record(request, pk):
-    """Update allowances or deductions on a draft payroll record"""
+    """Edit allowances, advances, deductions or notes on an unpaid payroll."""
     payroll = get_object_or_404(Payroll, pk=pk)
-    
     if payroll.status == 'PAID':
-        return Response({"error": "Cannot update a paid payroll record"}, status=status.HTTP_400_BAD_REQUEST)
-        
-    allowances = request.data.get('allowances')
-    deductions = request.data.get('deductions')
-    
-    if allowances is not None:
-        payroll.allowances = allowances
-    if deductions is not None:
-        payroll.deductions = deductions
-        
+        return Response({"error": "This salary has already been paid."}, status=status.HTTP_400_BAD_REQUEST)
+
+    for field in ('allowances', 'advances', 'deductions'):
+        if field in request.data:
+            try:
+                value = Decimal(str(request.data.get(field) or 0))
+            except InvalidOperation:
+                return Response({"error": f"Invalid {field}."}, status=status.HTTP_400_BAD_REQUEST)
+            if value < 0:
+                return Response({"error": f"{field.capitalize()} can't be negative."}, status=status.HTTP_400_BAD_REQUEST)
+            setattr(payroll, field, value)
+    if 'notes' in request.data:
+        payroll.notes = request.data.get('notes') or ''
     payroll.save()
     return Response(PayrollSerializer(payroll).data)
 
+
 @api_view(['POST'])
 def pay_payroll_record(request, pk):
-    """Mark a payroll record as Paid"""
+    """Mark a salary as paid; it's frozen from then on."""
     payroll = get_object_or_404(Payroll, pk=pk)
-    
     if payroll.status == 'PAID':
-        return Response({"error": "Payroll record is already paid"}, status=status.HTTP_400_BAD_REQUEST)
-        
+        return Response({"error": "This salary has already been paid."}, status=status.HTTP_400_BAD_REQUEST)
     payroll.status = 'PAID'
-    payroll.paid_date = timezone.now().date()
+    payroll.paid_date = timezone.localdate()
     payroll.save()
-    
     return Response(PayrollSerializer(payroll).data)
 
 # --- VEHICLE INSPECTION VIEWS ---

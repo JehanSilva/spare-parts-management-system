@@ -7,6 +7,7 @@ import {
   MapPin,
   Edit2,
   Trash2,
+  Link2,
   Car,
   XCircle,
   Download,
@@ -927,7 +928,7 @@ const hasNoImage = (p) => !p.image;
 
 const InventoryPage = () => {
   // ── Cache ────────────────────────────────────────────────────────────────
-  const { allParts, partsLoading: loading, invalidateParts } = useParts();
+  const { allParts, partsLoading: loading, invalidateParts, withCompatibleParts } = useParts();
 
   const [showForm, setShowForm] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -1065,6 +1066,17 @@ const InventoryPage = () => {
 
     return result;
   }, [allParts, searchTerm, selectedBrand, selectedSupplier, stockFilter, lowStockThreshold, includeOutOfStock, sortBy]);
+
+  // What the grid shows: while searching, each match is followed by its
+  // compatible parts (marked as such). `parts` itself stays the plain filter
+  // result, so reports and counts aren't padded with them.
+  const displayParts = useMemo(
+    () =>
+      searchTerm.trim()
+        ? withCompatibleParts(parts)
+        : parts.map((part) => ({ part, compatibleWith: null })),
+    [parts, searchTerm, withCompatibleParts]
+  );
 
   // ── Filter handlers — just update state, useMemo does the rest ───────────
   const handleStockFilter = (filter) => setStockFilter(filter);
@@ -1585,10 +1597,10 @@ const InventoryPage = () => {
               </p>
             </div>
           ) : (
-            parts.map((part) => (
+            displayParts.map(({ part, compatibleWith }) => (
               <div
                 key={part.id}
-                className="bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col relative group select-none cursor-pointer"
+                className={`bg-white border rounded-lg shadow-sm hover:shadow-lg transition-all duration-300 overflow-hidden flex flex-col relative group select-none cursor-pointer ${compatibleWith ? "border-violet-300 ring-1 ring-violet-200" : "border-gray-200"}`}
                 onContextMenu={(e) => { e.preventDefault(); }} // Prevent mobile context menu on long press
                 onMouseDown={() => startPress(part)}
                 onMouseUp={endPress}
@@ -1631,6 +1643,15 @@ const InventoryPage = () => {
 
                 {/* Image Section */}
                 <div className="h-32 md:h-48 bg-gray-100 relative group-hover:opacity-95 transition-opacity overflow-hidden">
+                  {compatibleWith && (
+                    <span
+                      title={`Compatible with ${compatibleWith.name} (${compatibleWith.part_number})`}
+                      className="absolute top-2 left-2 z-10 max-w-[calc(100%-1rem)] md:max-w-[60%] bg-violet-600 text-white text-[10px] md:text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm"
+                    >
+                      <Link2 size={11} className="shrink-0" />
+                      <span className="truncate">Compatible with {compatibleWith.part_number}</span>
+                    </span>
+                  )}
                   {part.image ? (
                    <>
                     {/* Skeleton Loader (Visible while image loads) */}

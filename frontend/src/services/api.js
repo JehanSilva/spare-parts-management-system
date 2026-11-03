@@ -76,6 +76,12 @@ export const updatePart = async (id, data) =>
   (await API.put(`/parts/${id}/update/`, data)).data;
 export const deletePart = async (id) =>
   await API.delete(`/parts/${id}/delete/`);
+// Interchangeable parts: linking joins/merges groups, unlinking takes the
+// part out of its group. Both return { interchange_group, compatible: [...] }.
+export const linkCompatiblePart = async (id, otherId) =>
+  (await API.post(`/parts/${id}/compatible/link/`, { part_id: otherId })).data;
+export const unlinkCompatiblePart = async (id) =>
+  (await API.post(`/parts/${id}/compatible/unlink/`)).data;
 export const restockPart = async (id, entries, sellPrice) =>
   (
     await API.post(`/parts/${id}/restock/`, {
@@ -154,6 +160,8 @@ export const fetchDashboardStats = async (period = 'all') =>
   (await API.get("/dashboard/stats/", { params: { period } })).data;
 export const fetchDailyReport = async (date) =>
   (await API.get("/reports/daily/", { params: { date } })).data;
+export const fetchMonthlyReport = async (month, year) =>
+  (await API.get("/reports/monthly/", { params: { month, year } })).data;
 
 export const fetchActiveCarts = async () => (await API.get("/active-carts/")).data;
 export const syncActiveCarts = async (data) => (await API.post("/active-carts/sync/", data)).data;
@@ -169,10 +177,13 @@ export const fetchEmployeeAttendance = async (empId, month, year) =>
 // --- ATTENDANCE SERVICES ---
 export const fetchAttendanceSheet = async (date) => (await API.get("/attendance/", { params: { date } })).data;
 export const markAttendanceSheet = async (data) => (await API.post("/attendance/mark/", data)).data;
+export const fetchAttendanceMonth = async (month, year) =>
+  (await API.get("/attendance/month/", { params: { month, year } })).data;
 
 // --- HOLIDAY SERVICES ---
 export const fetchHolidays = async () => (await API.get("/holidays/")).data;
 export const createHoliday = async (data) => (await API.post("/holidays/add/", data)).data;
+export const updateHoliday = async (id, data) => (await API.put(`/holidays/${id}/update/`, data)).data;
 export const deleteHoliday = async (id) => await API.delete(`/holidays/${id}/delete/`);
 
 // --- PAYROLL SERVICES ---

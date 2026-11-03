@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchEmployees,
   createEmployee,
@@ -6,13 +6,13 @@ import {
   deleteEmployee,
   fetchAttendanceSheet,
   markAttendanceSheet,
+  fetchAttendanceMonth,
   fetchPayroll,
   generatePayrollDrafts,
   updatePayroll,
   payPayroll,
-  fetchEmployeeAttendance,
-  fetchHolidays,
   createHoliday,
+  updateHoliday,
   deleteHoliday,
 } from "../services/api";
 import AlertComponent from "../components/AlertComponent";
@@ -23,1826 +23,1602 @@ import {
   Search,
   Edit2,
   Trash2,
-  Calendar,
-  DollarSign,
+  CalendarDays,
+  ClipboardCheck,
+  Wallet,
   Printer,
-  Save,
   Check,
-  User,
   Phone,
   Mail,
-  MapPin,
   XCircle,
-  Sparkles,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  AlertTriangle,
+  RefreshCw,
+  PartyPopper,
+  Moon,
+  CheckCheck,
+  X,
 } from "lucide-react";
 import { useReactToPrint } from "react-to-print";
 
-const EmployeePage = () => {
-  const [activeTab, setActiveTab] = useState("employees"); // employees, attendance, payroll
-  const [employees, setEmployees] = useState([]);
-  const [empLoading, setEmpLoading] = useState(true);
-  const [saveLoading, setSaveLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
+// ─── Constants ────────────────────────────────────────────────────────────────
+// Attendance statuses. "worked" mirrors inventory/payroll.py.
+const STATUSES = [
+  { value: "PRESENT", label: "Present", short: "P", worked: 1, on: "bg-green-600 text-white border-green-600", cell: "bg-green-100 text-green-800" },
+  { value: "HALF_DAY", label: "Half day", short: "H", worked: 0.5, on: "bg-amber-500 text-white border-amber-500", cell: "bg-amber-100 text-amber-800" },
+  { value: "SHORT_LEAVE", label: "Short leave", short: "S", worked: 0.75, on: "bg-sky-500 text-white border-sky-500", cell: "bg-sky-100 text-sky-800" },
+  { value: "ABSENT", label: "Absent", short: "A", worked: 0, on: "bg-red-600 text-white border-red-600", cell: "bg-red-100 text-red-800" },
+];
+const STATUS_BY_VALUE = Object.fromEntries(STATUSES.map((s) => [s.value, s]));
 
-  // Daily Attendance States
-  const [attendanceDate, setAttendanceDate] = useState(
-    new Date().toISOString().split("T")[0]
-  );
-  const [attendanceList, setAttendanceList] = useState([]);
-  const [attLoading, setAttLoading] = useState(false);
-  const [attSaving, setAttSaving] = useState(false);
+const REASONS = [
+  ["SICK", "Sick"],
+  ["MEDICAL", "Medical appt."],
+  ["PERSONAL", "Personal"],
+  ["FAMILY", "Family matter"],
+  ["FUNERAL", "Funeral"],
+  ["WEDDING", "Wedding"],
+  ["RELIGIOUS", "Religious"],
+  ["TRANSPORT", "Transport"],
+  ["WEATHER", "Bad weather"],
+  ["ANNUAL", "Annual leave"],
+  ["CASUAL", "Casual leave"],
+  ["NO_REASON", "No reason"],
+  ["OTHER", "Other"],
+];
+const REASON_LABEL = Object.fromEntries(REASONS);
 
-  // Payroll States
-  const [payrollMonth, setPayrollMonth] = useState(new Date().getMonth() + 1); // 1-12
-  const [payrollYear, setPayrollYear] = useState(new Date().getFullYear());
-  const [payrollList, setPayrollList] = useState([]);
-  const [payrollLoading, setPayrollLoading] = useState(false);
-  const [selectedPayRecord, setSelectedPayRecord] = useState(null); // for print payslip
+const HOLIDAY_TYPES = [
+  ["POYA", "Poya Day"],
+  ["PUBLIC", "Public Holiday"],
+  ["MERCANTILE", "Mercantile Holiday"],
+  ["SHOP_CLOSED", "Shop Closed"],
+  ["OTHER", "Other"],
+];
+const HOLIDAY_LABEL = Object.fromEntries(HOLIDAY_TYPES);
 
-  // Holiday States
-  const [holidays, setHolidays] = useState([]);
-  const [holidaysLoading, setHolidaysLoading] = useState(false);
-  const [holidaySaving, setHolidaySaving] = useState(false);
-  const [newHolidayData, setNewHolidayData] = useState({ date: "", name: "" });
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-  // Attendance Calendar States
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
-  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth() + 1);
-  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
-  const [empAttendance, setEmpAttendance] = useState([]);
-  const [empAttendanceLoading, setEmpAttendanceLoading] = useState(false);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const toLocalISO = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const fromISO = (iso) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+const shiftDate = (iso, days) => {
+  const d = fromISO(iso);
+  d.setDate(d.getDate() + days);
+  return toLocalISO(d);
+};
+const num = (v) => parseFloat(v || 0) || 0;
+const formatLKR = (v) =>
+  `LKR ${num(v).toLocaleString("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtDays = (v) => {
+  const n = num(v);
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, "");
+};
+const shiftMonth = ({ month, year }, delta) => {
+  const d = new Date(year, month - 1 + delta, 1);
+  return { month: d.getMonth() + 1, year: d.getFullYear() };
+};
+const apiError = (err, fallback) => {
+  const data = err?.response?.data;
+  if (!data) return fallback;
+  if (typeof data === "string") return fallback;
+  if (data.error) return data.error;
+  return Object.values(data).flat().join(" ") || fallback;
+};
 
-  // Modal / Form States
-  const [showEmpForm, setShowEmpForm] = useState(false);
-  const [editingEmployee, setEditingEmployee] = useState(null);
-  const [empFormData, setEmpFormData] = useState({
-    first_name: "",
-    last_name: "",
-    email: "",
-    phone_numbers: [{ type: "Personal", number: "" }],
-    address: "",
-    role: "",
-    salary_type: "DAILY",
-    salary_rate: "",
-    is_active: true,
-  });
+// The fields a mark carries to the server.
+const markPayload = (att) => ({
+  status: att.status,
+  leave_reason: att.leave_reason || "",
+  informed: att.informed ?? null,
+  is_paid: !!att.is_paid,
+  notes: att.notes || "",
+});
 
-  const [showPayrollEditModal, setShowPayrollEditModal] = useState(false);
-  const [payrollEditData, setPayrollEditData] = useState({
-    id: null,
-    employee_name: "",
-    allowances: "0.00",
-    deductions: "0.00",
-  });
+const MonthNav = ({ value, onChange }) => (
+  <div className="flex items-stretch bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <button onClick={() => onChange(shiftMonth(value, -1))} className="px-3 text-gray-500 hover:text-gray-900 hover:bg-gray-50 border-r border-gray-200" title="Previous month">
+      <ChevronLeft size={18} />
+    </button>
+    <span className="px-4 py-2.5 font-bold text-gray-800 min-w-[150px] text-center">
+      {MONTHS[value.month - 1]} {value.year}
+    </span>
+    <button onClick={() => onChange(shiftMonth(value, 1))} className="px-3 text-gray-500 hover:text-gray-900 hover:bg-gray-50 border-l border-gray-200" title="Next month">
+      <ChevronRight size={18} />
+    </button>
+  </div>
+);
 
-  // Alert State
-  const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
+const YesNo = ({ label, value, onChange, yesTone = "bg-green-600 border-green-600", noTone = "bg-red-600 border-red-600" }) => (
+  <div className="flex items-center gap-2">
+    <span className="text-xs font-semibold text-gray-500 w-16">{label}</span>
+    <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => onChange(true)}
+        className={`px-3 py-1.5 text-xs font-bold border-r border-gray-200 ${value === true ? `${yesTone} text-white` : "bg-white text-gray-600 hover:bg-gray-50"}`}
+      >
+        Yes
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange(false)}
+        className={`px-3 py-1.5 text-xs font-bold ${value === false ? `${noTone} text-white` : "bg-white text-gray-600 hover:bg-gray-50"}`}
+      >
+        No
+      </button>
+    </div>
+  </div>
+);
 
-  // Delete State
-  const [deleteEmpId, setDeleteEmpId] = useState(null);
+// ─── Attendance editor (used by the daily sheet and the calendar) ─────────────
+// Status buttons, plus reason / informed / paid / note for anything but
+// Present. Every change is handed to onSave straight away. hideStatus drops
+// the status buttons for places that already show them (the daily sheet row).
+const AttendanceEditor = ({ attendance, onSave, onClear, disabled, hideStatus = false }) => {
+  const [note, setNote] = useState(attendance?.notes || "");
+  useEffect(() => setNote(attendance?.notes || ""), [attendance?.notes]);
 
-  // --- Print Payslip Ref & Handler ---
-  const payslipPrintRef = useRef();
-  const handlePrintPayslip = useReactToPrint({
-    contentRef: payslipPrintRef,
-    documentTitle: `Payslip-${selectedPayRecord?.employee_details?.first_name || "Employee"}-${payrollYear}-${payrollMonth}`,
-  });
+  const current = attendance?.status;
+  const isLeave = current && current !== "PRESENT";
 
-  // --- Load Data functions ---
-  const loadEmployees = async () => {
-    setEmpLoading(true);
-    try {
-      const data = await fetchEmployees();
-      setEmployees(data);
-    } catch (error) {
-      console.error("Failed to load employees", error);
-      setAlertInfo({ type: "error", message: "Failed to load employee directory." });
-    } finally {
-      setEmpLoading(false);
-    }
-  };
-
-  const loadAttendance = async (date) => {
-    setAttLoading(true);
-    try {
-      const data = await fetchAttendanceSheet(date);
-      setAttendanceList(data);
-    } catch (error) {
-      console.error("Failed to load attendance", error);
-      setAlertInfo({ type: "error", message: "Failed to load attendance sheet." });
-    } finally {
-      setAttLoading(false);
-    }
-  };
-
-  const loadPayroll = async (month, year) => {
-    setPayrollLoading(true);
-    try {
-      const data = await fetchPayroll(month, year);
-      setPayrollList(data);
-    } catch (error) {
-      console.error("Failed to load payroll list", error);
-      setAlertInfo({ type: "error", message: "Failed to load payroll records." });
-    } finally {
-      setPayrollLoading(false);
-    }
-  };
-
-  const loadHolidays = async () => {
-    setHolidaysLoading(true);
-    try {
-      const data = await fetchHolidays();
-      setHolidays(data);
-    } catch (error) {
-      console.error("Failed to load holidays", error);
-      setAlertInfo({ type: "error", message: "Failed to load holidays." });
-    } finally {
-      setHolidaysLoading(false);
-    }
-  };
-
-  const loadEmployeeAttendance = async (empId, month, year) => {
-    if (!empId) {
-      setEmpAttendance([]);
-      return;
-    }
-    setEmpAttendanceLoading(true);
-    try {
-      const data = await fetchEmployeeAttendance(empId, month, year);
-      setEmpAttendance(data);
-    } catch (error) {
-      console.error("Failed to load employee attendance", error);
-      setAlertInfo({ type: "error", message: "Failed to load employee attendance details." });
-    } finally {
-      setEmpAttendanceLoading(false);
-    }
-  };
-
-  // --- Effects ---
-  useEffect(() => {
-    if (activeTab === "employees") {
-      loadEmployees();
-    } else if (activeTab === "attendance") {
-      loadAttendance(attendanceDate);
-    } else if (activeTab === "payroll") {
-      loadPayroll(payrollMonth, payrollYear);
-    } else if (activeTab === "calendar") {
-      loadEmployees();
-      loadHolidays();
-      if (selectedEmployeeId) {
-        loadEmployeeAttendance(selectedEmployeeId, calendarMonth, calendarYear);
-      }
-    } else if (activeTab === "holidays") {
-      loadHolidays();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
-
-  useEffect(() => {
-    if (activeTab === "attendance") {
-      loadAttendance(attendanceDate);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attendanceDate]);
-
-  useEffect(() => {
-    if (activeTab === "calendar" && selectedEmployeeId) {
-      loadEmployeeAttendance(selectedEmployeeId, calendarMonth, calendarYear);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEmployeeId, calendarMonth, calendarYear]);
-
-  // --- Employee Action Handlers ---
-  const handleAddEmployeeClick = () => {
-    setEditingEmployee(null);
-    setEmpFormData({
-      first_name: "",
-      last_name: "",
-      email: "",
-      phone_numbers: [{ type: "Personal", number: "" }],
-      address: "",
-      role: "",
-      salary_type: "DAILY",
-      salary_rate: "",
-      is_active: true,
-      working_days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
-    });
-    setShowEmpForm(true);
-  };
-
-  const handleEditEmployeeClick = (emp) => {
-    setEditingEmployee(emp);
-    setEmpFormData({
-      first_name: emp.first_name,
-      last_name: emp.last_name,
-      email: emp.email || "",
-      phone_numbers: emp.phone_numbers && emp.phone_numbers.length > 0
-        ? emp.phone_numbers
-        : [{ type: "Personal", number: "" }],
-      address: emp.address || "",
-      role: emp.role,
-      salary_type: emp.salary_type,
-      salary_rate: emp.salary_rate,
-      is_active: emp.is_active,
-      working_days: emp.working_days || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
-    });
-    setShowEmpForm(true);
-  };
-
-  const handleEmpFormSubmit = async (e) => {
-    e.preventDefault();
-    setSaveLoading(true);
-    try {
-      const cleanedPhoneNumbers = empFormData.phone_numbers.filter(
-        (p) => p.number && p.number.trim() !== ""
-      );
-      const payload = {
-        ...empFormData,
-        phone_numbers: cleanedPhoneNumbers,
-      };
-      if (editingEmployee) {
-        await updateEmployee(editingEmployee.id, payload);
-        setAlertInfo({ type: "success", message: "Employee details updated successfully!" });
-      } else {
-        await createEmployee(payload);
-        setAlertInfo({ type: "success", message: "Employee registered successfully!" });
-      }
-      loadEmployees();
-      setShowEmpForm(false);
-    } catch (error) {
-      console.error("Error saving employee", error);
-      const serverMessage = error.response?.data 
-        ? Object.values(error.response.data).flat().join(" ")
-        : "Failed to save employee.";
-      setAlertInfo({ type: "error", message: serverMessage });
-    } finally {
-      setSaveLoading(false);
-    }
-  };
-
-  const executeDeleteEmployee = async () => {
-    if (!deleteEmpId) return;
-    const idToDelete = deleteEmpId;
-    setDeleteEmpId(null);
-    try {
-      await deleteEmployee(idToDelete);
-      setAlertInfo({ type: "success", message: "Employee removed successfully." });
-      loadEmployees();
-    } catch (error) {
-      console.error("Failed to remove employee", error);
-      setAlertInfo({ type: "error", message: "Failed to remove employee." });
-    }
-  };
-
-  const handleToggleActiveStatus = async (emp) => {
-    try {
-      const updatedData = {
-        ...emp,
-        is_active: !emp.is_active,
-      };
-      await updateEmployee(emp.id, updatedData);
-      setAlertInfo({
-        type: "success",
-        message: `${emp.first_name} ${emp.last_name} is now ${
-          !emp.is_active ? "Active" : "Inactive"
-        }.`,
+  const pickStatus = (status) => {
+    if (status === current) return;
+    if (status === "PRESENT") {
+      onSave({ status: "PRESENT", leave_reason: "", informed: null, is_paid: false, notes: attendance?.notes || "" });
+    } else {
+      // Keep leave details when switching between leave types.
+      onSave({
+        status,
+        leave_reason: isLeave ? attendance.leave_reason : "",
+        informed: isLeave ? attendance.informed : null,
+        is_paid: isLeave ? attendance.is_paid : false,
+        notes: attendance?.notes || "",
       });
-      loadEmployees();
-    } catch (error) {
-      console.error("Failed to toggle status", error);
-      setAlertInfo({ type: "error", message: "Failed to update employee status." });
     }
   };
-
-  // --- Attendance Action Handlers ---
-  const handleAttendanceStatusChange = (index, status) => {
-    setAttendanceList((prev) =>
-      prev.map((att, i) => (i === index ? { ...att, status } : att))
-    );
-  };
-
-  const handleAttendanceNotesChange = (index, notes) => {
-    setAttendanceList((prev) =>
-      prev.map((att, i) => (i === index ? { ...att, notes } : att))
-    );
-  };
-
-  const saveAttendanceSheet = async () => {
-    setAttSaving(true);
-    try {
-      const payload = {
-        date: attendanceDate,
-        attendances: attendanceList.map((att) => ({
-          employee: att.employee,
-          status: att.status,
-          notes: att.notes || "",
-        })),
-      };
-      await markAttendanceSheet(payload);
-      setAlertInfo({ type: "success", message: "Attendance saved successfully for " + attendanceDate });
-      loadAttendance(attendanceDate);
-    } catch (error) {
-      console.error("Failed to save attendance", error);
-      setAlertInfo({ type: "error", message: "Failed to save daily attendance sheet." });
-    } finally {
-      setAttSaving(false);
-    }
-  };
-
-  // --- Payroll Action Handlers ---
-  const handleCalculatePayroll = async () => {
-    setPayrollLoading(true);
-    try {
-      const payload = { month: payrollMonth, year: payrollYear };
-      await generatePayrollDrafts(payload);
-      setAlertInfo({ type: "success", message: "Payroll drafts generated successfully!" });
-      loadPayroll(payrollMonth, payrollYear);
-    } catch (error) {
-      console.error("Failed to calculate payroll", error);
-      setAlertInfo({ type: "error", message: "Failed to generate monthly payroll drafts." });
-    } finally {
-      setPayrollLoading(false);
-    }
-  };
-
-  const handleOpenPayrollEdit = (rec) => {
-    setPayrollEditData({
-      id: rec.id,
-      employee_name: `${rec.employee_details?.first_name} ${rec.employee_details?.last_name}`,
-      allowances: rec.allowances,
-      deductions: rec.deductions,
-    });
-    setShowPayrollEditModal(true);
-  };
-
-  const handlePayrollEditSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const payload = {
-        allowances: parseFloat(payrollEditData.allowances) || 0,
-        deductions: parseFloat(payrollEditData.deductions) || 0,
-      };
-      await updatePayroll(payrollEditData.id, payload);
-      setAlertInfo({ type: "success", message: "Payroll adjustments updated successfully!" });
-      setShowPayrollEditModal(false);
-      loadPayroll(payrollMonth, payrollYear);
-    } catch (error) {
-      console.error("Failed to update payroll adjustments", error);
-      setAlertInfo({ type: "error", message: "Failed to save adjustments." });
-    }
-  };
-
-  const handlePaySalary = async (rec) => {
-    try {
-      await payPayroll(rec.id);
-      setAlertInfo({ type: "success", message: `Salary marked as Paid for ${rec.employee_details?.first_name}!` });
-      loadPayroll(payrollMonth, payrollYear);
-    } catch (error) {
-      console.error("Failed to mark paid", error);
-      setAlertInfo({ type: "error", message: "Failed to mark salary as paid." });
-    }
-  };
-
-  const triggerPrintPayslip = (rec) => {
-    setSelectedPayRecord(rec);
-    setTimeout(() => {
-      handlePrintPayslip();
-    }, 100);
-  };
-
-  // --- Filtering ---
-  const filteredEmployees = employees.filter((emp) => {
-    const searchLower = searchTerm.trim().toLowerCase();
-    const fullName = `${emp.first_name} ${emp.last_name}`.toLowerCase();
-    const matchesPhone = emp.phone_numbers && Array.isArray(emp.phone_numbers) && emp.phone_numbers.some(
-      (p) => p.number && p.number.includes(searchTerm.trim())
-    );
-    const matchesSearch =
-      fullName.includes(searchLower) ||
-      (emp.role && emp.role.toLowerCase().includes(searchLower)) ||
-      matchesPhone;
-    return matchesSearch;
-  });
-
-  const months = [
-    { value: 1, label: "January" },
-    { value: 2, label: "February" },
-    { value: 3, label: "March" },
-    { value: 4, label: "April" },
-    { value: 5, label: "May" },
-    { value: 6, label: "June" },
-    { value: 7, label: "July" },
-    { value: 8, label: "August" },
-    { value: 9, label: "September" },
-    { value: 10, label: "October" },
-    { value: 11, label: "November" },
-    { value: 12, label: "December" },
-  ];
-
-  const years = [];
-  const currentYear = new Date().getFullYear();
-  for (let y = currentYear - 3; y <= currentYear + 1; y++) {
-    years.push(y);
-  }
+  const patch = (fields) => onSave({ ...markPayload(attendance), ...fields });
 
   return (
-    <div className="p-4 md:p-8 min-h-screen bg-gray-50 relative">
-      <ConfirmModal
-        isOpen={!!deleteEmpId}
-        title="Remove Employee?"
-        message="Are you sure you want to remove this employee? If they have history, they will be deactivated instead."
-        onConfirm={executeDeleteEmployee}
-        onCancel={() => setDeleteEmpId(null)}
-      />
-
-      {alertInfo.message && (
-        <AlertComponent
-          type={alertInfo.type}
-          message={alertInfo.message}
-          onClose={() => setAlertInfo({ type: "", message: "" })}
-        />
-      )}
-
-      {/* --- HEADER --- */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 print:hidden">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-red-900 flex items-center gap-2">
-            <Users className="w-6 h-6 md:w-8 md:h-8" /> Employees & Payroll
-          </h1>
-          <p className="text-gray-600 text-sm mt-1">
-            Manage staff registries, trace daily attendance logs, and compile monthly salaries.
-          </p>
-        </div>
-
-        {activeTab === "employees" && (
+    <div className="space-y-3">
+      {!hideStatus && (
+      <div className="flex flex-wrap gap-1.5">
+        {STATUSES.map((s) => (
           <button
-            onClick={handleAddEmployeeClick}
-            className="w-full md:w-auto px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center gap-2"
+            key={s.value}
+            type="button"
+            disabled={disabled}
+            onClick={() => pickStatus(s.value)}
+            className={`px-3.5 py-2 rounded-xl text-sm font-bold border transition-colors disabled:opacity-50 ${current === s.value ? s.on : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+              }`}
           >
-            <Plus size={20} /> Add Employee
+            {s.label}
+          </button>
+        ))}
+        {attendance && onClear && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onClear}
+            className="px-3 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+            title="Remove this mark"
+          >
+            Clear
           </button>
         )}
       </div>
+      )}
 
-      {/* --- TABS --- */}
-      <div className="flex flex-wrap border-b border-gray-200 mb-6 bg-white p-1.5 rounded-2xl shadow-sm gap-2 print:hidden">
-        <button
-          onClick={() => setActiveTab("employees")}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
-            activeTab === "employees"
-              ? "bg-red-900 text-white shadow-sm"
-              : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
-          }`}
-        >
-          <Users size={18} /> Staff Registry
-        </button>
-        <button
-          onClick={() => setActiveTab("attendance")}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
-            activeTab === "attendance"
-              ? "bg-red-900 text-white shadow-sm"
-              : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
-          }`}
-        >
-          <Calendar size={18} /> Daily Attendance
-        </button>
-        <button
-          onClick={() => setActiveTab("calendar")}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
-            activeTab === "calendar"
-              ? "bg-red-900 text-white shadow-sm"
-              : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
-          }`}
-        >
-          <Calendar size={18} /> Attendance Calendar
-        </button>
-        <button
-          onClick={() => setActiveTab("holidays")}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
-            activeTab === "holidays"
-              ? "bg-red-900 text-white shadow-sm"
-              : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
-          }`}
-        >
-          <Sparkles size={18} /> Holidays
-        </button>
-        <button
-          onClick={() => setActiveTab("payroll")}
-          className={`flex-1 min-w-[120px] py-3 px-4 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${
-            activeTab === "payroll"
-              ? "bg-red-900 text-white shadow-sm"
-              : "text-gray-500 hover:bg-gray-50 hover:text-gray-800"
-          }`}
-        >
-          <DollarSign size={18} /> Monthly Payroll
-        </button>
-      </div>
-
-      {/* ========================================================================= */}
-      {/* TAB 1: EMPLOYEES REGISTRY */}
-      {/* ========================================================================= */}
-      {activeTab === "employees" && (
-        <div className="print:hidden">
-          {/* Search bar */}
-          <div className="relative mb-6 w-full md:max-w-md">
-            <Search className="absolute left-3 top-3.5 text-gray-400" size={18} />
-            <input
-              type="text"
-              placeholder="Search by name, designation, phone..."
-              className="w-full pl-10 p-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-red-500 focus:outline-none transition-all duration-200 text-sm font-medium"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-
-          {empLoading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-900 mb-2"></div>
-              <p>Fetching staff registry...</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-              {filteredEmployees.length === 0 ? (
-                <div className="col-span-full text-center py-16 bg-white rounded-3xl shadow-sm border border-gray-100">
-                  <Users size={48} className="mx-auto text-gray-300 mb-3" />
-                  <p className="text-gray-500 italic">No employees found matching "{searchTerm}".</p>
-                </div>
-              ) : (
-                filteredEmployees.map((emp) => (
-                  <div
-                    key={emp.id}
-                    className={`bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 border-t-4 p-5 relative group ${
-                      emp.is_active ? "border-red-800" : "border-gray-400 opacity-75"
+      {isLeave && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-3">
+          <div>
+            <p className="text-xs font-semibold text-gray-500 mb-1.5">Reason</p>
+            <div className="flex flex-wrap gap-1.5">
+              {REASONS.map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => patch({ leave_reason: attendance.leave_reason === value ? "" : value })}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${attendance.leave_reason === value
+                    ? "bg-gray-900 text-white border-gray-900"
+                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
                     }`}
-                  >
-                    {/* Active/Inactive status tag & Toggle switch */}
-                    <div className="absolute top-4 right-4 flex items-center gap-2">
-                      <span
-                        className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
-                          emp.is_active
-                            ? "bg-green-50 text-green-700 border-green-200"
-                            : "bg-gray-100 text-gray-600 border-gray-300"
-                        }`}
-                      >
-                        {emp.is_active ? "Active" : "Inactive"}
-                      </span>
-                      <label className="relative inline-flex items-center cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          className="sr-only peer"
-                          checked={emp.is_active}
-                          onChange={() => handleToggleActiveStatus(emp)}
-                        />
-                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-800"></div>
-                      </label>
-                    </div>
-
-                    {/* Employee Info */}
-                    <div className="flex items-center gap-3.5 mb-4">
-                      <div
-                        className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                          emp.is_active ? "bg-red-50 text-red-900" : "bg-gray-100 text-gray-500"
-                        }`}
-                      >
-                        <User size={24} />
-                      </div>
-                      <div>
-                        <h2 className="text-lg font-bold text-gray-800 leading-tight">
-                          {emp.first_name} {emp.last_name}
-                        </h2>
-                        <span className="text-xs text-red-700/80 font-bold tracking-wide uppercase">
-                          {emp.role}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="w-full h-px bg-gray-100 my-4"></div>
-
-                    {/* Details */}
-                    <div className="space-y-2.5 text-xs text-gray-600">
-                      <div className="flex flex-col gap-1.5">
-                        {emp.phone_numbers && emp.phone_numbers.length > 0 ? (
-                          emp.phone_numbers.map((p, idx) => (
-                            <div key={idx} className="flex items-center gap-2">
-                              <Phone size={14} className="text-gray-400 shrink-0" />
-                              <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 border border-gray-200/50">
-                                {p.type}
-                              </span>
-                              <span className="font-semibold text-gray-700">{p.number}</span>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <Phone size={14} className="text-gray-400 shrink-0" />
-                            <span className="italic text-gray-400">No phone numbers</span>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2.5">
-                        <Mail size={14} className="text-gray-400 shrink-0" />
-                        <span className="truncate">{emp.email || <span className="italic text-gray-400">No email</span>}</span>
-                      </div>
-                      <div className="flex items-start gap-2.5">
-                        <MapPin size={14} className="text-gray-400 shrink-0 mt-0.5" />
-                        <span className="line-clamp-2 leading-relaxed">
-                          {emp.address || <span className="italic text-gray-400">No address</span>}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2.5 bg-gray-50/80 p-2.5 rounded-xl border border-gray-100/60 font-semibold text-gray-700">
-                        <DollarSign size={14} className="text-red-700 shrink-0" />
-                        <div>
-                          <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block leading-none">
-                            Salary rate
-                          </span>
-                          <span className="text-sm font-bold text-gray-800">
-                            LKR {parseFloat(emp.salary_rate).toLocaleString()}
-                          </span>
-                          <span className="text-[11px] text-red-700 ml-1 font-bold">
-                            /{emp.salary_type === "DAILY" ? "day" : "month"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Edit/Delete overlay */}
-                    <div className="flex gap-2 justify-end mt-4 pt-3 border-t border-gray-50 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => {
-                          setSelectedEmployeeId(emp.id);
-                          setActiveTab("calendar");
-                        }}
-                        className="px-3.5 py-1.5 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:text-purple-900 transition rounded-lg text-xs font-bold flex items-center gap-1"
-                      >
-                        <Calendar size={12} /> Calendar
-                      </button>
-                      <button
-                        onClick={() => handleEditEmployeeClick(emp)}
-                        className="px-3.5 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-900 transition rounded-lg text-xs font-bold flex items-center gap-1"
-                      >
-                        <Edit2 size={12} /> Edit
-                      </button>
-                      {emp.is_active && (
-                        <button
-                          onClick={() => setDeleteEmpId(emp.id)}
-                          className="px-3.5 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-900 transition rounded-lg text-xs font-bold flex items-center gap-1"
-                        >
-                          <Trash2 size={12} /> Remove
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 2: DAILY ATTENDANCE */}
-      {/* ========================================================================= */}
-      {activeTab === "attendance" && (
-        <div className="print:hidden">
-          <div className="bg-white p-6 rounded-3xl border border-gray-200/80 shadow-sm max-w-4xl mx-auto">
-            {/* Header / Date selector */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-5 mb-6 gap-4">
-              <div>
-                <h2 className="text-xl font-extrabold text-gray-800">Attendance Sheet</h2>
-                <p className="text-gray-400 text-xs mt-1">Select date and log presence statuses below.</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Calendar size={18} className="text-red-700" />
-                <input
-                  type="date"
-                  className="p-2 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 focus:outline-none font-bold text-gray-700 text-sm bg-white"
-                  value={attendanceDate}
-                  onChange={(e) => setAttendanceDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {attLoading ? (
-              <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-900 mb-2"></div>
-                <p>Loading attendance record...</p>
-              </div>
-            ) : attendanceList.length === 0 ? (
-              <div className="text-center py-16">
-                <Users size={48} className="mx-auto text-gray-300 mb-3" />
-                <p className="text-gray-500 italic">No active employees registered to mark attendance.</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {attendanceList.map((att, idx) => (
-                  <div
-                    key={att.employee}
-                    className="flex flex-col lg:flex-row lg:items-center justify-between p-4 bg-gray-50 hover:bg-gray-100/50 rounded-2xl border border-gray-200/40 transition duration-150 gap-4"
-                  >
-                    {/* Employee Profile */}
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-red-100 text-red-800 rounded-xl flex items-center justify-center font-bold">
-                        {att.employee_name ? att.employee_name.charAt(0) : "E"}
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-gray-800 leading-tight">
-                          {att.employee_name}
-                        </h3>
-                        <span className="text-[10px] bg-white border border-gray-200 text-gray-500 px-2 py-0.5 rounded-full font-bold uppercase mt-1 inline-block">
-                          {att.employee_role}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Controls */}
-                    <div className="flex flex-wrap items-center gap-3 lg:gap-6">
-                      {/* Segmented status buttons */}
-                      <div className="flex bg-white p-1 rounded-xl shadow-sm border border-gray-200/70 select-none">
-                        {[
-                          { value: "PRESENT", label: "Present", color: "bg-green-500 text-white" },
-                          { value: "HALF_DAY", label: "Half Day", color: "bg-orange-500 text-white" },
-                          { value: "PAID_LEAVE", label: "Paid Leave", color: "bg-blue-500 text-white" },
-                          { value: "ABSENT", label: "Absent", color: "bg-red-500 text-white" },
-                        ].map((btn) => {
-                          const isSelected = att.status === btn.value;
-                          return (
-                            <button
-                              key={btn.value}
-                              type="button"
-                              onClick={() => handleAttendanceStatusChange(idx, btn.value)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 ${
-                                isSelected
-                                  ? btn.color + " shadow-sm font-black scale-105"
-                                  : "text-gray-500 hover:text-gray-800 hover:bg-gray-50"
-                              }`}
-                            >
-                              {btn.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Notes input */}
-                      <input
-                        type="text"
-                        placeholder="Optional remarks/notes..."
-                        className="p-2 border border-gray-200 rounded-xl bg-white text-xs font-medium focus:ring-2 focus:ring-red-500 focus:outline-none max-w-[200px]"
-                        value={att.notes || ""}
-                        onChange={(e) => handleAttendanceNotesChange(idx, e.target.value)}
-                      />
-                    </div>
-                  </div>
-                ))}
-
-                {/* Save button */}
-                <div className="pt-6 border-t border-gray-100 flex justify-end">
-                  <button
-                    onClick={saveAttendanceSheet}
-                    disabled={attSaving}
-                    className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl shadow-md flex items-center gap-2 hover:-translate-y-0.5 transition duration-150 disabled:bg-gray-400"
-                  >
-                    {attSaving ? (
-                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    ) : (
-                      <Save size={18} />
-                    )}
-                    Save Daily Attendance Sheet
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB: GLOBAL HOLIDAYS */}
-      {/* ========================================================================= */}
-      {activeTab === "holidays" && (
-        <div className="max-w-4xl mx-auto space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm">
-            <h2 className="text-xl font-extrabold text-gray-800 mb-4 flex items-center gap-2">
-              <Sparkles className="text-red-800" size={20} /> Mark Custom Holiday
-            </h2>
-            <form
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (!newHolidayData.date) return;
-                setHolidaySaving(true);
-                try {
-                  await createHoliday(newHolidayData);
-                  setAlertInfo({ type: "success", message: "Holiday marked successfully!" });
-                  setNewHolidayData({ date: "", name: "" });
-                  loadHolidays();
-                } catch (error) {
-                  console.error("Failed to save holiday", error);
-                  setAlertInfo({
-                    type: "error",
-                    message: error.response?.data?.date?.[0] || "Failed to mark holiday.",
-                  });
-                } finally {
-                  setHolidaySaving(false);
-                }
-              }}
-              className="flex flex-col sm:flex-row gap-4 items-end"
-            >
-              <div className="flex-1 flex flex-col w-full">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Holiday Date</label>
-                <input
-                  type="date"
-                  required
-                  value={newHolidayData.date}
-                  onChange={(e) => setNewHolidayData({ ...newHolidayData, date: e.target.value })}
-                  className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold w-full bg-white"
-                />
-              </div>
-              <div className="flex-[2] flex flex-col w-full">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Holiday Name (Optional)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Christmas, Labour Day, Vesak"
-                  value={newHolidayData.name}
-                  onChange={(e) => setNewHolidayData({ ...newHolidayData, name: e.target.value })}
-                  className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold w-full bg-white"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={holidaySaving}
-                className="px-6 py-3 bg-red-800 hover:bg-red-900 text-white font-bold rounded-xl shadow-md flex items-center justify-center gap-2 hover:-translate-y-0.5 transition duration-150 disabled:bg-gray-400 w-full sm:w-auto"
-              >
-                {holidaySaving ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                ) : (
-                  <Plus size={18} />
-                )}
-                Mark Holiday
-              </button>
-            </form>
-          </div>
-
-          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm">
-            <h2 className="text-xl font-extrabold text-gray-800 mb-4">Marked Global Holidays</h2>
-            {holidaysLoading ? (
-              <div className="flex flex-col items-center justify-center py-10 text-gray-500">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-900 mb-2"></div>
-                <p>Loading marked holidays...</p>
-              </div>
-            ) : holidays.length === 0 ? (
-              <div className="text-center py-10 border border-dashed border-gray-200 rounded-2xl">
-                <p className="text-gray-400 italic text-sm">No custom holidays marked yet.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {holidays.map((h) => (
-                  <div
-                    key={h.id}
-                    className="flex justify-between items-center p-4 bg-gray-50 hover:bg-gray-100/50 rounded-2xl border border-gray-200/40 transition duration-150"
-                  >
-                    <div>
-                      <div className="font-bold text-gray-800 text-sm">
-                        {new Date(h.date).toLocaleDateString("en-US", {
-                          weekday: "short",
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </div>
-                      <div className="text-xs text-red-700 font-bold uppercase tracking-wider mt-0.5">
-                        {h.name || "Holiday"}
-                      </div>
-                    </div>
-                    <button
-                      onClick={async () => {
-                        if (window.confirm("Are you sure you want to remove this holiday?")) {
-                          try {
-                            await deleteHoliday(h.id);
-                            setAlertInfo({ type: "success", message: "Holiday removed." });
-                            loadHolidays();
-                          } catch (error) {
-                            console.error("Failed to delete holiday", error);
-                            setAlertInfo({ type: "error", message: "Failed to remove holiday." });
-                          }
-                        }
-                      }}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition-colors"
-                      title="Remove Holiday"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB: ATTENDANCE CALENDAR */}
-      {/* ========================================================================= */}
-      {activeTab === "calendar" && (
-        <div className="max-w-4xl mx-auto space-y-6">
-          {/* Select and Month selectors */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div className="flex flex-col w-full md:w-auto flex-1 max-w-sm">
-              <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Select Employee</label>
-              <select
-                className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer w-full"
-                value={selectedEmployeeId}
-                onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              >
-                <option value="">-- Choose Employee --</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.first_name} {emp.last_name} ({emp.role})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex gap-4 w-full md:w-auto">
-              <div className="flex flex-col flex-1 sm:flex-initial">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Month</label>
-                <select
-                  className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer min-w-[130px]"
-                  value={calendarMonth}
-                  onChange={(e) => setCalendarMonth(parseInt(e.target.value))}
                 >
-                  {months.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-col flex-1 sm:flex-initial">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Year</label>
-                <select
-                  className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer min-w-[100px]"
-                  value={calendarYear}
-                  onChange={(e) => setCalendarYear(parseInt(e.target.value))}
-                >
-                  {years.map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
-
-          {/* Calendar Body */}
-          {!selectedEmployeeId ? (
-            <div className="bg-white p-12 rounded-3xl border border-gray-200 shadow-sm text-center">
-              <Calendar size={48} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500 italic">Please select an employee above to view their attendance calendar.</p>
-            </div>
-          ) : empAttendanceLoading ? (
-            <div className="bg-white p-16 rounded-3xl border border-gray-200 shadow-sm text-center text-gray-500">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-900 mb-2 mx-auto"></div>
-              <p>Fetching attendance records...</p>
-            </div>
-          ) : (
-            <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm space-y-6">
-              {/* Header and Details summary */}
-              {(() => {
-                const emp = employees.find((e) => String(e.id) === String(selectedEmployeeId));
-                if (!emp) return null;
-
-                // Calendar helper calculations
-                const daysInMonth = new Date(calendarYear, calendarMonth, 0).getDate();
-                const firstDayIndex = new Date(calendarYear, calendarMonth - 1, 1).getDay(); // 0 = Sun
-
-                // Calculate summary metrics for the calendar
-                let presentCount = 0;
-                let halfDayCount = 0;
-                let absentCount = 0;
-                let paidLeaveCount = 0;
-
-                const dayCells = [];
-                // Add empty cells for offset
-                for (let i = 0; i < firstDayIndex; i++) {
-                  dayCells.push({ isOffset: true, key: `offset-${i}` });
-                }
-
-                // Fill cells
-                for (let day = 1; day <= daysInMonth; day++) {
-                  const dateStr = `${calendarYear}-${String(calendarMonth).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                  const cellDate = new Date(calendarYear, calendarMonth - 1, day);
-                  const isSunday = cellDate.getDay() === 0;
-
-                  // Find custom holiday
-                  const customHoliday = holidays.find((h) => h.date === dateStr);
-
-                  // Find custom working day name
-                  const dayOfWeekName = cellDate.toLocaleDateString("en-US", { weekday: "long" });
-                  const isWorkingDay = emp.working_days?.includes(dayOfWeekName);
-
-                  // Find DB attendance record
-                  const attRecord = empAttendance.find((a) => a.date === dateStr);
-
-                  let status = "PENDING"; // PENDING, PRESENT, HALF_DAY, ABSENT, PAID_LEAVE, HOLIDAY, OFF_DAY
-                  let label = "";
-
-                  if (attRecord) {
-                    status = attRecord.status;
-                    label = attRecord.notes || "";
-                    if (status === "PRESENT") presentCount++;
-                    else if (status === "HALF_DAY") halfDayCount++;
-                    else if (status === "ABSENT") absentCount++;
-                    else if (status === "PAID_LEAVE") paidLeaveCount++;
-                  } else {
-                    if (isSunday) {
-                      status = "HOLIDAY";
-                      label = "Holiday (Sunday)";
-                    } else if (customHoliday) {
-                      status = "HOLIDAY";
-                      label = customHoliday.name || "Holiday";
-                    } else if (!isWorkingDay) {
-                      status = "OFF_DAY";
-                      label = "Off Day";
-                    } else {
-                      status = "PENDING";
-                    }
-                  }
-
-                  dayCells.push({
-                    isOffset: false,
-                    day,
-                    dateStr,
-                    status,
-                    label,
-                    key: `day-${day}`,
-                  });
-                }
-
-                return (
-                  <>
-                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-100 pb-4 gap-4">
-                      <div>
-                        <h2 className="text-xl font-bold text-gray-800">
-                          {emp.first_name} {emp.last_name}
-                        </h2>
-                        <span className="text-xs text-red-700/80 font-bold uppercase tracking-wide">
-                          {emp.role} • {emp.salary_type === "DAILY" ? "Daily Paid" : "Monthly Paid"}
-                        </span>
-                      </div>
-                      
-                      {/* Grid metrics summary */}
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        <div className="px-3 py-1.5 bg-green-50 text-green-700 rounded-xl font-semibold border border-green-100">
-                          Present: <span className="font-bold">{presentCount}</span>
-                        </div>
-                        <div className="px-3 py-1.5 bg-orange-50 text-orange-700 rounded-xl font-semibold border border-orange-100">
-                          Half Day: <span className="font-bold">{halfDayCount}</span>
-                        </div>
-                        <div className="px-3 py-1.5 bg-blue-50 text-blue-700 rounded-xl font-semibold border border-blue-100">
-                          Paid Leave: <span className="font-bold">{paidLeaveCount}</span>
-                        </div>
-                        <div className="px-3 py-1.5 bg-red-50 text-red-700 rounded-xl font-semibold border border-red-100">
-                          Absent: <span className="font-bold">{absentCount}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Calendar grid */}
-                    <div>
-                      {/* Weekday headers */}
-                      <div className="grid grid-cols-7 gap-2 mb-2 text-center text-xs font-bold text-gray-400 uppercase tracking-wider">
-                        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((wd) => (
-                          <div key={wd} className="py-2">
-                            {wd}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Day cells */}
-                      <div className="grid grid-cols-7 gap-2">
-                        {dayCells.map((cell) => {
-                          if (cell.isOffset) {
-                            return <div key={cell.key} className="aspect-square bg-gray-50/30 rounded-2xl border border-dashed border-gray-100"></div>;
-                          }
-
-                          // Define cell styling based on status
-                          let statusStyles = "";
-                          let badgeStyles = "";
-
-                          switch (cell.status) {
-                            case "PRESENT":
-                              statusStyles = "bg-green-50 border-green-200 text-green-800 hover:bg-green-100/70";
-                              badgeStyles = "bg-green-500 text-white";
-                              break;
-                            case "HALF_DAY":
-                              statusStyles = "bg-orange-50 border-orange-200 text-orange-800 hover:bg-orange-100/70";
-                              badgeStyles = "bg-orange-500 text-white";
-                              break;
-                            case "PAID_LEAVE":
-                              statusStyles = "bg-blue-50 border-blue-200 text-blue-800 hover:bg-blue-100/70";
-                              badgeStyles = "bg-blue-500 text-white";
-                              break;
-                            case "ABSENT":
-                              statusStyles = "bg-red-50 border-red-200 text-red-800 hover:bg-red-100/70";
-                              badgeStyles = "bg-red-500 text-white";
-                              break;
-                            case "HOLIDAY":
-                              statusStyles = "bg-purple-50 border-purple-200 text-purple-800 hover:bg-purple-100/70";
-                              badgeStyles = "bg-purple-600 text-white";
-                              break;
-                            case "OFF_DAY":
-                              statusStyles = "bg-gray-100/80 border-gray-300/40 text-gray-500 hover:bg-gray-100";
-                              badgeStyles = "bg-gray-400 text-white";
-                              break;
-                            default: // PENDING
-                              statusStyles = "bg-white border-gray-200/80 text-gray-400 border-dashed hover:bg-gray-50";
-                              badgeStyles = "bg-gray-300 text-gray-700";
-                              break;
-                          }
-
-                          return (
-                            <div
-                              key={cell.key}
-                              className={`aspect-square p-2 border rounded-2xl flex flex-col justify-between transition-all duration-150 relative group ${statusStyles}`}
-                            >
-                              <span className="text-sm font-bold">{cell.day}</span>
-                              {cell.status !== "PENDING" && (
-                                <div className="flex flex-col items-start gap-1">
-                                  <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold uppercase tracking-wider leading-none ${badgeStyles}`}>
-                                    {cell.status === "PAID_LEAVE" ? "Leave" : cell.status.replace("_", " ")}
-                                  </span>
-                                  {cell.label && (
-                                    <span className="text-[9px] text-gray-400 line-clamp-1 group-hover:line-clamp-none font-medium bg-white/70 px-1 rounded shadow-sm border border-gray-100/50 block">
-                                      {cell.label}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Legend */}
-                    <div className="border-t border-gray-100 pt-4 flex flex-wrap gap-4 justify-center text-xs font-semibold text-gray-500">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 rounded bg-green-50 border border-green-200 inline-block shrink-0"></span>
-                        <span>Present</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 rounded bg-orange-50 border border-orange-200 inline-block shrink-0"></span>
-                        <span>Half Day</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 rounded bg-blue-50 border border-blue-200 inline-block shrink-0"></span>
-                        <span>Paid Leave</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 rounded bg-red-50 border border-red-200 inline-block shrink-0"></span>
-                        <span>Absent</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 rounded bg-purple-50 border border-purple-200 inline-block shrink-0"></span>
-                        <span>Holiday</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 rounded bg-gray-100 border border-gray-300 inline-block shrink-0"></span>
-                        <span>Off Day</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-3.5 h-3.5 rounded bg-white border border-gray-200 border-dashed inline-block shrink-0"></span>
-                        <span>Pending</span>
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TAB 3: PAYROLL CALCULATOR */}
-      {/* ========================================================================= */}
-      {activeTab === "payroll" && (
-        <div className="print:hidden">
-          {/* Controls box */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex flex-col">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Month</label>
-                <select
-                  className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer min-w-[130px]"
-                  value={payrollMonth}
-                  onChange={(e) => setPayrollMonth(parseInt(e.target.value))}
-                >
-                  {months.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="flex flex-col">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1">Year</label>
-                <select
-                  className="p-2.5 border border-gray-200 rounded-xl bg-gray-50 focus:ring-2 focus:ring-red-500 font-bold text-gray-700 text-sm cursor-pointer min-w-[100px]"
-                  value={payrollYear}
-                  onChange={(e) => setPayrollYear(parseInt(e.target.value))}
-                >
-                  {years.map((y) => (
-                    <option key={y} value={y}>
-                      {y}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            <YesNo label="Informed?" value={attendance.informed} onChange={(v) => patch({ informed: v })} />
+            <YesNo label="Paid?" value={attendance.is_paid} onChange={(v) => patch({ is_paid: v })} />
+          </div>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onBlur={() => note !== (attendance.notes || "") && patch({ notes: note })}
+            onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+            placeholder="Note (optional)"
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-red-200 bg-white"
+          />
+          {hideStatus && onClear && (
             <button
-              onClick={handleCalculatePayroll}
-              disabled={payrollLoading}
-              className="w-full md:w-auto px-6 py-3 bg-red-800 hover:bg-red-900 text-white font-bold rounded-xl shadow hover:-translate-y-0.5 transition duration-150 flex items-center justify-center gap-2 disabled:bg-gray-400"
+              type="button"
+              disabled={disabled}
+              onClick={onClear}
+              className="text-xs font-semibold text-gray-400 hover:text-gray-700"
             >
-              <DollarSign size={18} /> Generate/Recalculate Salaries
+              Clear this mark (back to not marked)
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Short summary of a leave mark, e.g. "Sick · informed · unpaid".
+const leaveSummary = (att) => {
+  if (!att || att.status === "PRESENT") return "";
+  const bits = [att.leave_reason ? REASON_LABEL[att.leave_reason] : "No reason set"];
+  if (att.informed === true) bits.push("informed");
+  if (att.informed === false) bits.push("not informed");
+  bits.push(att.is_paid ? "paid" : "unpaid");
+  return bits.join(" · ");
+};
+
+// ─── Tab 1: Daily attendance ──────────────────────────────────────────────────
+const DailyAttendanceTab = ({ notify }) => {
+  const today = toLocalISO(new Date());
+  const [date, setDate] = useState(today);
+  const [sheet, setSheet] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState({}); // employee id -> "saving" | "saved"
+  const [expanded, setExpanded] = useState(null);
+  const [bulkSaving, setBulkSaving] = useState(false);
+
+  const load = useCallback(async (d) => {
+    setLoading(true);
+    try {
+      setSheet(await fetchAttendanceSheet(d));
+    } catch (err) {
+      notify("error", apiError(err, "Could not load attendance."));
+    } finally {
+      setLoading(false);
+    }
+  }, [notify]);
+
+  useEffect(() => {
+    setExpanded(null);
+    load(date);
+  }, [date, load]);
+
+  const setRowAttendance = (employeeId, attendance) =>
+    setSheet((s) => ({
+      ...s,
+      rows: s.rows.map((r) => (r.employee === employeeId ? { ...r, attendance } : r)),
+    }));
+
+  const flash = (id, state) => {
+    setBusy((b) => ({ ...b, [id]: state }));
+    if (state === "saved") setTimeout(() => setBusy((b) => (b[id] === "saved" ? { ...b, [id]: undefined } : b)), 1500);
+  };
+
+  const save = async (row, mark) => {
+    const before = row.attendance;
+    setRowAttendance(row.employee, { ...(before || {}), ...mark });
+    flash(row.employee, "saving");
+    try {
+      const res = await markAttendanceSheet({ date, attendances: [{ employee: row.employee, ...mark }] });
+      setRowAttendance(row.employee, res.saved[0]);
+      flash(row.employee, "saved");
+      if (mark.status !== "PRESENT" && (!before || before.status === "PRESENT")) setExpanded(row.employee);
+    } catch (err) {
+      setRowAttendance(row.employee, before);
+      flash(row.employee, undefined);
+      notify("error", apiError(err, "Could not save attendance."));
+    }
+  };
+
+  const clear = async (row) => {
+    const before = row.attendance;
+    setRowAttendance(row.employee, null);
+    try {
+      await markAttendanceSheet({ date, attendances: [{ employee: row.employee, clear: true }] });
+      setExpanded(null);
+    } catch (err) {
+      setRowAttendance(row.employee, before);
+      notify("error", apiError(err, "Could not clear attendance."));
+    }
+  };
+
+  const unmarkedWorking = sheet ? sheet.rows.filter((r) => !r.attendance && r.is_working_day) : [];
+
+  const markAllPresent = async () => {
+    if (!unmarkedWorking.length) return;
+    setBulkSaving(true);
+    try {
+      const res = await markAttendanceSheet({
+        date,
+        attendances: unmarkedWorking.map((r) => ({ employee: r.employee, status: "PRESENT" })),
+      });
+      const byEmp = Object.fromEntries(res.saved.map((a) => [a.employee, a]));
+      setSheet((s) => ({ ...s, rows: s.rows.map((r) => (byEmp[r.employee] ? { ...r, attendance: byEmp[r.employee] } : r)) }));
+      notify("success", `Marked ${res.saved.length} present.`);
+    } catch (err) {
+      notify("error", apiError(err, "Could not mark everyone present."));
+    } finally {
+      setBulkSaving(false);
+    }
+  };
+
+  const counts = useMemo(() => {
+    const c = { present: 0, leave: 0, unmarked: 0 };
+    (sheet?.rows || []).forEach((r) => {
+      if (!r.attendance) {
+        if (r.is_working_day) c.unmarked += 1;
+      } else if (r.attendance.status === "PRESENT") c.present += 1;
+      else c.leave += 1;
+    });
+    return c;
+  }, [sheet]);
+
+  const dateLabel = fromISO(date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const holiday = sheet?.holiday;
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white p-4 md:p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-stretch bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <button onClick={() => setDate(shiftDate(date, -1))} className="px-3 text-gray-500 hover:text-gray-900 hover:bg-gray-50 border-r border-gray-200" title="Previous day">
+              <ChevronLeft size={18} />
+            </button>
+            <input
+              type="date"
+              value={date}
+              max={today}
+              onChange={(e) => e.target.value && setDate(e.target.value > today ? today : e.target.value)}
+              className="px-3 py-2.5 outline-none font-semibold text-gray-700 bg-transparent"
+            />
+            <button
+              onClick={() => setDate(shiftDate(date, 1))}
+              disabled={date >= today}
+              className="px-3 text-gray-500 hover:text-gray-900 hover:bg-gray-50 border-l border-gray-200 disabled:opacity-30"
+              title="Next day"
+            >
+              <ChevronRight size={18} />
             </button>
           </div>
-
-          {/* Payroll List */}
-          {payrollLoading ? (
-            <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-900 mb-2"></div>
-              <p>Compiling payroll computations...</p>
-            </div>
-          ) : payrollList.length === 0 ? (
-            <div className="text-center py-16 bg-white rounded-3xl border border-gray-100 shadow-sm">
-              <DollarSign size={48} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500 italic">No payroll drafts loaded. Click "Generate/Recalculate Salaries" above to initialize.</p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-3xl border border-gray-200 shadow-sm overflow-hidden">
-              {/* DESKTOP TABLE VIEW */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-gray-50 border-b border-gray-100 text-gray-500 text-xs font-bold uppercase tracking-wider">
-                    <tr>
-                      <th className="p-4 pl-6">Employee Details</th>
-                      <th className="p-4 text-center">Type</th>
-                      <th className="p-4 text-right">Wage Rate</th>
-                      <th className="p-4 text-center">Attendance Logs</th>
-                      <th className="p-4 text-right">Base salary</th>
-                      <th className="p-4 text-right">Allowances</th>
-                      <th className="p-4 text-right">Deductions</th>
-                      <th className="p-4 text-right font-black text-gray-700">Net salary</th>
-                      <th className="p-4 text-center">Status</th>
-                      <th className="p-4 text-center pr-6">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {payrollList.map((rec) => {
-                      const isPaid = rec.status === "PAID";
-                      return (
-                        <tr key={rec.id} className="hover:bg-gray-50/50 transition">
-                          {/* Profile details */}
-                          <td className="p-4 pl-6">
-                            <div className="font-bold text-gray-800">
-                              {rec.employee_details?.first_name} {rec.employee_details?.last_name}
-                            </div>
-                            <span className="text-[10px] font-bold text-red-800/80 uppercase">
-                              {rec.employee_details?.role}
-                            </span>
-                          </td>
-                          {/* Type */}
-                          <td className="p-4 text-center font-bold text-xs">
-                            <span
-                              className={`px-2 py-0.5 rounded-full border ${
-                                rec.employee_details?.salary_type === "DAILY"
-                                  ? "bg-purple-50 text-purple-700 border-purple-200"
-                                  : "bg-blue-50 text-blue-700 border-blue-200"
-                              }`}
-                            >
-                              {rec.employee_details?.salary_type}
-                            </span>
-                          </td>
-                          {/* Rate */}
-                          <td className="p-4 text-right font-semibold text-gray-700 text-sm">
-                            {parseFloat(rec.employee_details?.salary_rate).toLocaleString()}
-                          </td>
-                          {/* Attendance counts */}
-                          <td className="p-4 text-center text-xs font-semibold text-gray-500">
-                            {rec.employee_details?.salary_type === "DAILY" ? (
-                              <div className="flex flex-col leading-tight">
-                                <span>
-                                  Pr: <strong className="text-green-600">{parseFloat(rec.days_present)}</strong>
-                                </span>
-                                <span>
-                                  Lv: <strong className="text-blue-500">{parseFloat(rec.days_paid_leave)}</strong>
-                                </span>
-                                <span>
-                                  Ab: <strong className="text-red-500">{parseFloat(rec.days_absent)}</strong>
-                                </span>
-                              </div>
-                            ) : (
-                              <span className="text-gray-400 font-normal italic">Fixed Rate</span>
-                            )}
-                          </td>
-                          {/* Base Salary */}
-                          <td className="p-4 text-right font-bold text-gray-800 text-sm">
-                            {parseFloat(rec.base_salary).toLocaleString()}
-                          </td>
-                          {/* Allowances */}
-                          <td className="p-4 text-right text-green-600 font-bold text-sm">
-                            +{parseFloat(rec.allowances).toLocaleString()}
-                          </td>
-                          {/* Deductions */}
-                          <td className="p-4 text-right text-red-500 font-bold text-sm">
-                            -{parseFloat(rec.deductions).toLocaleString()}
-                          </td>
-                          {/* Net Salary */}
-                          <td className="p-4 text-right font-black text-gray-800 text-sm bg-gray-50/30">
-                            {parseFloat(rec.net_salary).toLocaleString()}
-                          </td>
-                          {/* Status */}
-                          <td className="p-4 text-center">
-                            <span
-                              className={`text-[9px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
-                                isPaid
-                                  ? "bg-green-50 text-green-700 border-green-200"
-                                  : "bg-yellow-50 text-yellow-700 border-yellow-200"
-                              }`}
-                            >
-                              {rec.status}
-                            </span>
-                          </td>
-                          {/* Actions */}
-                          <td className="p-4 text-center pr-6">
-                            <div className="flex items-center justify-center gap-1.5">
-                              {!isPaid && (
-                                <>
-                                  <button
-                                    onClick={() => handleOpenPayrollEdit(rec)}
-                                    className="p-1.5 bg-gray-100 hover:bg-red-50 hover:text-red-800 rounded-lg text-gray-500 transition-colors"
-                                    title="Edit Allowances/Deductions"
-                                  >
-                                    <Edit2 size={13} />
-                                  </button>
-                                  <button
-                                    onClick={() => handlePaySalary(rec)}
-                                    className="p-1.5 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg transition-colors font-bold text-xs"
-                                    title="Mark Paid"
-                                  >
-                                    <Check size={13} />
-                                  </button>
-                                </>
-                              )}
-                              <button
-                                onClick={() => triggerPrintPayslip(rec)}
-                                className="p-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-gray-700 transition-colors"
-                                title="Print Payslip"
-                              >
-                                <Printer size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          {date !== today && (
+            <button onClick={() => setDate(today)} className="px-4 py-2.5 rounded-xl border border-gray-200 font-semibold text-gray-700 hover:bg-gray-50">
+              Today
+            </button>
           )}
+          <span className="text-sm font-semibold text-gray-500">{dateLabel}</span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="px-3 py-1.5 rounded-full bg-green-50 text-green-700 text-xs font-bold border border-green-100">{counts.present} present</span>
+          <span className="px-3 py-1.5 rounded-full bg-red-50 text-red-700 text-xs font-bold border border-red-100">{counts.leave} on leave</span>
+          <span className={`px-3 py-1.5 rounded-full text-xs font-bold border ${counts.unmarked ? "bg-amber-50 text-amber-700 border-amber-200" : "bg-gray-50 text-gray-500 border-gray-200"}`}>
+            {counts.unmarked} not marked
+          </span>
+          <button
+            onClick={markAllPresent}
+            disabled={!unmarkedWorking.length || bulkSaving || loading}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {bulkSaving ? <Loader2 size={16} className="animate-spin" /> : <CheckCheck size={16} />}
+            Mark everyone else present
+          </button>
+        </div>
+      </div>
+
+      {holiday && (
+        <div className="flex items-center gap-3 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900">
+          <PartyPopper size={22} className="shrink-0" />
+          <div>
+            <p className="font-bold">
+              {HOLIDAY_LABEL[holiday.holiday_type] || "Holiday"}
+              {holiday.name ? ` — ${holiday.name}` : ""}
+            </p>
+            <p className="text-sm">
+              No attendance needed; nobody is counted absent today. Mark someone present only if they came in (paid as an extra day).
+            </p>
+          </div>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 1: ADD/EDIT EMPLOYEE */}
-      {/* ========================================================================= */}
-      {showEmpForm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-gray-100 animate-scale-in">
-            <div className="bg-gradient-to-r from-red-900 to-red-800 p-6 text-white flex justify-between items-center">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Users size={22} />
-                {editingEmployee ? "Edit Employee Details" : "Register New Employee"}
-              </h2>
-              <button
-                onClick={() => setShowEmpForm(false)}
-                className="text-white/80 hover:text-white hover:bg-white/10 p-1.5 rounded-full transition"
-              >
-                <XCircle size={22} />
-              </button>
-            </div>
+      {loading ? (
+        <div className="p-16 text-center text-gray-400 bg-white rounded-2xl border border-gray-100">
+          <Loader2 className="mx-auto animate-spin mb-3" /> Loading attendance…
+        </div>
+      ) : !sheet?.rows.length ? (
+        <div className="p-12 text-center text-gray-500 bg-white rounded-2xl border border-dashed border-gray-300">
+          No active employees on this date. Add employees in the Employees tab.
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm divide-y divide-gray-100">
+          {sheet.rows.map((row) => {
+            const att = row.attendance;
+            const status = att && STATUS_BY_VALUE[att.status];
+            const open = expanded === row.employee;
+            const offDay = !row.is_working_day || holiday;
+            return (
+              <div key={row.employee} className={`p-4 ${offDay && !att ? "bg-gray-50/60" : ""}`}>
+                <div className="flex flex-col md:flex-row md:items-center gap-3">
+                  <div className="flex items-center gap-3 md:w-64 shrink-0">
+                    <div className="w-10 h-10 rounded-full bg-red-100 text-red-700 font-bold flex items-center justify-center shrink-0">
+                      {row.employee_name.charAt(0)}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-gray-900 truncate">{row.employee_name}</p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {row.employee_role}
+                        {!row.is_working_day && (
+                          <span className="ml-1.5 inline-flex items-center gap-0.5 text-gray-400"><Moon size={10} /> day off</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
 
-            <form onSubmit={handleEmpFormSubmit} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col">
-                  <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">First name</label>
-                  <input
-                    type="text"
-                    required
-                    className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                    value={empFormData.first_name}
-                    onChange={(e) => setEmpFormData({ ...empFormData, first_name: e.target.value })}
-                  />
-                </div>
-                <div className="flex flex-col">
-                  <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Last name</label>
-                  <input
-                    type="text"
-                    required
-                    className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                    value={empFormData.last_name}
-                    onChange={(e) => setEmpFormData({ ...empFormData, last_name: e.target.value })}
-                  />
-                </div>
-              </div>
+                  <div className="flex flex-wrap items-center gap-1.5 flex-1">
+                    {STATUSES.map((s) => (
+                      <button
+                        key={s.value}
+                        onClick={() =>
+                          att?.status === s.value
+                            ? s.value !== "PRESENT" && setExpanded(open ? null : row.employee)
+                            : save(row, s.value === "PRESENT"
+                              ? { status: "PRESENT", leave_reason: "", informed: null, is_paid: false, notes: att?.notes || "" }
+                              : {
+                                status: s.value,
+                                leave_reason: att && att.status !== "PRESENT" ? att.leave_reason : "",
+                                informed: att && att.status !== "PRESENT" ? att.informed : null,
+                                is_paid: att && att.status !== "PRESENT" ? att.is_paid : false,
+                                notes: att?.notes || "",
+                              })
+                        }
+                        className={`px-3.5 py-2 rounded-xl text-sm font-bold border transition-colors ${att?.status === s.value ? s.on : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50"
+                          }`}
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                    <span className="ml-1 w-5 flex justify-center">
+                      {busy[row.employee] === "saving" && <Loader2 size={15} className="animate-spin text-gray-400" />}
+                      {busy[row.employee] === "saved" && <Check size={16} className="text-green-600" />}
+                    </span>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col">
-                  <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Role / Designation</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Mechanic, Cashier, Storekeeper"
-                    className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                    value={empFormData.role}
-                    onChange={(e) => setEmpFormData({ ...empFormData, role: e.target.value })}
-                  />
-                </div>
-                <div className="flex flex-col">
-                  <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Email address</label>
-                  <input
-                    type="email"
-                    className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                    value={empFormData.email}
-                    onChange={(e) => setEmpFormData({ ...empFormData, email: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              {/* Dynamic Phone Numbers */}
-              <div className="flex flex-col gap-2 bg-gray-50/50 p-3.5 rounded-2xl border border-gray-100">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase flex justify-between items-center">
-                  <span>Phone Numbers</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEmpFormData({
-                        ...empFormData,
-                        phone_numbers: [...empFormData.phone_numbers, { type: "Personal", number: "" }],
-                      })
-                    }
-                    className="text-red-700 hover:text-red-900 font-bold text-xs flex items-center gap-1 transition-colors"
-                  >
-                    <Plus size={14} /> Add Number
-                  </button>
-                </label>
-                <div className="space-y-2.5 max-h-[150px] overflow-y-auto pr-1">
-                  {empFormData.phone_numbers.length === 0 ? (
-                    <p className="text-xs text-gray-400 italic py-2">No phone numbers added yet.</p>
-                  ) : (
-                    empFormData.phone_numbers.map((phoneObj, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <select
-                          className="p-2.5 border border-gray-200 rounded-xl bg-white text-xs font-semibold focus:ring-2 focus:ring-red-500 focus:outline-none w-[105px] shrink-0"
-                          value={phoneObj.type}
-                          onChange={(e) => {
-                            const updated = [...empFormData.phone_numbers];
-                            updated[index].type = e.target.value;
-                            setEmpFormData({ ...empFormData, phone_numbers: updated });
-                          }}
-                        >
-                          <option value="Personal">Personal</option>
-                          <option value="Home">Home</option>
-                          <option value="Parents">Parents</option>
-                        </select>
-                        <input
-                          type="text"
-                          placeholder="Phone number"
-                          className="p-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-xs font-semibold flex-1"
-                          value={phoneObj.number}
-                          onChange={(e) => {
-                            const updated = [...empFormData.phone_numbers];
-                            updated[index].number = e.target.value;
-                            setEmpFormData({ ...empFormData, phone_numbers: updated });
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const updated = empFormData.phone_numbers.filter((_, idx) => idx !== index);
-                            setEmpFormData({ ...empFormData, phone_numbers: updated });
-                          }}
-                          className="p-2.5 text-red-600 hover:bg-red-50 rounded-xl transition"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))
+                  {att && att.status !== "PRESENT" && (
+                    <button
+                      onClick={() => setExpanded(open ? null : row.employee)}
+                      className={`text-left md:text-right text-xs font-semibold px-3 py-1.5 rounded-lg border ${att.leave_reason ? "border-gray-200 text-gray-600 hover:bg-gray-50" : "border-amber-300 bg-amber-50 text-amber-800"
+                        }`}
+                    >
+                      {leaveSummary(att)}
+                      <span className="ml-1 text-gray-400">{open ? "▲" : "▼"}</span>
+                    </button>
+                  )}
+                  {!att && row.is_working_day && !holiday && (
+                    <span className="text-xs font-semibold text-amber-600">Not marked</span>
                   )}
                 </div>
-              </div>
 
-              <div className="flex flex-col">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Home address</label>
-                <textarea
-                  rows={2}
-                  className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                  value={empFormData.address}
-                  onChange={(e) => setEmpFormData({ ...empFormData, address: e.target.value })}
-                />
+                {open && att && att.status !== "PRESENT" && (
+                  <div className="mt-3 md:pl-[268px]">
+                    <AttendanceEditor attendance={att} onSave={(mark) => save(row, mark)} onClear={() => clear(row)} hideStatus />
+                  </div>
+                )}
+                {status && att.status === "PRESENT" && att.notes && (
+                  <p className="mt-2 md:pl-[268px] text-xs text-gray-500 italic">{att.notes}</p>
+                )}
               </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
-              {/* Working Days */}
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase">Working Days of the Week</label>
-                <div className="flex flex-wrap gap-2">
-                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((day) => {
-                    const isSelected = empFormData.working_days?.includes(day);
-                    return (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() => {
-                          const current = empFormData.working_days || [];
-                          const next = current.includes(day)
-                            ? current.filter((d) => d !== day)
-                            : [...current, day];
-                          setEmpFormData({ ...empFormData, working_days: next });
-                        }}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
-                          isSelected
-                            ? "bg-red-900 text-white border-red-900 shadow-sm"
-                            : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"
-                        }`}
-                      >
-                        {day.slice(0, 3)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+// ─── Tab 2: Monthly calendar (attendance + holidays) ──────────────────────────
+const HolidayModal = ({ date, holiday, onClose, onSaved, notify }) => {
+  const [form, setForm] = useState({
+    name: holiday?.name || "",
+    holiday_type: holiday?.holiday_type || "POYA",
+    is_paid: holiday ? holiday.is_paid : true,
+  });
+  const [saving, setSaving] = useState(false);
 
-              {/* Inactive Toggle Switch in Modal */}
-              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-                <div>
-                  <span className="text-xs font-bold text-gray-700 block">Employment Status</span>
-                  <span className="text-[10px] text-gray-400">Mark employee as active or inactive</span>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="sr-only peer"
-                    checked={empFormData.is_active}
-                    onChange={(e) => setEmpFormData({ ...empFormData, is_active: e.target.checked })}
-                  />
-                  <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-800"></div>
-                </label>
-              </div>
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      if (holiday) await updateHoliday(holiday.id, form);
+      else await createHoliday({ ...form, date });
+      onSaved();
+    } catch (err) {
+      notify("error", apiError(err, "Could not save the holiday."));
+    } finally {
+      setSaving(false);
+    }
+  };
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col">
-                  <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Salary payment type</label>
-                  <select
-                    className="p-3 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                    value={empFormData.salary_type}
-                    onChange={(e) => setEmpFormData({ ...empFormData, salary_type: e.target.value })}
-                  >
-                    <option value="DAILY">Daily Paid</option>
-                    <option value="MONTHLY">Monthly Paid</option>
-                  </select>
-                </div>
-                <div className="flex flex-col">
-                  <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">
-                    Salary rate (LKR)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder={empFormData.salary_type === "DAILY" ? "Rate per day" : "Salary per month"}
-                    className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                    value={empFormData.salary_rate}
-                    onChange={(e) => setEmpFormData({ ...empFormData, salary_rate: e.target.value })}
-                  />
-                </div>
-              </div>
+  const remove = async () => {
+    setSaving(true);
+    try {
+      await deleteHoliday(holiday.id);
+      onSaved();
+    } catch (err) {
+      notify("error", apiError(err, "Could not remove the holiday."));
+      setSaving(false);
+    }
+  };
 
-              <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowEmpForm(false)}
-                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl text-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saveLoading}
-                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white font-bold rounded-xl text-sm flex items-center gap-1.5"
-                >
-                  {saveLoading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>}
-                  Save Employee
-                </button>
-              </div>
-            </form>
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <form onSubmit={submit} className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-amber-600">{holiday ? "Edit holiday" : "Mark as holiday"}</p>
+            <h3 className="text-lg font-bold text-gray-900">
+              {fromISO(date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+            </h3>
           </div>
+          <button type="button" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700"><X size={18} /></button>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {HOLIDAY_TYPES.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setForm({ ...form, holiday_type: value })}
+              className={`px-3 py-1.5 rounded-full text-sm font-semibold border ${form.holiday_type === value ? "bg-amber-500 text-white border-amber-500" : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+                }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <input
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+          placeholder={form.holiday_type === "POYA" ? "e.g. Il Full Moon Poya" : "Name (optional)"}
+          className="w-full px-3 py-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-amber-200"
+        />
+        <label className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 cursor-pointer">
+          <input type="checkbox" checked={form.is_paid} onChange={(e) => setForm({ ...form, is_paid: e.target.checked })} className="mt-0.5 w-4 h-4 accent-amber-500" />
+          <span>
+            <span className="block text-sm font-bold text-gray-800">Paid for daily-paid staff</span>
+            <span className="block text-xs text-gray-500">
+              Daily-paid staff get their day rate for this holiday. Monthly salaries are never cut for a holiday, and nobody is counted absent.
+            </span>
+          </span>
+        </label>
+
+        <div className="flex items-center justify-between pt-2">
+          {holiday ? (
+            <button type="button" onClick={remove} disabled={saving} className="text-sm font-semibold text-red-600 hover:text-red-800">
+              Remove holiday
+            </button>
+          ) : <span />}
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-100 font-semibold text-gray-700">Cancel</button>
+            <button type="submit" disabled={saving} className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center gap-2">
+              {saving && <Loader2 size={14} className="animate-spin" />} Save
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const CellEditorModal = ({ employee, date, attendance, holiday, isWorkingDay, onClose, onChange, notify }) => {
+  const [saving, setSaving] = useState(false);
+
+  const save = async (mark) => {
+    setSaving(true);
+    try {
+      const res = await markAttendanceSheet({ date, attendances: [{ employee: employee.id, ...mark }] });
+      onChange(res.saved[0]);
+    } catch (err) {
+      notify("error", apiError(err, "Could not save attendance."));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const clear = async () => {
+    setSaving(true);
+    try {
+      await markAttendanceSheet({ date, attendances: [{ employee: employee.id, clear: true }] });
+      onChange(null);
+    } catch (err) {
+      notify("error", apiError(err, "Could not clear attendance."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-lg p-5 space-y-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">{employee.name}</h3>
+            <p className="text-sm text-gray-500">
+              {fromISO(date).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {saving && <Loader2 size={16} className="animate-spin text-gray-400" />}
+            <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700"><X size={18} /></button>
+          </div>
+        </div>
+        {(holiday || !isWorkingDay) && (
+          <p className="text-xs p-2.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+            {holiday ? `${HOLIDAY_LABEL[holiday.holiday_type]}${holiday.name ? ` — ${holiday.name}` : ""}.` : "Their day off."} Marking present here counts as an extra paid day.
+          </p>
+        )}
+        <AttendanceEditor attendance={attendance} onSave={save} onClear={clear} disabled={saving} />
+        <div className="flex justify-end">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-900 text-white font-bold text-sm">Done</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MonthCalendarTab = ({ period, setPeriod, notify }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [cell, setCell] = useState(null); // { employee, date }
+  const [holidayDate, setHolidayDate] = useState(null);
+  const today = toLocalISO(new Date());
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await fetchAttendanceMonth(period.month, period.year));
+    } catch (err) {
+      notify("error", apiError(err, "Could not load the month."));
+    } finally {
+      setLoading(false);
+    }
+  }, [period, notify]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const holidaysByDate = useMemo(() => Object.fromEntries((data?.holidays || []).map((h) => [h.date, h])), [data]);
+
+  const updateRecord = (employeeId, date, attendance) =>
+    setData((d) => ({
+      ...d,
+      employees: d.employees.map((e) => {
+        if (e.id !== employeeId) return e;
+        const records = { ...e.records };
+        if (attendance) records[date] = attendance;
+        else delete records[date];
+        return { ...e, records };
+      }),
+    }));
+
+  const totals = (emp) => {
+    const t = { worked: 0, paid: 0, unpaid: 0, uninformed: 0, unmarked: 0 };
+    (data?.days || []).forEach(({ date, weekday }) => {
+      if (emp.date_joined && date < emp.date_joined) return;
+      const rec = emp.records[date];
+      const scheduled = emp.working_days.includes(weekday) && !holidaysByDate[date];
+      if (!rec) {
+        if (scheduled && date <= today) t.unmarked += 1;
+        return;
+      }
+      const worked = STATUS_BY_VALUE[rec.status]?.worked ?? 0;
+      t.worked += worked;
+      if (!scheduled) return;
+      const leave = 1 - worked;
+      if (leave > 0) {
+        if (rec.is_paid) t.paid += leave;
+        else t.unpaid += leave;
+        if (rec.informed === false) t.uninformed += leave;
+      }
+    });
+    return t;
+  };
+
+  const cellEmployee = cell && data?.employees.find((e) => e.id === cell.employeeId);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <MonthNav value={period} onChange={setPeriod} />
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {STATUSES.map((s) => (
+            <span key={s.value} className="flex items-center gap-1.5">
+              <span className={`w-6 h-6 rounded-md flex items-center justify-center font-bold ${s.cell}`}>{s.short}</span>
+              {s.label}
+            </span>
+          ))}
+          <span className="flex items-center gap-1.5"><span className="w-6 h-6 rounded-md bg-amber-200" /> Holiday</span>
+          <span className="flex items-center gap-1.5"><span className="w-6 h-6 rounded-md bg-gray-200" /> Day off</span>
+          <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-600" /> Not informed</span>
+        </div>
+      </div>
+      <p className="text-xs text-gray-500 px-1">
+        Click a <strong>date</strong> to mark it as a holiday (Poya, public, shop closed…). Click any <strong>box</strong> to mark or change attendance.
+      </p>
+
+      {loading || !data ? (
+        <div className="p-16 text-center text-gray-400 bg-white rounded-2xl border border-gray-100">
+          <Loader2 className="mx-auto animate-spin mb-3" /> Loading month…
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
+          <table className="border-collapse text-xs">
+            <thead>
+              <tr>
+                <th className="sticky left-0 z-10 bg-white p-2 text-left font-bold text-gray-600 min-w-[160px] border-b border-gray-200">Employee</th>
+                {data.days.map(({ date, weekday }) => {
+                  const h = holidaysByDate[date];
+                  const day = Number(date.slice(8));
+                  return (
+                    <th key={date} className="p-0.5 border-b border-gray-200">
+                      <button
+                        onClick={() => setHolidayDate(date)}
+                        title={h ? `${HOLIDAY_LABEL[h.holiday_type]}${h.name ? ` — ${h.name}` : ""}${h.is_paid ? "" : " (unpaid for daily staff)"}` : "Mark as holiday"}
+                        className={`w-8 rounded-md py-1 flex flex-col items-center leading-tight hover:ring-2 hover:ring-amber-300 ${h ? "bg-amber-200 text-amber-900" : date === today ? "bg-red-600 text-white" : "text-gray-600"
+                          }`}
+                      >
+                        <span className="text-[9px] font-semibold opacity-70">{weekday.slice(0, 2)}</span>
+                        <span className="font-bold">{day}</span>
+                      </button>
+                    </th>
+                  );
+                })}
+                <th className="p-2 border-b border-gray-200 text-gray-600 font-bold whitespace-nowrap" title="Days worked">Worked</th>
+                <th className="p-2 border-b border-gray-200 text-gray-600 font-bold whitespace-nowrap" title="Paid leave days">Paid lv</th>
+                <th className="p-2 border-b border-gray-200 text-gray-600 font-bold whitespace-nowrap" title="Unpaid leave days">Unpaid</th>
+                <th className="p-2 border-b border-gray-200 text-gray-600 font-bold whitespace-nowrap" title="Leave not informed">Not inf.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.employees.map((emp) => {
+                const t = totals(emp);
+                return (
+                  <tr key={emp.id} className="border-b border-gray-100 last:border-0">
+                    <td className="sticky left-0 z-10 bg-white p-2">
+                      <p className="font-bold text-gray-800 truncate max-w-[150px]">{emp.name}</p>
+                      <p className="text-[10px] text-gray-400">
+                        {emp.role}
+                        {t.unmarked > 0 && <span className="text-amber-600 font-semibold"> · {t.unmarked} unmarked</span>}
+                      </p>
+                    </td>
+                    {data.days.map(({ date, weekday }) => {
+                      const rec = emp.records[date];
+                      const h = holidaysByDate[date];
+                      const working = emp.working_days.includes(weekday);
+                      const notEmployed = emp.date_joined && date < emp.date_joined;
+                      const s = rec && STATUS_BY_VALUE[rec.status];
+                      let cls = "bg-white border border-dashed border-gray-200 text-gray-300";
+                      if (s) cls = s.cell;
+                      else if (h) cls = "bg-amber-100";
+                      else if (!working) cls = "bg-gray-100";
+                      else if (date > today) cls = "bg-white border border-gray-100";
+                      return (
+                        <td key={date} className="p-0.5">
+                          <button
+                            disabled={notEmployed}
+                            onClick={() => setCell({ employeeId: emp.id, date })}
+                            title={rec ? `${s?.label}${rec.status !== "PRESENT" ? ` — ${leaveSummary(rec)}` : ""}${rec.notes ? ` — ${rec.notes}` : ""}` : h ? HOLIDAY_LABEL[h.holiday_type] : working ? "Not marked" : "Day off"}
+                            className={`relative w-8 h-8 rounded-md font-bold flex items-center justify-center hover:ring-2 hover:ring-red-300 disabled:opacity-30 disabled:hover:ring-0 ${cls}`}
+                          >
+                            {notEmployed ? "–" : s ? s.short : ""}
+                            {rec && rec.status !== "PRESENT" && rec.informed === false && (
+                              <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-red-600" />
+                            )}
+                            {rec && rec.status !== "PRESENT" && rec.is_paid && (
+                              <span className="absolute bottom-0 right-0.5 text-[8px] leading-none">₨</span>
+                            )}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td className="p-2 text-center font-bold text-gray-800">{fmtDays(t.worked)}</td>
+                    <td className="p-2 text-center font-semibold text-blue-700">{fmtDays(t.paid)}</td>
+                    <td className="p-2 text-center font-semibold text-red-700">{fmtDays(t.unpaid)}</td>
+                    <td className="p-2 text-center font-semibold text-red-700">{fmtDays(t.uninformed)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="px-3 py-2 text-[11px] text-gray-400 border-t border-gray-100">₨ = paid leave. Empty dashed box = working day not marked yet (counted as present in payroll).</p>
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* MODAL 2: ADJUST ALLOWANCES/DEDUCTIONS */}
-      {/* ========================================================================= */}
-      {showPayrollEditModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-gray-100 animate-scale-in">
-            <div className="bg-gradient-to-r from-red-900 to-red-800 p-5 text-white flex justify-between items-center">
-              <h2 className="text-lg font-bold flex items-center gap-2">
-                <DollarSign size={20} /> Adjust Salary Parameters
-              </h2>
-              <button
-                onClick={() => setShowPayrollEditModal(false)}
-                className="text-white/80 hover:text-white hover:bg-white/10 p-1.5 rounded-full transition"
-              >
-                <XCircle size={20} />
+      {cell && cellEmployee && (
+        <CellEditorModal
+          employee={cellEmployee}
+          date={cell.date}
+          attendance={cellEmployee.records[cell.date] || null}
+          holiday={holidaysByDate[cell.date]}
+          isWorkingDay={cellEmployee.working_days.includes(fromISO(cell.date).toLocaleDateString("en-US", { weekday: "long" }))}
+          onClose={() => setCell(null)}
+          onChange={(att) => updateRecord(cellEmployee.id, cell.date, att)}
+          notify={notify}
+        />
+      )}
+      {holidayDate && (
+        <HolidayModal
+          date={holidayDate}
+          holiday={holidaysByDate[holidayDate]}
+          onClose={() => setHolidayDate(null)}
+          onSaved={() => {
+            setHolidayDate(null);
+            load();
+          }}
+          notify={notify}
+        />
+      )}
+    </div>
+  );
+};
+
+// ─── Tab 3: Payroll ───────────────────────────────────────────────────────────
+const AdjustPayrollModal = ({ record, onClose, onSaved, notify }) => {
+  const [form, setForm] = useState({
+    allowances: num(record.allowances) || "",
+    advances: num(record.advances) || "",
+    deductions: num(record.deductions) || "",
+    notes: record.notes || "",
+  });
+  const [saving, setSaving] = useState(false);
+
+  const preview =
+    num(record.earnings) + num(form.allowances) - num(form.advances) - num(form.deductions) - num(record.epf_employee);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      onSaved(await updatePayroll(record.id, {
+        allowances: num(form.allowances),
+        advances: num(form.advances),
+        deductions: num(form.deductions),
+        notes: form.notes,
+      }));
+    } catch (err) {
+      notify("error", apiError(err, "Could not save."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const field = (key, label, hint) => (
+    <label className="block">
+      <span className="text-xs font-bold text-gray-600">{label}</span>
+      {hint && <span className="block text-[11px] text-gray-400">{hint}</span>}
+      <input
+        type="number"
+        min="0"
+        step="0.01"
+        value={form[key]}
+        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
+        placeholder="0"
+        className="mt-1 w-full px-3 py-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-red-200 font-semibold"
+      />
+    </label>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <form onSubmit={submit} className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-red-700">Adjust salary</p>
+            <h3 className="text-lg font-bold text-gray-900">
+              {record.employee_details?.first_name} {record.employee_details?.last_name}
+            </h3>
+            <p className="text-sm text-gray-500">Attendance pay {formatLKR(record.earnings)}</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-700"><X size={18} /></button>
+        </div>
+        {field("allowances", "Allowances / bonus (+)", "Overtime, incentives, festival bonus…")}
+        {field("advances", "Salary advances already given (−)")}
+        {field("deductions", "Other deductions (−)", "Loans, damages, meals…")}
+        <textarea
+          rows={2}
+          value={form.notes}
+          onChange={(e) => setForm({ ...form, notes: e.target.value })}
+          placeholder="Notes (shown on the salary slip)"
+          className="w-full px-3 py-2 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-red-200 text-sm"
+        />
+        <div className="flex items-center justify-between p-3 rounded-xl bg-gray-50 border border-gray-200">
+          <span className="text-sm font-semibold text-gray-600">Net pay</span>
+          <span className="text-lg font-black text-gray-900">{formatLKR(preview)}</span>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-100 font-semibold text-gray-700">Cancel</button>
+          <button type="submit" disabled={saving} className="px-4 py-2 rounded-xl bg-red-700 hover:bg-red-800 text-white font-bold flex items-center gap-2">
+            {saving && <Loader2 size={14} className="animate-spin" />} Save
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const SalarySlip = React.forwardRef(({ record, period }, ref) => {
+  const emp = record.employee_details || {};
+  const row = (label, value, cls = "") => (
+    <div className={`flex justify-between py-1.5 text-sm ${cls}`}>
+      <span>{label}</span>
+      <span className="font-semibold">{value}</span>
+    </div>
+  );
+  return (
+    <div ref={ref} className="p-10 text-gray-800 font-sans bg-white relative max-w-3xl mx-auto">
+      <div className="flex justify-between items-start border-b-2 border-gray-800 pb-4">
+        <div>
+          <h1 className="text-2xl font-black uppercase">NSS Auto Spares</h1>
+          <p className="text-xs text-gray-600 mt-1">No. 272 Thudella, Ja-ela · +94 71 618 8187</p>
+        </div>
+        <div className="text-right">
+          <h2 className="text-lg font-bold uppercase">Salary Slip</h2>
+          <p className="text-xs text-gray-600">{MONTHS[period.month - 1]} {period.year}</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 my-5 text-sm">
+        <div>
+          <p className="font-bold text-base">{emp.first_name} {emp.last_name}</p>
+          <p className="text-gray-600">{emp.role}</p>
+          {emp.epf_registered && emp.epf_number && <p className="text-gray-600">EPF No: {emp.epf_number}</p>}
+        </div>
+        <div className="text-right text-gray-600">
+          <p>{emp.salary_type === "MONTHLY" ? "Monthly salary" : "Daily rate"}: <strong>{formatLKR(emp.salary_rate)}</strong></p>
+          <p>Day value: <strong>{formatLKR(record.day_value)}</strong></p>
+        </div>
+      </div>
+
+      <table className="w-full text-xs border border-gray-300 mb-5">
+        <thead className="bg-gray-100">
+          <tr>
+            {["Working days", "Worked", "Paid leave", "Unpaid leave", "Holidays", "Extra days"].map((h) => (
+              <th key={h} className="border border-gray-300 p-1.5">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="text-center font-bold">
+            <td className="border border-gray-300 p-2">{record.scheduled_days}</td>
+            <td className="border border-gray-300 p-2">{fmtDays(record.days_worked)}</td>
+            <td className="border border-gray-300 p-2">{fmtDays(record.paid_leave_days)}</td>
+            <td className="border border-gray-300 p-2">{fmtDays(record.unpaid_leave_days)}</td>
+            <td className="border border-gray-300 p-2">{record.holidays}</td>
+            <td className="border border-gray-300 p-2">{fmtDays(record.extra_days)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="border-t border-gray-300 pt-2">
+        {row("Attendance pay", formatLKR(record.earnings))}
+        {num(record.allowances) > 0 && row("Allowances / bonus", `+ ${formatLKR(record.allowances)}`)}
+        {num(record.advances) > 0 && row("Salary advances", `− ${formatLKR(record.advances)}`)}
+        {num(record.deductions) > 0 && row("Other deductions", `− ${formatLKR(record.deductions)}`)}
+        {num(record.epf_employee) > 0 && row("EPF employee contribution (8%)", `− ${formatLKR(record.epf_employee)}`)}
+        {row("NET PAY", formatLKR(record.net_salary), "border-t-2 border-gray-800 mt-2 pt-2 text-base font-black")}
+      </div>
+
+      {num(record.epf_employer) > 0 && (
+        <p className="mt-3 text-xs text-gray-600">
+          Employer contributions (not deducted): EPF 12% {formatLKR(record.epf_employer)} · ETF 3% {formatLKR(record.etf_employer)}
+        </p>
+      )}
+      {record.notes && <p className="mt-3 text-sm italic text-gray-700">Note: {record.notes}</p>}
+
+      <div className="grid grid-cols-2 gap-12 mt-16 text-xs text-center text-gray-600">
+        <div><div className="border-b border-gray-500 mb-1 h-8" />Authorised by</div>
+        <div><div className="border-b border-gray-500 mb-1 h-8" />Employee signature</div>
+      </div>
+      {record.status === "PAID" && (
+        <div className="absolute top-24 right-12 border-4 border-green-600 text-green-600 font-black text-sm px-3 py-1 rounded rotate-12 opacity-70">
+          PAID {record.paid_date || ""}
+        </div>
+      )}
+    </div>
+  );
+});
+
+const PayrollTab = ({ period, setPeriod, onOpenCalendar, notify }) => {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [calculating, setCalculating] = useState(false);
+  const [adjusting, setAdjusting] = useState(null);
+  const [paying, setPaying] = useState(null);
+  const [slip, setSlip] = useState(null);
+  const slipRef = useRef(null);
+
+  const printSlip = useReactToPrint({
+    contentRef: slipRef,
+    documentTitle: slip ? `Salary-${slip.employee_details?.first_name}-${period.year}-${period.month}` : "Salary",
+    onAfterPrint: () => setSlip(null),
+  });
+  useEffect(() => {
+    if (slip) printSlip();
+  }, [slip]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setRecords(await fetchPayroll(period.month, period.year));
+    } catch (err) {
+      notify("error", apiError(err, "Could not load payroll."));
+    } finally {
+      setLoading(false);
+    }
+  }, [period, notify]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const calculate = async () => {
+    setCalculating(true);
+    try {
+      setRecords(await generatePayrollDrafts({ month: period.month, year: period.year }));
+      notify("success", "Salaries calculated from attendance.");
+    } catch (err) {
+      notify("error", apiError(err, "Could not calculate salaries."));
+    } finally {
+      setCalculating(false);
+    }
+  };
+
+  const markPaid = async () => {
+    const rec = paying;
+    setPaying(null);
+    try {
+      const updated = await payPayroll(rec.id);
+      setRecords((rs) => rs.map((r) => (r.id === updated.id ? updated : r)));
+      notify("success", "Marked as paid.");
+    } catch (err) {
+      notify("error", apiError(err, "Could not mark as paid."));
+    }
+  };
+
+  const now = new Date();
+  const monthInProgress = period.year > now.getFullYear() || (period.year === now.getFullYear() && period.month >= now.getMonth() + 1);
+  const unmarkedTotal = records.reduce((s, r) => s + (r.unmarked_days || 0), 0);
+  const total = (k) => records.reduce((s, r) => s + num(r[k]), 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <MonthNav value={period} onChange={setPeriod} />
+        <button
+          onClick={calculate}
+          disabled={calculating}
+          className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 text-white font-bold disabled:opacity-50"
+        >
+          {calculating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+          {records.length ? "Recalculate salaries" : "Calculate salaries"}
+        </button>
+      </div>
+
+      {monthInProgress && records.length > 0 && (
+        <p className="text-sm p-3 rounded-xl bg-blue-50 text-blue-800 border border-blue-100">
+          This month isn't over yet. Remaining days are counted as worked, so these figures are a projection. Recalculate at month end.
+        </p>
+      )}
+      {unmarkedTotal > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-sm p-3 rounded-xl bg-amber-50 text-amber-900 border border-amber-200">
+          <span className="flex items-center gap-2">
+            <AlertTriangle size={16} /> {unmarkedTotal} working day{unmarkedTotal === 1 ? "" : "s"} not marked — counted as present. Check them before paying.
+          </span>
+          <button onClick={onOpenCalendar} className="font-bold underline whitespace-nowrap">Open calendar</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="p-16 text-center text-gray-400 bg-white rounded-2xl border border-gray-100">
+          <Loader2 className="mx-auto animate-spin mb-3" /> Loading payroll…
+        </div>
+      ) : records.length === 0 ? (
+        <div className="p-12 text-center bg-white rounded-2xl border border-dashed border-gray-300 text-gray-500">
+          No salaries for {MONTHS[period.month - 1]} {period.year} yet. Press <strong>Calculate salaries</strong> to work them out from attendance.
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
+          <table className="w-full text-sm min-w-[1000px]">
+            <thead className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-500">
+              <tr>
+                <th className="p-3 text-left">Employee</th>
+                <th className="p-3 text-center" title="Working days (excl. holidays) / days worked">Days</th>
+                <th className="p-3 text-center">Leave paid / unpaid</th>
+                <th className="p-3 text-center" title="Holidays on their working days / worked on holiday or day off">Hol. / Extra</th>
+                <th className="p-3 text-right">Attendance pay</th>
+                <th className="p-3 text-right">Allow. / Adv. / Ded.</th>
+                <th className="p-3 text-right">EPF 8%</th>
+                <th className="p-3 text-right">Net pay</th>
+                <th className="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {records.map((r) => {
+                const emp = r.employee_details || {};
+                const paid = r.status === "PAID";
+                return (
+                  <tr key={r.id} className="hover:bg-gray-50/60">
+                    <td className="p-3">
+                      <p className="font-bold text-gray-900">{emp.first_name} {emp.last_name}</p>
+                      <p className="text-xs text-gray-500">
+                        {emp.salary_type === "MONTHLY" ? "Monthly" : "Daily"} · {formatLKR(emp.salary_rate)}
+                        {r.unmarked_days > 0 && <span className="text-amber-600 font-semibold"> · {r.unmarked_days} unmarked</span>}
+                      </p>
+                    </td>
+                    <td className="p-3 text-center whitespace-nowrap">
+                      <span className="font-bold">{fmtDays(r.days_worked)}</span>
+                      <span className="text-gray-400"> / {r.scheduled_days}</span>
+                    </td>
+                    <td className="p-3 text-center whitespace-nowrap">
+                      <span className="text-blue-700 font-semibold">{fmtDays(r.paid_leave_days)}</span>
+                      <span className="text-gray-300"> / </span>
+                      <span className="text-red-700 font-semibold">{fmtDays(r.unpaid_leave_days)}</span>
+                      {num(r.uninformed_absences) > 0 && (
+                        <span className="block text-[10px] text-red-600">{fmtDays(r.uninformed_absences)} not informed</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-center whitespace-nowrap">
+                      {r.holidays}
+                      <span className="text-gray-300"> / </span>
+                      {fmtDays(r.extra_days)}
+                    </td>
+                    <td className="p-3 text-right font-semibold whitespace-nowrap">{formatLKR(r.earnings)}</td>
+                    <td className="p-3 text-right text-xs whitespace-nowrap">
+                      <span className="text-green-700">+{num(r.allowances).toLocaleString()}</span>
+                      <span className="text-gray-300"> / </span>
+                      <span className="text-red-600">−{num(r.advances).toLocaleString()}</span>
+                      <span className="text-gray-300"> / </span>
+                      <span className="text-red-600">−{num(r.deductions).toLocaleString()}</span>
+                    </td>
+                    <td className="p-3 text-right text-red-600 whitespace-nowrap">
+                      {num(r.epf_employee) > 0 ? `−${num(r.epf_employee).toLocaleString()}` : "—"}
+                    </td>
+                    <td className="p-3 text-right font-black text-gray-900 whitespace-nowrap">{formatLKR(r.net_salary)}</td>
+                    <td className="p-3">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {paid ? (
+                          <span className="px-2 py-1 rounded-full bg-green-50 text-green-700 text-xs font-bold border border-green-200">Paid {r.paid_date}</span>
+                        ) : (
+                          <>
+                            <button onClick={() => setAdjusting(r)} className="p-2 rounded-lg text-gray-500 hover:text-blue-700 hover:bg-blue-50" title="Allowances, advances, deductions">
+                              <Edit2 size={15} />
+                            </button>
+                            <button onClick={() => setPaying(r)} className="px-2.5 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-bold">
+                              Mark paid
+                            </button>
+                          </>
+                        )}
+                        <button onClick={() => setSlip(r)} className="p-2 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100" title="Print salary slip">
+                          <Printer size={15} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot className="bg-gray-50 font-bold">
+              <tr>
+                <td className="p-3" colSpan={4}>Total for {MONTHS[period.month - 1]}</td>
+                <td className="p-3 text-right whitespace-nowrap">{formatLKR(total("earnings"))}</td>
+                <td className="p-3" />
+                <td className="p-3 text-right text-red-600 whitespace-nowrap">−{total("epf_employee").toLocaleString()}</td>
+                <td className="p-3 text-right text-lg whitespace-nowrap">{formatLKR(total("net_salary"))}</td>
+                <td className="p-3" />
+              </tr>
+              {total("epf_employer") > 0 && (
+                <tr>
+                  <td colSpan={9} className="px-3 pb-3 text-xs font-medium text-gray-500">
+                    Employer contributions on top: EPF 12% {formatLKR(total("epf_employer"))} · ETF 3% {formatLKR(total("etf_employer"))} · EPF to remit (8% + 12%): {formatLKR(total("epf_employee") + total("epf_employer"))}
+                  </td>
+                </tr>
+              )}
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {adjusting && (
+        <AdjustPayrollModal
+          record={adjusting}
+          onClose={() => setAdjusting(null)}
+          onSaved={(updated) => {
+            setRecords((rs) => rs.map((r) => (r.id === updated.id ? updated : r)));
+            setAdjusting(null);
+          }}
+          notify={notify}
+        />
+      )}
+      <ConfirmModal
+        isOpen={!!paying}
+        title="Mark salary as paid?"
+        message={paying ? `${paying.employee_details?.first_name}'s ${MONTHS[period.month - 1]} salary of ${formatLKR(paying.net_salary)} will be locked as paid. It can't be recalculated or edited after this.` : ""}
+        confirmLabel="Yes, mark paid"
+        tone="info"
+        onConfirm={markPaid}
+        onCancel={() => setPaying(null)}
+      />
+      <div className="hidden">{slip && <SalarySlip ref={slipRef} record={slip} period={period} />}</div>
+    </div>
+  );
+};
+
+// ─── Tab 4: Employees ─────────────────────────────────────────────────────────
+const EMPTY_FORM = {
+  first_name: "",
+  last_name: "",
+  email: "",
+  phone_numbers: [{ type: "Personal", number: "" }],
+  address: "",
+  role: "",
+  date_joined: toLocalISO(new Date()),
+  salary_type: "DAILY",
+  salary_rate: "",
+  working_days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+  epf_registered: false,
+  epf_number: "",
+  is_active: true,
+};
+
+const EmployeeFormModal = ({ employee, onClose, onSaved, notify }) => {
+  const [form, setForm] = useState(() =>
+    employee
+      ? {
+        ...EMPTY_FORM,
+        ...employee,
+        email: employee.email || "",
+        address: employee.address || "",
+        epf_number: employee.epf_number || "",
+        phone_numbers: employee.phone_numbers?.length ? employee.phone_numbers : [{ type: "Personal", number: "" }],
+        working_days: employee.working_days || EMPTY_FORM.working_days,
+      }
+      : EMPTY_FORM
+  );
+  const [saving, setSaving] = useState(false);
+  const set = (fields) => setForm((f) => ({ ...f, ...fields }));
+  const input = "w-full p-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-200 focus:outline-none text-sm font-semibold";
+  const label = "text-[11px] text-gray-500 font-bold uppercase mb-1 block";
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const payload = { ...form, phone_numbers: form.phone_numbers.filter((p) => p.number?.trim()) };
+      if (employee) await updateEmployee(employee.id, payload);
+      else await createEmployee(payload);
+      onSaved(employee ? "Employee updated." : "Employee added.");
+    } catch (err) {
+      notify("error", apiError(err, "Could not save employee."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <form onSubmit={submit} className="relative bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] overflow-y-auto">
+        <div className="sticky top-0 bg-red-800 text-white p-4 flex justify-between items-center z-10">
+          <h2 className="font-bold text-lg">{employee ? "Edit employee" : "Add employee"}</h2>
+          <button type="button" onClick={onClose} className="p-1 hover:bg-white/10 rounded-full"><XCircle size={20} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div><span className={label}>First name</span><input required className={input} value={form.first_name} onChange={(e) => set({ first_name: e.target.value })} /></div>
+            <div><span className={label}>Last name</span><input required className={input} value={form.last_name} onChange={(e) => set({ last_name: e.target.value })} /></div>
+            <div><span className={label}>Role</span><input required placeholder="Mechanic, Cashier…" className={input} value={form.role} onChange={(e) => set({ role: e.target.value })} /></div>
+            <div><span className={label}>Date joined</span><input type="date" required className={input} value={form.date_joined || ""} onChange={(e) => set({ date_joined: e.target.value })} /></div>
+            <div><span className={label}>Email</span><input type="email" className={input} value={form.email} onChange={(e) => set({ email: e.target.value })} /></div>
+            <div><span className={label}>Address</span><input className={input} value={form.address} onChange={(e) => set({ address: e.target.value })} /></div>
+          </div>
+
+          <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 space-y-2">
+            <div className="flex justify-between items-center">
+              <span className={label}>Phone numbers</span>
+              <button type="button" onClick={() => set({ phone_numbers: [...form.phone_numbers, { type: "Personal", number: "" }] })} className="text-red-700 font-bold text-xs flex items-center gap-1">
+                <Plus size={13} /> Add
               </button>
             </div>
-
-            <form onSubmit={handlePayrollEditSubmit} className="p-5 space-y-4">
-              <div className="bg-gray-50 p-3 rounded-xl border border-gray-100 text-xs">
-                <span className="text-gray-400 font-bold uppercase tracking-wider block">Employee</span>
-                <strong className="text-gray-700 text-sm mt-0.5 block">{payrollEditData.employee_name}</strong>
-              </div>
-
-              <div className="flex flex-col">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Allowances / Bonuses (LKR)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                  value={payrollEditData.allowances}
-                  onChange={(e) => setPayrollEditData({ ...payrollEditData, allowances: e.target.value })}
-                />
-              </div>
-
-              <div className="flex flex-col">
-                <label className="text-[10px] text-gray-400 font-extrabold uppercase mb-1.5">Deductions / Advances (LKR)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  className="p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 focus:outline-none text-sm font-semibold"
-                  value={payrollEditData.deductions}
-                  onChange={(e) => setPayrollEditData({ ...payrollEditData, deductions: e.target.value })}
-                />
-              </div>
-
-              <div className="pt-4 border-t border-gray-100 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowPayrollEditModal(false)}
-                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl text-sm"
+            {form.phone_numbers.map((p, i) => (
+              <div key={i} className="flex gap-2">
+                <select
+                  className="p-2 border border-gray-200 rounded-lg bg-white text-xs font-semibold w-28"
+                  value={p.type}
+                  onChange={(e) => set({ phone_numbers: form.phone_numbers.map((x, j) => (j === i ? { ...x, type: e.target.value } : x)) })}
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white font-bold rounded-xl text-sm"
-                >
-                  Save Adjustments
+                  <option>Personal</option>
+                  <option>Home</option>
+                  <option>Parents</option>
+                </select>
+                <input
+                  className="flex-1 p-2 border border-gray-200 rounded-lg text-sm"
+                  placeholder="Phone number"
+                  value={p.number}
+                  onChange={(e) => set({ phone_numbers: form.phone_numbers.map((x, j) => (j === i ? { ...x, number: e.target.value } : x)) })}
+                />
+                <button type="button" onClick={() => set({ phone_numbers: form.phone_numbers.filter((_, j) => j !== i) })} className="p-2 text-red-600 hover:bg-red-50 rounded-lg">
+                  <Trash2 size={14} />
                 </button>
               </div>
-            </form>
+            ))}
           </div>
+
+          <div>
+            <span className={label}>Working days</span>
+            <div className="flex flex-wrap gap-1.5">
+              {WEEKDAYS.map((d) => {
+                const on = form.working_days.includes(d);
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => set({ working_days: on ? form.working_days.filter((x) => x !== d) : [...form.working_days, d] })}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border ${on ? "bg-red-800 text-white border-red-800" : "bg-white text-gray-500 border-gray-200"}`}
+                  >
+                    {d.slice(0, 3)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <span className={label}>Paid</span>
+              <select className={input} value={form.salary_type} onChange={(e) => set({ salary_type: e.target.value })}>
+                <option value="DAILY">Daily</option>
+                <option value="MONTHLY">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <span className={label}>{form.salary_type === "DAILY" ? "Day rate (LKR)" : "Monthly salary (LKR)"}</span>
+              <input type="number" min="0" step="0.01" required className={input} value={form.salary_rate} onChange={(e) => set({ salary_rate: e.target.value })} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 items-end">
+            <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 cursor-pointer">
+              <input type="checkbox" checked={form.epf_registered} onChange={(e) => set({ epf_registered: e.target.checked })} className="w-4 h-4 accent-red-700" />
+              <span>
+                <span className="block text-sm font-bold text-gray-800">EPF / ETF registered</span>
+                <span className="block text-[11px] text-gray-500">Deduct 8% EPF; employer 12% + ETF 3%</span>
+              </span>
+            </label>
+            <div>
+              <span className={label}>EPF number</span>
+              <input className={input} disabled={!form.epf_registered} value={form.epf_number} onChange={(e) => set({ epf_number: e.target.value })} />
+            </div>
+          </div>
+
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 cursor-pointer">
+            <input type="checkbox" checked={form.is_active} onChange={(e) => set({ is_active: e.target.checked })} className="w-4 h-4 accent-red-700" />
+            <span className="text-sm font-bold text-gray-800">Currently employed (shows on the attendance sheet)</span>
+          </label>
+        </div>
+        <div className="sticky bottom-0 bg-white border-t border-gray-100 p-4 flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-100 font-semibold text-gray-700">Cancel</button>
+          <button type="submit" disabled={saving} className="px-5 py-2 rounded-xl bg-red-800 hover:bg-red-900 text-white font-bold flex items-center gap-2">
+            {saving && <Loader2 size={14} className="animate-spin" />} Save employee
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+const EmployeesTab = ({ notify }) => {
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState(undefined); // undefined = closed, null = new
+  const [deleting, setDeleting] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setEmployees(await fetchEmployees());
+    } catch (err) {
+      notify("error", apiError(err, "Could not load employees."));
+    } finally {
+      setLoading(false);
+    }
+  }, [notify]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const remove = async () => {
+    const emp = deleting;
+    setDeleting(null);
+    try {
+      await deleteEmployee(emp.id);
+      notify("success", "Employee removed.");
+      load();
+    } catch (err) {
+      notify("error", apiError(err, "Could not remove employee."));
+    }
+  };
+
+  const q = search.trim().toLowerCase();
+  const shown = employees.filter((e) => !q || `${e.first_name} ${e.last_name} ${e.role}`.toLowerCase().includes(q));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row gap-3 justify-between">
+        <div className="relative flex-1 max-w-md">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employees" className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-red-200 bg-white" />
+        </div>
+        <button onClick={() => setEditing(null)} className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-red-700 hover:bg-red-800 text-white font-bold">
+          <Plus size={16} /> Add employee
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="p-16 text-center text-gray-400 bg-white rounded-2xl border border-gray-100"><Loader2 className="mx-auto animate-spin" /></div>
+      ) : shown.length === 0 ? (
+        <div className="p-12 text-center text-gray-500 bg-white rounded-2xl border border-dashed border-gray-300">No employees found.</div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {shown.map((e) => (
+            <div key={e.id} className={`bg-white rounded-2xl border p-4 shadow-sm ${e.is_active ? "border-gray-100" : "border-gray-200 opacity-60"}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-full bg-red-100 text-red-700 font-bold flex items-center justify-center shrink-0">{e.first_name.charAt(0)}</div>
+                  <div className="min-w-0">
+                    <p className="font-bold text-gray-900 truncate">{e.first_name} {e.last_name}</p>
+                    <p className="text-xs text-gray-500">{e.role}{!e.is_active && " · inactive"}</p>
+                  </div>
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button onClick={() => setEditing(e)} className="p-2 rounded-lg text-gray-400 hover:text-blue-700 hover:bg-blue-50" title="Edit"><Edit2 size={15} /></button>
+                  <button onClick={() => setDeleting(e)} className="p-2 rounded-lg text-gray-400 hover:text-red-700 hover:bg-red-50" title="Delete"><Trash2 size={15} /></button>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <p className="text-gray-400 font-semibold">{e.salary_type === "MONTHLY" ? "Monthly salary" : "Day rate"}</p>
+                  <p className="font-bold text-gray-800">{formatLKR(e.salary_rate)}</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <p className="text-gray-400 font-semibold">EPF</p>
+                  <p className="font-bold text-gray-800">{e.epf_registered ? e.epf_number || "Registered" : "Not registered"}</p>
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] text-gray-500">Works {(e.working_days || []).map((d) => d.slice(0, 3)).join(", ") || "—"} · joined {e.date_joined}</p>
+              {(e.phone_numbers?.[0]?.number || e.email) && (
+                <p className="mt-1 text-[11px] text-gray-500 flex flex-wrap gap-x-3">
+                  {e.phone_numbers?.[0]?.number && <span className="flex items-center gap-1"><Phone size={11} /> {e.phone_numbers[0].number}</span>}
+                  {e.email && <span className="flex items-center gap-1"><Mail size={11} /> {e.email}</span>}
+                </p>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* PRINT-ONLY COMPONENT: PAYSLIP INVOICE */}
-      {/* ========================================================================= */}
-      <div className="hidden">
-        {selectedPayRecord && (
-          <div
-            ref={payslipPrintRef}
-            className="p-12 text-gray-800 font-sans max-w-4xl mx-auto border border-gray-300 rounded bg-white relative"
-          >
-            {/* Header */}
-            <div className="flex justify-between items-start border-b border-gray-300 pb-6">
-              <div>
-                <h1 className="text-2xl font-black uppercase text-red-900">NSS AUTO SPARES</h1>
-                <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                  No. 128, Kandy Road, Kurunegala<br />
-                  info@nssauto.lk | +94 77 123 4567
-                </p>
-              </div>
-              <div className="text-right">
-                <h2 className="text-xl font-bold uppercase text-gray-600">SALARY SLIP</h2>
-                <div className="text-xs text-gray-500 mt-1 space-y-0.5">
-                  <p>
-                    Period: <strong>{months.find((m) => m.value === payrollMonth)?.label} {payrollYear}</strong>
-                  </p>
-                  <p>
-                    Date: <strong>{new Date().toLocaleDateString()}</strong>
-                  </p>
-                </div>
-              </div>
-            </div>
+      {editing !== undefined && (
+        <EmployeeFormModal
+          employee={editing}
+          onClose={() => setEditing(undefined)}
+          onSaved={(msg) => {
+            setEditing(undefined);
+            notify("success", msg);
+            load();
+          }}
+          notify={notify}
+        />
+      )}
+      <ConfirmModal
+        isOpen={!!deleting}
+        title="Delete employee?"
+        message={deleting ? `This removes ${deleting.first_name} ${deleting.last_name} along with their attendance and payroll history. To keep the history, edit them and untick "Currently employed" instead.` : ""}
+        onConfirm={remove}
+        onCancel={() => setDeleting(null)}
+      />
+    </div>
+  );
+};
 
-            {/* Employee Block */}
-            <div className="grid grid-cols-2 gap-6 my-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
-              <div>
-                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">EMPLOYEE DETAILS</p>
-                <h3 className="text-base font-bold text-gray-800 mt-1">
-                  {selectedPayRecord.employee_details?.first_name} {selectedPayRecord.employee_details?.last_name}
-                </h3>
-                <p className="text-xs font-bold text-red-900 mt-0.5 uppercase tracking-wide">
-                  {selectedPayRecord.employee_details?.role}
-                </p>
-              </div>
-              <div className="text-right font-medium">
-                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">SALARY STRUCTURE</p>
-                <p className="text-xs text-gray-700 mt-1">
-                  Payment Type: <strong>{selectedPayRecord.employee_details?.salary_type}</strong>
-                </p>
-                <p className="text-xs text-gray-700">
-                  Rate: <strong>LKR {parseFloat(selectedPayRecord.employee_details?.salary_rate).toLocaleString()}</strong>
-                </p>
-              </div>
-            </div>
+// ─── Page ─────────────────────────────────────────────────────────────────────
+const TABS = [
+  { id: "attendance", label: "Daily Attendance", icon: ClipboardCheck },
+  { id: "calendar", label: "Calendar & Holidays", icon: CalendarDays },
+  { id: "payroll", label: "Payroll", icon: Wallet },
+  { id: "employees", label: "Employees", icon: Users },
+];
 
-            {/* Summary Details */}
-            {selectedPayRecord.employee_details?.salary_type === "DAILY" && (
-              <div className="mb-6">
-                <table className="w-full border border-collapse border-gray-200 text-xs">
-                  <thead className="bg-gray-100 font-bold uppercase tracking-wide">
-                    <tr>
-                      <th className="border border-gray-200 p-2 text-center">Days Present</th>
-                      <th className="border border-gray-200 p-2 text-center">Days Paid Leave</th>
-                      <th className="border border-gray-200 p-2 text-center">Days Absent</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="text-center font-bold text-gray-700">
-                      <td className="border border-gray-200 p-2.5 text-green-700">{parseFloat(selectedPayRecord.days_present)}</td>
-                      <td className="border border-gray-200 p-2.5 text-blue-600">{parseFloat(selectedPayRecord.days_paid_leave)}</td>
-                      <td className="border border-gray-200 p-2.5 text-red-600">{parseFloat(selectedPayRecord.days_absent)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
+// Links can open a tab and month directly: /employees?tab=payroll&month=2026-11
+const initialFromURL = () => {
+  const params = new URLSearchParams(window.location.search);
+  const tab = TABS.some((t) => t.id === params.get("tab")) ? params.get("tab") : "attendance";
+  const now = new Date();
+  let period = { month: now.getMonth() + 1, year: now.getFullYear() };
+  const m = /^(\d{4})-(\d{2})$/.exec(params.get("month") || "");
+  if (m && +m[2] >= 1 && +m[2] <= 12) period = { month: +m[2], year: +m[1] };
+  return { tab, period };
+};
 
-            {/* Calculations Breakdown */}
-            <div className="my-8 space-y-3.5">
-              <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider pb-1 border-b border-dashed border-gray-200">
-                PAYSLIP BREAKDOWN
-              </h3>
+const EmployeePage = () => {
+  const [initial] = useState(initialFromURL);
+  const [tab, setTab] = useState(initial.tab);
+  const [alert, setAlert] = useState({ type: "", message: "" });
+  const [calendarPeriod, setCalendarPeriod] = useState(initial.period);
+  const [payrollPeriod, setPayrollPeriod] = useState(initial.period);
+  const notify = useCallback((type, message) => setAlert({ type, message }), []);
 
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-500">Base Salary</span>
-                <span className="font-semibold text-gray-800">LKR {parseFloat(selectedPayRecord.base_salary).toLocaleString()}</span>
-              </div>
+  return (
+    <div className="min-h-screen bg-gray-50 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold text-gray-900 flex items-center gap-2">
+            <Users className="text-red-700" /> Employees & Payroll
+          </h1>
+          <p className="text-gray-500">Mark attendance every day; salaries are worked out from it at month end.</p>
+        </div>
 
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-green-600 font-semibold">Allowances & Bonuses (+)</span>
-                <span className="font-semibold text-green-600">+LKR {parseFloat(selectedPayRecord.allowances).toLocaleString()}</span>
-              </div>
+        <div className="flex gap-1 bg-white p-1 rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold whitespace-nowrap transition-colors ${tab === t.id ? "bg-red-700 text-white" : "text-gray-600 hover:bg-gray-50"
+                }`}
+            >
+              <t.icon size={16} /> {t.label}
+            </button>
+          ))}
+        </div>
 
-              <div className="flex justify-between items-center text-sm pb-4 border-b border-gray-150">
-                <span className="text-red-500 font-semibold">Deductions & Advances (-)</span>
-                <span className="font-semibold text-red-500">-LKR {parseFloat(selectedPayRecord.deductions).toLocaleString()}</span>
-              </div>
-
-              <div className="flex justify-between items-center text-lg font-black text-gray-800 pt-3 bg-red-50/50 p-3 rounded-lg border border-red-100">
-                <span className="uppercase tracking-wide">Net Salary Paid</span>
-                <span>LKR {parseFloat(selectedPayRecord.net_salary).toLocaleString()}</span>
-              </div>
-            </div>
-
-            {/* Footer Signatures */}
-            <div className="grid grid-cols-2 gap-12 mt-20 pt-10 text-xs">
-              <div className="text-center">
-                <div className="w-48 border-b border-gray-400 mx-auto mb-2"></div>
-                <p className="text-gray-500">Prepared By</p>
-              </div>
-              <div className="text-center">
-                <div className="w-48 border-b border-gray-400 mx-auto mb-2"></div>
-                <p className="text-gray-500">Employee Signature</p>
-              </div>
-            </div>
-
-            {/* Paid Stamp */}
-            {selectedPayRecord.status === "PAID" && (
-              <div className="absolute top-20 right-20 border-4 border-green-500 text-green-500 font-black uppercase text-sm px-4 py-2 rounded-lg rotate-12 select-none pointer-events-none opacity-60">
-                PAID
-              </div>
-            )}
-          </div>
+        {tab === "attendance" && <DailyAttendanceTab notify={notify} />}
+        {tab === "calendar" && <MonthCalendarTab period={calendarPeriod} setPeriod={setCalendarPeriod} notify={notify} />}
+        {tab === "payroll" && (
+          <PayrollTab
+            period={payrollPeriod}
+            setPeriod={setPayrollPeriod}
+            onOpenCalendar={() => {
+              setCalendarPeriod(payrollPeriod);
+              setTab("calendar");
+            }}
+            notify={notify}
+          />
         )}
+        {tab === "employees" && <EmployeesTab notify={notify} />}
       </div>
+
+      {alert.message && (
+        <AlertComponent type={alert.type} message={alert.message} onClose={() => setAlert({ type: "", message: "" })} />
+      )}
     </div>
   );
 };

@@ -1086,6 +1086,13 @@ def create_sale(request):
         if item_type == 'LABOR':
             if not item.get('description', '').strip():
                 return Response({"error": "A repair/labor item is missing a description."}, status=status.HTTP_400_BAD_REQUEST)
+            # Repairs can be added to a POS cart with the price still to come;
+            # those must be priced before the sale is completed.
+            if item.get('price_pending'):
+                return Response(
+                    {"error": f"\"{item['description'].strip()}\" still needs a price before the sale can be completed."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             # Optional: what the shop paid for this job (an outside part,
             # sublet work). Empty means no cost.
             raw_cost = item.get('unit_cost')

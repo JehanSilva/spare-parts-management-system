@@ -1129,6 +1129,9 @@ const formatBillDate = (iso) =>
 const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => {
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
+  // What the shop paid for this job (outside part, sublet work). Optional;
+  // it only reduces profit and never appears on the bill.
+  const [cost, setCost] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -1140,6 +1143,7 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
     if (isOpen) {
       setDescription(editItem ? editItem.name : "");
       setPrice(editItem ? String(editItem.sell_price) : "");
+      setCost(editItem && Number(editItem.cost) > 0 ? String(editItem.cost) : "");
       setShowDropdown(false);
       setServiceError("");
     }
@@ -1201,12 +1205,14 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
 
   if (!isOpen) return null;
 
-  const canAdd = description.trim().length > 0 && parseFloat(price) > 0;
+  const costValue = parseFloat(cost) || 0;
+  const canAdd = description.trim().length > 0 && parseFloat(price) > 0 && costValue >= 0;
   const isEdit = !!editItem;
+  const lineProfit = (parseFloat(price) || 0) - costValue;
 
   const handleAdd = () => {
     if (!canAdd) return;
-    onAdd(description.trim(), price, editItem ? editItem.id : null);
+    onAdd(description.trim(), price, costValue, editItem ? editItem.id : null);
   };
 
   const applySuggestion = (suggestion) => {
@@ -1358,6 +1364,35 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
               placeholder="e.g. 3500"
               className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
             />
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+              Our cost (LKR) <span className="normal-case font-medium text-gray-400">— optional</span>
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={cost}
+              onChange={(e) => setCost(e.target.value)}
+              placeholder="0"
+              className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
+            />
+            <p className="mt-1 text-[10px] text-gray-500 leading-snug">
+              What we paid for this job, e.g. an outside part or sublet work. Not shown on the bill.
+            </p>
+            {costValue > 0 && parseFloat(price) > 0 && (
+              <p
+                className={`mt-1.5 text-[11px] font-bold rounded-lg px-2 py-1 ${
+                  lineProfit >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
+                }`}
+              >
+                {lineProfit >= 0
+                  ? `Profit: LKR ${formatMoney(lineProfit)}`
+                  : `Below cost: LKR ${formatMoney(-lineProfit)} loss`}
+              </p>
+            )}
           </div>
 
           {matchedSuggestion && (
@@ -2183,7 +2218,7 @@ const POSPage = () => {
   // cart item already has, so quantity/discount handling and totals work
   // unchanged. When editItemId is set (editing an existing line via the
   // pencil button) the item is updated in place instead of prepended.
-  const handleAddLaborItem = (description, price, editItemId) => {
+  const handleAddLaborItem = (description, price, cost, editItemId) => {
     setCarts((prev) =>
       prev.map((c) => {
         if (c.id !== activeCartId) return c;
@@ -2194,7 +2229,7 @@ const POSPage = () => {
             const newPrice = parseFloat(price);
             let discountAmount = item.discountAmount || 0;
             if (discountAmount > newPrice) discountAmount = newPrice;
-            return { ...item, name: description, sell_price: newPrice, discountAmount };
+            return { ...item, name: description, sell_price: newPrice, cost: parseFloat(cost) || 0, discountAmount };
           });
           return { ...c, items: newItems };
         }
@@ -2207,6 +2242,7 @@ const POSPage = () => {
           item_type: "LABOR",
           name: description,
           sell_price: parseFloat(price),
+          cost: parseFloat(cost) || 0,
           quantity: 1,
           discountAmount: 0,
           discountPercentInput: "",
@@ -2575,6 +2611,7 @@ const POSPage = () => {
             description: item.name,
             quantity: parseInt(item.quantity),
             unit_price: originalPrice,
+            unit_cost: parseFloat(item.cost) || 0,
             discount: discountAmount,
           };
         }
@@ -3404,9 +3441,24 @@ const POSPage = () => {
                           {item.name}
                         </h4>
                         {item.item_type === "LABOR" ? (
-                          <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wide flex items-center gap-1">
-                            <Wrench size={10} /> Repair / Labor
-                          </p>
+                          <>
+                            <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wide flex items-center gap-1">
+                              <Wrench size={10} /> Repair / Labor
+                            </p>
+                            {Number(item.cost) > 0 && (() => {
+                              const qty = parseInt(item.quantity) || 1;
+                              const profit =
+                                ((parseFloat(item.sell_price) || 0) - (parseFloat(item.discountAmount) || 0) - Number(item.cost)) * qty;
+                              return (
+                                <p className="text-[10px] text-gray-500 tabular-nums">
+                                  Cost {formatMoney(Number(item.cost) * qty)} ·{" "}
+                                  <span className={profit >= 0 ? "text-green-600 font-semibold" : "text-red-600 font-semibold"}>
+                                    profit {formatMoney(profit)}
+                                  </span>
+                                </p>
+                              );
+                            })()}
+                          </>
                         ) : (
                           <div className="flex items-center gap-0.5 min-w-0 text-[10px] text-gray-500 font-mono">
                             <span className="truncate">{item.part_number}</span>

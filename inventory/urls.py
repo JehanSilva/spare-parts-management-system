@@ -17,6 +17,19 @@ urlpatterns = [
     path('suppliers/add/', views.add_supplier, name='add_supplier'),    # POST only
     path('suppliers/<int:pk>/update/', views.update_supplier, name='update_supplier'),
     path('suppliers/<int:pk>/delete/', views.delete_supplier, name='delete_supplier'),
+    path('suppliers/balances/', views.get_supplier_balances, name='get_supplier_balances'),
+
+    # Supplier invoices & cheques (what we owe suppliers and how it's paid)
+    path('supplier-invoices/', views.get_supplier_invoices, name='get_supplier_invoices'),
+    path('supplier-invoices/add/', views.add_supplier_invoice, name='add_supplier_invoice'),
+    path('supplier-invoices/<int:pk>/update/', views.update_supplier_invoice, name='update_supplier_invoice'),
+    path('supplier-invoices/<int:pk>/delete/', views.delete_supplier_invoice, name='delete_supplier_invoice'),
+    path('supplier-cheques/', views.get_supplier_cheques, name='get_supplier_cheques'),
+    path('supplier-cheques/add/', views.add_supplier_cheque, name='add_supplier_cheque'),
+    path('supplier-cheques/bulk-add/', views.add_supplier_cheques_bulk, name='add_supplier_cheques_bulk'),
+    path('supplier-cheques/<int:pk>/update/', views.update_supplier_cheque, name='update_supplier_cheque'),
+    path('supplier-cheques/<int:pk>/status/', views.set_supplier_cheque_status, name='set_supplier_cheque_status'),
+    path('supplier-cheques/<int:pk>/delete/', views.delete_supplier_cheque, name='delete_supplier_cheque'),
     
     # Parts
     path('parts/', views.get_parts, name='get_parts'),

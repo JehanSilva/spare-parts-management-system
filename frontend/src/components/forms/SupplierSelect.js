@@ -13,6 +13,8 @@ import { Search, Check, ChevronDown, ChevronUp } from "lucide-react";
  * card is `overflow-hidden`, which would cut an overlay off at the card's edge.
  *
  * Selection is emitted as the raw supplier id, or "" for no supplier at all.
+ * `allowNone={false}` hides the "no supplier" row where one is required, and
+ * `disabled` locks the picker. Enter in the search box picks the first match.
  * Comparisons are string-based so a caller holding "3" and a supplier with id 3
  * still match.
  */
@@ -23,6 +25,8 @@ const SupplierSelect = ({
   placeholder = "Select a supplier...",
   noneLabel = "— Unknown / No Supplier —",
   floating = false,
+  allowNone = true,
+  disabled = false,
   icon = null,
   triggerClassName = "w-full p-2 bg-white border border-gray-300 rounded-lg text-sm",
   className = "",
@@ -82,15 +86,19 @@ const SupplierSelect = ({
 
       <div
         role="button"
-        tabIndex={0}
-        onClick={() => setOpen((v) => !v)}
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
         onKeyDown={(e) => {
+          if (disabled) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             setOpen((v) => !v);
           }
         }}
-        className={`${triggerClassName} flex items-center justify-between gap-2 cursor-pointer`}
+        className={`${triggerClassName} flex items-center justify-between gap-2 ${
+          disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+        }`}
       >
         {/* A value with no match is a supplier that has since been deleted —
             say so rather than showing the placeholder, which would read as
@@ -119,6 +127,12 @@ const SupplierSelect = ({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && filtered.length > 0) {
+                    e.preventDefault();
+                    choose(filtered[0].id);
+                  }
+                }}
                 placeholder="Search suppliers..."
                 className="w-full pl-8 p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-normal text-gray-900 focus:bg-white focus:border-gray-900 focus:ring-0 focus:outline-none transition-colors"
                 autoFocus
@@ -127,12 +141,14 @@ const SupplierSelect = ({
           </div>
 
           <div className="overflow-y-auto">
-            <Row
-              label={noneLabel}
-              italic
-              chosen={!hasValue}
-              onClick={() => choose("")}
-            />
+            {allowNone && (
+              <Row
+                label={noneLabel}
+                italic
+                chosen={!hasValue}
+                onClick={() => choose("")}
+              />
+            )}
             {filtered.length > 0 ? (
               filtered.map((s, i) => (
                 <Row

@@ -22,6 +22,7 @@ import {
   Settings,
   LayoutGrid,
   ChevronDown,
+  Receipt,
 } from "lucide-react";
 import logoImg from "../assets/logo.png";
 import { logoutUser } from "../services/api";
@@ -41,6 +42,7 @@ const NAV_ITEMS = [
 const MORE_ITEMS = [
   { path: "/estimates", label: "Estimates", icon: ClipboardList, desc: "Insurance repair estimates & quotes" },
   { path: "/purchase-orders", label: "Purchase Orders", icon: PackagePlus, desc: "Order parts from suppliers & receive stock" },
+  { path: "/supplier-payments", label: "Supplier Payments", icon: Receipt, desc: "Invoices, cheques & amounts owed" },
   { path: "/inspections", label: "Inspections", icon: ClipboardCheck, desc: "Vehicle condition checks & reports" },
   { path: "/daily-report", label: "Daily Report", icon: FileBarChart, desc: "End-of-day sales, profit & PDF" },
   { path: "/insights", label: "Business Insights", icon: BarChart3, desc: "Revenue trends, best sellers, suppliers" },

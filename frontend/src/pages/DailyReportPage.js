@@ -24,6 +24,7 @@ import {
   CalendarDays,
   AlertCircle,
   Trophy,
+  Landmark,
 } from "lucide-react";
 import {
   BarChart,
@@ -212,6 +213,9 @@ const DailyContent = ({ r, displayDateStr, onRefresh }) => {
             <>
               Parts {formatLKR(r.parts_revenue)}
               <span className="block">Labour {formatLKR(r.labor_revenue)}</span>
+              {num(r.labor_cost) > 0 && (
+                <span className="block">Repair costs −{formatLKR(r.labor_cost)}</span>
+              )}
             </>
           }
         />
@@ -338,6 +342,11 @@ const DailyContent = ({ r, displayDateStr, onRefresh }) => {
                             <span className="text-[10px] md:text-xs text-gray-500 font-mono">
                               {item.item_type === "LABOR" ? "Repair / Labour" : item.part_number}
                             </span>
+                            {item.item_type === "LABOR" && num(item.unit_cost) > 0 && (
+                              <span className="text-[10px] md:text-xs text-gray-500">
+                                Our cost {formatLKR(num(item.unit_cost) * item.quantity)}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="col-price p-3 text-right font-medium text-gray-600 whitespace-nowrap align-middle">
@@ -552,6 +561,124 @@ const SalarySection = ({ r, monthStr }) => {
   );
 };
 
+const CHEQUE_BADGE = {
+  PENDING: "bg-blue-50 text-blue-700 border-blue-200",
+  CLEARED: "bg-green-50 text-green-700 border-green-200",
+};
+
+// Supplier cheques dated this month are paid from revenue: first out of the
+// money the parts sold this month cost (meant to be reinvested in stock), and
+// only what goes beyond that comes out of profit.
+const ChequeSection = ({ r }) => {
+  const total = num(r.cheque_cost);
+  const partsCost = num(r.total_investment);
+  const fromParts = num(r.cheques_from_parts_cost);
+  const fromProfit = num(r.cheques_from_profit);
+  const remaining = num(r.parts_cost_remaining);
+  const afterSalaries = num(r.profit_after_salaries);
+  const after = num(r.profit_after_cheques);
+  const rows = r.cheque_breakdown || [];
+  const partsShare = total > 0 ? (fromParts / total) * 100 : 0;
+
+  return (
+    <div className="print-salary-section mb-10 print:mb-6 rounded-2xl border-2 border-gray-200 p-4 sm:p-6">
+      <h3 className="text-lg sm:text-xl font-bold text-gray-800 mb-1 flex items-center gap-2">
+        <Landmark className="text-gray-400" /> Supplier cheques this month
+      </h3>
+      <p className="text-sm text-gray-500 mb-4">
+        Cheques dated this month are paid from revenue, first from the {formatLKR(partsCost)} cost of parts sold, then from profit.
+      </p>
+
+      {total > 0 ? (
+        <>
+          {/* Where the cheque money comes from */}
+          <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-sm font-bold text-gray-700">
+                {r.cheque_count} cheque{r.cheque_count === 1 ? "" : "s"} due
+              </span>
+              <span className="text-xl font-black text-gray-900">{formatLKR(total)}</span>
+            </div>
+            <div className="mt-3 h-3 rounded-full bg-red-200 overflow-hidden flex print:hidden">
+              <div className="h-full bg-amber-400" style={{ width: `${partsShare}%` }} />
+            </div>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-white border border-amber-200 px-3 py-2">
+                <span className="flex items-center gap-2 text-gray-700">
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> From cost of parts sold
+                </span>
+                <span className="font-bold text-gray-900">{formatLKR(fromParts)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-white border border-red-200 px-3 py-2">
+                <span className="flex items-center gap-2 text-gray-700">
+                  <span className="w-2.5 h-2.5 rounded-full bg-red-300" /> Reinvested from profit
+                </span>
+                <span className={`font-bold ${fromProfit > 0 ? "text-red-700" : "text-gray-400"}`}>{formatLKR(fromProfit)}</span>
+              </div>
+            </div>
+            {remaining > 0 && (
+              <p className="mt-2 text-xs text-gray-600">
+                {formatLKR(remaining)} of this month's parts cost is not yet used for cheques.
+              </p>
+            )}
+          </div>
+
+          {/* Profit waterfall */}
+          <div className="mt-4 flex flex-col md:flex-row items-stretch md:items-center gap-2 md:gap-3">
+            <WaterfallStep
+              label={afterSalaries >= 0 ? "Profit after salaries" : "Loss after salaries"}
+              value={formatLKR(afterSalaries)}
+              tone={afterSalaries >= 0 ? "bg-green-50 border-green-100 text-green-800" : "bg-red-50 border-red-100 text-red-800"}
+            />
+            <span className="text-2xl font-black text-gray-400 text-center">−</span>
+            <WaterfallStep
+              label="Cheques from profit"
+              value={formatLKR(fromProfit)}
+              sub={fromProfit > 0 ? "Beyond the cost of parts sold" : "Covered by cost of parts sold"}
+              tone="bg-gray-50 border-gray-200 text-gray-800"
+            />
+            <span className="text-2xl font-black text-gray-400 text-center">=</span>
+            <WaterfallStep
+              label={after >= 0 ? "Profit after cheques" : "Loss after cheques"}
+              value={formatLKR(after)}
+              sub={`${num(r.profit_after_cheques_margin).toFixed(1)}% of revenue`}
+              tone={after >= 0 ? "bg-emerald-600 border-emerald-700 text-white" : "bg-red-600 border-red-700 text-white"}
+            />
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {rows.map((c) => (
+              <div key={c.id} className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-gray-50 border border-gray-100 text-sm">
+                <div className="min-w-0">
+                  <p className="font-semibold text-gray-800 truncate">{c.supplier_name}</p>
+                  <p className="text-[11px] text-gray-500 truncate">
+                    #{c.cheque_number} · {c.cheque_date}
+                    {c.invoice_numbers.length > 0 && ` · ${c.invoice_numbers.join(", ")}`}
+                  </p>
+                </div>
+                <div className="text-right whitespace-nowrap">
+                  <p className="font-bold text-gray-900">{formatLKR(c.amount)}</p>
+                  <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase ${CHEQUE_BADGE[c.status] || ""}`}>
+                    {c.status.toLowerCase()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-gray-500">No supplier cheques are dated this month.</p>
+      )}
+
+      <p className="mt-4 text-xs text-gray-500 print:hidden">
+        <Link to="/supplier-payments?tab=cheques" className="font-bold text-red-700 underline">
+          Manage supplier invoices & cheques
+        </Link>
+      </p>
+    </div>
+  );
+};
+
 const MonthlyContent = ({ r, monthStr, today, onRefresh, onOpenDay }) => {
   const profit = num(r.today_profit);
   const chartData = (r.daily || []).map((d) => ({
@@ -607,6 +734,9 @@ const MonthlyContent = ({ r, monthStr, today, onRefresh, onOpenDay }) => {
             <>
               Parts {formatLKR(r.parts_revenue)}
               <span className="block">Labour {formatLKR(r.labor_revenue)}</span>
+              {num(r.labor_cost) > 0 && (
+                <span className="block">Repair costs −{formatLKR(r.labor_cost)}</span>
+              )}
             </>
           }
         />
@@ -636,6 +766,8 @@ const MonthlyContent = ({ r, monthStr, today, onRefresh, onOpenDay }) => {
       <MonthComparison r={r} />
 
       <SalarySection r={r} monthStr={monthStr} />
+
+      <ChequeSection r={r} />
 
       {/* Daily chart (hidden in print) */}
       <div className="print-chart-section mb-10">
@@ -762,6 +894,28 @@ const MonthlyContent = ({ r, monthStr, today, onRefresh, onOpenDay }) => {
                 </td>
                 <td colSpan={2} />
               </tr>
+              {num(r.cheque_cost) > 0 && (
+                <>
+                  <tr>
+                    <td colSpan={3} className="p-3 text-right uppercase tracking-wider text-[10px] md:text-xs text-gray-700">
+                      Supplier cheques {formatLKR(r.cheque_cost)} · {formatLKR(r.cheques_from_parts_cost)} from parts cost
+                    </td>
+                    <td className="p-3 text-right whitespace-nowrap text-gray-800">−{formatLKR(r.cheques_from_profit)}</td>
+                    <td colSpan={2} />
+                  </tr>
+                  <tr>
+                    <td colSpan={3} className="p-3 text-right uppercase tracking-wider text-[10px] md:text-xs text-gray-700">
+                      Profit after cheques
+                    </td>
+                    <td
+                      className={`p-3 text-right whitespace-nowrap text-lg font-black ${num(r.profit_after_cheques) >= 0 ? "text-green-700" : "text-red-700"}`}
+                    >
+                      {formatLKR(r.profit_after_cheques)}
+                    </td>
+                    <td colSpan={2} />
+                  </tr>
+                </>
+              )}
             </tfoot>
           </table>
         </div>

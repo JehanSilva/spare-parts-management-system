@@ -232,7 +232,8 @@ class SaleItem(models.Model):
 
     # SNAPSHOT: what one unit cost the shop when it was sold (the part's
     # buy_price at that moment). Profit reads this, so later changes to the
-    # part's buy price don't rewrite old sales' profit. Labour lines stay 0.
+    # part's buy price don't rewrite old sales' profit. Labour lines hold what
+    # the shop paid for the job (outside part, sublet work), 0 if nothing.
     unit_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     # NEW: The discount given just for this specific line item
@@ -706,6 +707,95 @@ class PurchaseOrderItem(models.Model):
 
     def __str__(self):
         return f"{self.part_name} x {self.quantity}"
+
+
+# --- SUPPLIER INVOICES & CHEQUE PAYMENTS ---
+
+class SupplierInvoice(models.Model):
+    """
+    An invoice we owe a supplier for parts bought (usually on credit). What's
+    been paid is never stored: it's the sum of the cheque allocations against
+    it, ignoring cancelled cheques, so it can't drift from the cheques.
+    """
+    # PROTECT: a supplier we still have invoices with can't silently vanish.
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='invoices')
+    invoice_number = models.CharField(max_length=100)
+    invoice_date = models.DateField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    credit_days = models.PositiveIntegerField(
+        null=True, blank=True, help_text="Credit period in days; empty means payable on receipt"
+    )
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-invoice_date', '-id']
+        constraints = [
+            models.UniqueConstraint(fields=['supplier', 'invoice_number'], name='unique_supplier_invoice_number'),
+        ]
+
+    @property
+    def due_date(self):
+        from datetime import timedelta
+        return self.invoice_date + timedelta(days=self.credit_days or 0)
+
+    def __str__(self):
+        return f"{self.invoice_number} | {self.supplier.name} | {self.amount}"
+
+
+class SupplierCheque(models.Model):
+    """
+    A cheque given to a supplier. cheque_date is the date written on it (when
+    it can be banked) and decides which month it counts against in reports.
+    A cheque may be split across several of the same supplier's invoices.
+    """
+    STATUS_PENDING = 'PENDING'
+    STATUS_CLEARED = 'CLEARED'
+    STATUS_CANCELLED = 'CANCELLED'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_CLEARED, 'Cleared'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='cheques')
+    cheque_number = models.CharField(max_length=50)
+    bank = models.CharField(max_length=100, blank=True)
+    cheque_date = models.DateField(help_text="Date written on the cheque")
+    issued_date = models.DateField(default=timezone.localdate, help_text="Day the cheque was handed over")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-cheque_date', '-id']
+        constraints = [
+            # A cheque number is written once, whatever the case. The views
+            # check this first for a friendly message; this is the backstop.
+            models.UniqueConstraint(Lower('cheque_number'), name='unique_cheque_number_ci'),
+        ]
+
+    def __str__(self):
+        return f"Cheque {self.cheque_number} | {self.supplier.name} | {self.amount}"
+
+
+class ChequeAllocation(models.Model):
+    """The part of a cheque that pays one invoice."""
+    cheque = models.ForeignKey(SupplierCheque, on_delete=models.CASCADE, related_name='allocations')
+    invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, related_name='allocations')
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        ordering = ['id']
+        constraints = [
+            models.UniqueConstraint(fields=['cheque', 'invoice'], name='unique_cheque_invoice_allocation'),
+        ]
+
+    def __str__(self):
+        return f"{self.cheque.cheque_number} -> {self.invoice.invoice_number}: {self.amount}"
 
 
 # --- VEHICLE INSPECTION (pre-purchase / warranty inspection sheet) ---

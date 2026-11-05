@@ -106,6 +106,35 @@ export const updateSupplier = async (id, data) =>
   (await API.put(`/suppliers/${id}/update/`, data)).data;
 export const deleteSupplier = async (id) =>
   await API.delete(`/suppliers/${id}/delete/`);
+// What we owe each supplier: [{ supplier, outstanding, overdue_amount, ... }]
+export const fetchSupplierBalances = async () => (await API.get("/suppliers/balances/")).data;
+
+// --- SUPPLIER INVOICES & CHEQUES ---
+// params: { supplier, status: unpaid|partial|paid|open|overdue, search }
+export const fetchSupplierInvoices = async (params = {}) =>
+  (await API.get("/supplier-invoices/", { params })).data;
+export const createSupplierInvoice = async (data) =>
+  (await API.post("/supplier-invoices/add/", data)).data;
+export const updateSupplierInvoice = async (id, data) =>
+  (await API.put(`/supplier-invoices/${id}/update/`, data)).data;
+export const deleteSupplierInvoice = async (id) =>
+  await API.delete(`/supplier-invoices/${id}/delete/`);
+// params: { supplier, status, month, year }
+export const fetchSupplierCheques = async (params = {}) =>
+  (await API.get("/supplier-cheques/", { params })).data;
+// data: { supplier, cheque_number, bank, cheque_date, issued_date, amount, notes, allocations: [{ invoice, amount }] }
+export const createSupplierCheque = async (data) =>
+  (await API.post("/supplier-cheques/add/", data)).data;
+// Several cheques in one go (all or nothing):
+// { supplier, bank, issued_date, notes, cheques: [{ cheque_number, cheque_date, amount, allocations }] }
+export const createSupplierChequesBulk = async (data) =>
+  (await API.post("/supplier-cheques/bulk-add/", data)).data;
+export const updateSupplierCheque = async (id, data) =>
+  (await API.put(`/supplier-cheques/${id}/update/`, data)).data;
+export const setSupplierChequeStatus = async (id, status) =>
+  (await API.post(`/supplier-cheques/${id}/status/`, { status })).data;
+export const deleteSupplierCheque = async (id) =>
+  await API.delete(`/supplier-cheques/${id}/delete/`);
 
 export const fetchVehicles = async () => (await API.get("/vehicles/")).data;
 // Turn "Toyota Aqua, Honda Vezel 2018" into catalogue vehicles (existing ones

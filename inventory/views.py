@@ -11,8 +11,8 @@ from datetime import date, timedelta
 from django.db.models.functions import TruncDate, Coalesce, Replace, Upper
 from rest_framework import status
 from django.db.models import Sum, F, Value, DecimalField
-from .models import InterchangeGroup, Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context, PurchaseOrderSerializer
+from .models import InterchangeGroup, Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem, SupplierInvoice, SupplierCheque, ChequeAllocation
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context, PurchaseOrderSerializer, SupplierInvoiceSerializer, SupplierChequeSerializer, invoice_payment_info
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle, normalize_repair_description
 from .text import title_case_name
@@ -26,7 +26,8 @@ from django.db.models import Q
 
 def buy_price_expr():
     """
-    A SaleItem's unit cost, with labour treated as costing nothing.
+    A SaleItem's unit cost. Labour lines carry what the shop paid for the job
+    in unit_cost (an outside part, sublet work) — usually 0.
 
     Prefers the cost snapshotted on the line at sale time (unit_cost); the
     part's current buy_price is only a fallback for a row without one.
@@ -34,7 +35,7 @@ def buy_price_expr():
     LABOR lines have no `part`, so a bare F('part__buy_price') is NULL and the
     whole profit expression collapses to NULL — which Sum() then skips, quietly
     dropping the row from every profit aggregate. Coalescing to zero keeps
-    labour in the totals, where it counts as pure profit (there is no COGS).
+    labour in the totals, at whatever cost (often none) it was recorded with.
     """
     return Coalesce(
         F('unit_cost'),
@@ -412,6 +413,11 @@ def update_supplier(request, pk):
 @api_view(['DELETE'])
 def delete_supplier(request, pk):
     supplier = get_object_or_404(Supplier, pk=pk)
+    if supplier.invoices.exists() or supplier.cheques.exists():
+        return Response(
+            {"error": "This supplier has invoices or cheques recorded. Remove those first."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
     supplier.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1080,6 +1086,15 @@ def create_sale(request):
         if item_type == 'LABOR':
             if not item.get('description', '').strip():
                 return Response({"error": "A repair/labor item is missing a description."}, status=status.HTTP_400_BAD_REQUEST)
+            # Optional: what the shop paid for this job (an outside part,
+            # sublet work). Empty means no cost.
+            raw_cost = item.get('unit_cost')
+            try:
+                item['unit_cost'] = Decimal(str(raw_cost)) if raw_cost not in (None, '') else Decimal('0')
+            except (InvalidOperation, TypeError, ValueError):
+                return Response({"error": "A repair/labor cost is not a valid amount."}, status=status.HTTP_400_BAD_REQUEST)
+            if item['unit_cost'] < 0:
+                return Response({"error": "A repair/labor cost can't be negative."}, status=status.HTTP_400_BAD_REQUEST)
             unit_price = float(item['unit_price'])
             discount = float(item.get('discount', 0))
             quantity = int(item.get('quantity', 1))
@@ -1162,6 +1177,7 @@ def create_sale(request):
                 description=item.get('description', '').strip(),
                 quantity=item.get('quantity', 1),
                 unit_price=item['unit_price'],
+                unit_cost=item['unit_cost'],
                 discount=item.get('discount', 0),
             )
             continue
@@ -1276,6 +1292,7 @@ def reverse_sale(request, pk):
                 'item_type': 'LABOR',
                 'name': item.description,
                 'sell_price': unit_price,
+                'cost': float(item.unit_cost or 0),
                 'quantity': item.quantity,
                 'discountAmount': discount,
                 'discountPercentInput': str(percent) if discount else "",
@@ -1973,7 +1990,9 @@ def _sales_summary(start, end):
     """
     Sales maths shared by the daily and monthly reports, for completed sales
     in [start, end). Profit uses each line's cost snapshotted at the time of
-    sale (SaleItem.cost_price); labour has no cost, so it's all profit.
+    sale (SaleItem.cost_price). Labour usually costs nothing, but a repair can
+    carry what the shop paid for it (outside part, sublet work); that comes
+    off profit and is totalled as labor_cost, kept apart from parts COGS.
 
     Returns (totals, sales, items). Each sale carries a `_local` datetime for
     bucketing by hour/day — strip it before sending.
@@ -1989,7 +2008,7 @@ def _sales_summary(start, end):
     zero = Decimal('0')
     t = {
         "revenue": zero, "collected": zero, "profit": zero, "cogs": zero,
-        "parts_revenue": zero, "labor_revenue": zero, "discount_total": zero,
+        "parts_revenue": zero, "labor_revenue": zero, "labor_cost": zero, "discount_total": zero,
         "units_sold": 0, "raised_lines": 0,
     }
     sales, items = [], []
@@ -2005,7 +2024,7 @@ def _sales_summary(start, end):
         sale_items = []
         for item in sale.items.all():
             is_labor = item.item_type == 'LABOR' or item.part_id is None
-            buy_price = zero if is_labor else (item.cost_price or zero)
+            buy_price = item.cost_price or zero
             line_total = item.total_price
             line_profit = (item.unit_price - item.discount - buy_price) * item.quantity
             line_discount = item.discount * item.quantity
@@ -2015,6 +2034,7 @@ def _sales_summary(start, end):
             t["discount_total"] += line_discount
             if is_labor:
                 t["labor_revenue"] += line_total
+                t["labor_cost"] += buy_price * item.quantity
             else:
                 t["parts_revenue"] += line_total
                 t["cogs"] += buy_price * item.quantity
@@ -2070,6 +2090,7 @@ def _sales_summary(start, end):
         "average_sale": round(float(revenue) / count, 2) if count else 0,
         "parts_revenue": t["parts_revenue"],
         "labor_revenue": t["labor_revenue"],
+        "labor_cost": t["labor_cost"],
         "discount_total": t["discount_total"],
         "collected": t["collected"],
         "balance_due": max(revenue - t["collected"], zero),
@@ -2207,6 +2228,51 @@ def _month_salary_cost(year, month):
     }
 
 
+def _month_cheque_cost(year, month, parts_cost, profit_after_salaries, revenue):
+    """
+    Supplier cheques dated in the month (cancelled ones excluded). They are paid
+    out of revenue: first from the money that went into the parts sold this
+    month (cost of parts sold, meant to be reinvested in stock), and only what
+    goes beyond that comes out of profit.
+    """
+    zero = Decimal('0')
+    cheques = list(
+        SupplierCheque.objects
+        .filter(cheque_date__year=year, cheque_date__month=month)
+        .exclude(status=SupplierCheque.STATUS_CANCELLED)
+        .select_related('supplier')
+        .prefetch_related('allocations__invoice')
+        .order_by('cheque_date', 'id')
+    )
+    total = sum((c.amount for c in cheques), zero)
+    from_parts = min(total, parts_cost)
+    from_profit = max(total - parts_cost, zero)
+    after = profit_after_salaries - from_profit
+    return {
+        "cheque_cost": total,
+        "cheque_count": len(cheques),
+        "cheques_from_parts_cost": from_parts,
+        "cheques_from_profit": from_profit,
+        "parts_cost_remaining": max(parts_cost - total, zero),
+        "profit_after_cheques": after,
+        "profit_after_cheques_margin": round(float(after) / float(revenue) * 100, 2) if revenue > 0 else 0.0,
+        "cheque_breakdown": [
+            {
+                "id": c.id,
+                "supplier": c.supplier_id,
+                "supplier_name": c.supplier.name,
+                "cheque_number": c.cheque_number,
+                "bank": c.bank,
+                "cheque_date": c.cheque_date,
+                "amount": c.amount,
+                "status": c.status,
+                "invoice_numbers": [a.invoice.invoice_number for a in c.allocations.all()],
+            }
+            for c in cheques
+        ],
+    }
+
+
 @api_view(['GET'])
 def monthly_report(request):
     """Month-to-date or whole-month report (?month=&year=, defaults to now)."""
@@ -2271,6 +2337,7 @@ def monthly_report(request):
 
     salaries = _month_salary_cost(year, month)
     after = totals["today_profit"] - salaries["salary_cost"]
+    cheques = _month_cheque_cost(year, month, totals["total_investment"], after, totals["today_revenue"])
 
     return Response({
         "year": year,
@@ -2297,6 +2364,7 @@ def monthly_report(request):
         "profit_after_salaries_margin": (
             round(float(after) / float(totals["today_revenue"]) * 100, 2) if totals["today_revenue"] > 0 else 0.0
         ),
+        **cheques,
     })
 
 def parse_vehicle_string(vehicle_str, existing_makes):
@@ -3670,3 +3738,347 @@ def delete_purchase_order(request, pk):
                         status=status.HTTP_400_BAD_REQUEST)
     po.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- SUPPLIER INVOICES & CHEQUES ---
+
+def _invoice_queryset():
+    return SupplierInvoice.objects.select_related('supplier').prefetch_related('allocations__cheque')
+
+
+def _cheque_queryset():
+    return SupplierCheque.objects.select_related('supplier').prefetch_related('allocations__invoice')
+
+
+def _money(value):
+    """Parse a positive money amount, or None."""
+    try:
+        amount = Decimal(str(value)).quantize(Decimal('0.01'))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return amount if amount > 0 else None
+
+
+@api_view(['GET'])
+def get_supplier_invoices(request):
+    """?supplier=<id>&status=unpaid|partial|paid|open|overdue&search=<text>"""
+    qs = _invoice_queryset()
+    params = request.query_params
+    if params.get('supplier'):
+        qs = qs.filter(supplier_id=params['supplier'])
+    search = (params.get('search') or '').strip()
+    if search:
+        qs = qs.filter(Q(invoice_number__icontains=search) | Q(supplier__name__icontains=search))
+
+    invoices = list(qs)
+    wanted = (params.get('status') or '').lower()
+    if wanted:
+        today = timezone.localdate()
+
+        def keep(inv):
+            info = invoice_payment_info(inv, today)
+            inv._payment_info = info
+            if wanted == 'overdue':
+                return info["is_overdue"]
+            if wanted == 'open':
+                return info["payment_status"] != 'PAID'
+            return info["payment_status"] == wanted.upper()
+
+        invoices = [inv for inv in invoices if keep(inv)]
+    return Response(SupplierInvoiceSerializer(invoices, many=True).data)
+
+
+@api_view(['POST'])
+def add_supplier_invoice(request):
+    serializer = SupplierInvoiceSerializer(data=request.data)
+    if serializer.is_valid():
+        invoice = serializer.save()
+        return Response(SupplierInvoiceSerializer(_invoice_queryset().get(pk=invoice.pk)).data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PUT'])
+def update_supplier_invoice(request, pk):
+    invoice = get_object_or_404(_invoice_queryset(), pk=pk)
+    serializer = SupplierInvoiceSerializer(invoice, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(SupplierInvoiceSerializer(_invoice_queryset().get(pk=pk)).data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+def delete_supplier_invoice(request, pk):
+    invoice = get_object_or_404(SupplierInvoice, pk=pk)
+    if invoice.allocations.exists():
+        return Response(
+            {"error": "Cheques have been assigned to this invoice. Remove them from the cheques first."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    invoice.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+def get_supplier_cheques(request):
+    """?supplier=<id>&status=PENDING|CLEARED|CANCELLED&month=&year= (by cheque date)"""
+    qs = _cheque_queryset()
+    params = request.query_params
+    if params.get('supplier'):
+        qs = qs.filter(supplier_id=params['supplier'])
+    if params.get('status'):
+        qs = qs.filter(status=params['status'].upper())
+    if params.get('month'):
+        parsed = _parse_month(params)
+        if not parsed:
+            return Response({"error": "month (1-12) and year are required."}, status=status.HTTP_400_BAD_REQUEST)
+        qs = qs.filter(cheque_date__year=parsed[0], cheque_date__month=parsed[1])
+    return Response(SupplierChequeSerializer(qs, many=True).data)
+
+
+def _save_cheque(data, cheque=None):
+    """
+    Create or update a cheque and replace its invoice allocations. Returns
+    (cheque, None) or (None, error dict). Must run inside a transaction.
+    """
+    errors = {}
+    supplier = None
+    supplier_id = data.get('supplier', cheque.supplier_id if cheque else None)
+    try:
+        supplier = Supplier.objects.get(pk=int(supplier_id))
+    except (Supplier.DoesNotExist, TypeError, ValueError):
+        errors["supplier"] = "Choose a supplier."
+
+    cheque_number = str(data.get('cheque_number', cheque.cheque_number if cheque else '') or '').strip()
+    if not cheque_number:
+        errors["cheque_number"] = "Cheque number is required."
+    else:
+        # A cheque number can only be written once (cancelled ones included —
+        # the leaf is gone). Delete the old record to reuse a number.
+        taken = SupplierCheque.objects.filter(cheque_number__iexact=cheque_number)
+        if cheque is not None:
+            taken = taken.exclude(pk=cheque.pk)
+        clash = taken.select_related('supplier').first()
+        if clash:
+            errors["cheque_number"] = (
+                f"Cheque number {cheque_number} is already used "
+                f"({clash.supplier.name}, {clash.cheque_date:%d %b %Y})."
+            )
+
+    raw_date = data.get('cheque_date', cheque.cheque_date.isoformat() if cheque else None)
+    cheque_date = parse_date(str(raw_date)) if raw_date else None
+    if not cheque_date:
+        errors["cheque_date"] = "Cheque date is required."
+
+    raw_issued = data.get('issued_date') or (cheque.issued_date.isoformat() if cheque else None)
+    issued_date = parse_date(str(raw_issued)) if raw_issued else timezone.localdate()
+    if not issued_date:
+        errors["issued_date"] = "Invalid issued date."
+
+    amount = _money(data.get('amount', cheque.amount if cheque else None))
+    if amount is None:
+        errors["amount"] = "Amount must be greater than zero."
+
+    raw_allocs = data.get('allocations')
+    if raw_allocs is None and cheque:
+        raw_allocs = [{"invoice": a.invoice_id, "amount": a.amount} for a in cheque.allocations.all()]
+    if not isinstance(raw_allocs, list) or not raw_allocs:
+        errors["allocations"] = "Assign the cheque to at least one invoice."
+    if errors:
+        return None, errors
+
+    parsed, seen = [], set()
+    for row in raw_allocs:
+        try:
+            invoice_id = int(row.get('invoice'))
+        except (TypeError, ValueError, AttributeError):
+            return None, {"allocations": "Invalid invoice in allocations."}
+        part = _money(row.get('amount'))
+        if part is None:
+            # Zero rows are just invoices the user left blank.
+            continue
+        if invoice_id in seen:
+            return None, {"allocations": "The same invoice is listed twice."}
+        seen.add(invoice_id)
+        parsed.append((invoice_id, part))
+    if not parsed:
+        return None, {"allocations": "Assign the cheque to at least one invoice."}
+
+    invoices = {
+        inv.pk: inv
+        for inv in SupplierInvoice.objects.select_for_update().filter(pk__in=seen)
+    }
+    for invoice_id, part in parsed:
+        inv = invoices.get(invoice_id)
+        if not inv:
+            return None, {"allocations": f"Invoice {invoice_id} not found."}
+        if inv.supplier_id != supplier.pk:
+            return None, {"allocations": f"Invoice {inv.invoice_number} belongs to a different supplier."}
+        # Paid by other cheques; this cheque's old allocations are being replaced.
+        others = ChequeAllocation.objects.filter(invoice=inv).exclude(cheque__status=SupplierCheque.STATUS_CANCELLED)
+        if cheque is not None:
+            others = others.exclude(cheque=cheque)
+        paid_elsewhere = others.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        outstanding = inv.amount - paid_elsewhere
+        if part > outstanding:
+            return None, {"allocations": f"Invoice {inv.invoice_number} only has {outstanding} left to pay."}
+
+    allocated = sum((p for _, p in parsed), Decimal('0'))
+    if allocated != amount:
+        return None, {"allocations": f"Assigned total ({allocated}) must equal the cheque amount ({amount})."}
+
+    if cheque is None:
+        cheque = SupplierCheque(status=SupplierCheque.STATUS_PENDING)
+    cheque.supplier = supplier
+    cheque.cheque_number = cheque_number
+    cheque.bank = str(data.get('bank', cheque.bank or '') or '').strip()
+    cheque.cheque_date = cheque_date
+    cheque.issued_date = issued_date
+    cheque.amount = amount
+    cheque.notes = str(data.get('notes', cheque.notes or '') or '')
+    cheque.save()
+
+    cheque.allocations.all().delete()
+    ChequeAllocation.objects.bulk_create([
+        ChequeAllocation(cheque=cheque, invoice_id=invoice_id, amount=part) for invoice_id, part in parsed
+    ])
+    return cheque, None
+
+
+@api_view(['POST'])
+def add_supplier_cheque(request):
+    with transaction.atomic():
+        cheque, errors = _save_cheque(request.data)
+        if errors:
+            transaction.set_rollback(True)
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+    return Response(SupplierChequeSerializer(_cheque_queryset().get(pk=cheque.pk)).data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+def add_supplier_cheques_bulk(request):
+    """
+    Several cheques to one supplier in one go, e.g. four weekly cheques for one
+    invoice. Body: {supplier, bank, issued_date, notes, cheques: [{cheque_number,
+    cheque_date, amount, allocations: [{invoice, amount}]}]}. All or nothing:
+    each cheque is checked against what the earlier ones in the batch already
+    paid, and any failure saves none of them.
+    """
+    rows = request.data.get('cheques')
+    if not isinstance(rows, list) or not rows:
+        return Response({"error": "Add at least one cheque."}, status=status.HTTP_400_BAD_REQUEST)
+
+    numbers = [str(r.get('cheque_number', '') or '').strip().lower() for r in rows if isinstance(r, dict)]
+    if len(numbers) != len(rows):
+        return Response({"error": "Invalid cheque rows."}, status=status.HTTP_400_BAD_REQUEST)
+    dupes = sorted({n for n in numbers if n and numbers.count(n) > 1})
+    if dupes:
+        return Response({"error": f"Cheque number {dupes[0]} is used more than once."}, status=status.HTTP_400_BAD_REQUEST)
+
+    shared = {k: request.data.get(k) for k in ('supplier', 'bank', 'issued_date', 'notes') if k in request.data}
+    created = []
+    with transaction.atomic():
+        for index, row in enumerate(rows, start=1):
+            cheque, errors = _save_cheque({**shared, **row})
+            if errors:
+                transaction.set_rollback(True)
+                label = str(row.get('cheque_number') or '').strip()
+                detail = " ".join(str(v) for v in errors.values())
+                return Response(
+                    {"error": f"Cheque {index}{f' (#{label})' if label else ''}: {detail}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            created.append(cheque.pk)
+    return Response(
+        SupplierChequeSerializer(_cheque_queryset().filter(pk__in=created).order_by('cheque_date', 'id'), many=True).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['PUT'])
+def update_supplier_cheque(request, pk):
+    with transaction.atomic():
+        cheque = get_object_or_404(SupplierCheque.objects.select_for_update(), pk=pk)
+        if cheque.status == SupplierCheque.STATUS_CANCELLED:
+            return Response(
+                {"error": "This cheque is cancelled. Set it back to pending before editing."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        cheque, errors = _save_cheque(request.data, cheque)
+        if errors:
+            transaction.set_rollback(True)
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+    return Response(SupplierChequeSerializer(_cheque_queryset().get(pk=pk)).data)
+
+
+@api_view(['POST'])
+def set_supplier_cheque_status(request, pk):
+    new_status = str(request.data.get('status', '')).upper()
+    if new_status not in dict(SupplierCheque.STATUS_CHOICES):
+        return Response({"error": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+    with transaction.atomic():
+        cheque = get_object_or_404(SupplierCheque.objects.select_for_update(), pk=pk)
+        if cheque.status == SupplierCheque.STATUS_CANCELLED and new_status != SupplierCheque.STATUS_CANCELLED:
+            # Bringing a cancelled cheque back pays its invoices again — make
+            # sure that doesn't overpay one paid by another cheque meanwhile.
+            for alloc in cheque.allocations.select_related('invoice'):
+                paid = (
+                    ChequeAllocation.objects.filter(invoice=alloc.invoice)
+                    .exclude(cheque__status=SupplierCheque.STATUS_CANCELLED)
+                    .aggregate(total=Sum('amount'))['total'] or Decimal('0')
+                )
+                if paid + alloc.amount > alloc.invoice.amount:
+                    return Response(
+                        {"error": f"Invoice {alloc.invoice.invoice_number} has since been paid by another cheque."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+        cheque.status = new_status
+        cheque.save(update_fields=['status', 'updated_at'])
+    return Response(SupplierChequeSerializer(_cheque_queryset().get(pk=pk)).data)
+
+
+@api_view(['DELETE'])
+def delete_supplier_cheque(request, pk):
+    cheque = get_object_or_404(SupplierCheque, pk=pk)
+    cheque.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+def get_supplier_balances(request):
+    """What we owe each supplier, from their invoices and cheques."""
+    today = timezone.localdate()
+    zero = Decimal('0')
+    rows = {
+        s.pk: {
+            "supplier": s.pk, "supplier_name": s.name,
+            "total_invoiced": zero, "total_paid": zero, "outstanding": zero,
+            "overdue_amount": zero, "open_invoices": 0, "overdue_invoices": 0,
+            "next_due_date": None, "pending_cheques_amount": zero, "invoice_count": 0,
+        }
+        for s in Supplier.objects.all().order_by('name')
+    }
+    for inv in _invoice_queryset():
+        row = rows.get(inv.supplier_id)
+        if row is None:
+            continue
+        info = invoice_payment_info(inv, today)
+        row["invoice_count"] += 1
+        row["total_invoiced"] += inv.amount
+        row["total_paid"] += info["paid_amount"]
+        row["outstanding"] += info["outstanding"]
+        if info["outstanding"] > 0:
+            row["open_invoices"] += 1
+            if row["next_due_date"] is None or inv.due_date < row["next_due_date"]:
+                row["next_due_date"] = inv.due_date
+        if info["is_overdue"]:
+            row["overdue_invoices"] += 1
+            row["overdue_amount"] += info["outstanding"]
+    pending = (
+        SupplierCheque.objects.filter(status=SupplierCheque.STATUS_PENDING)
+        .values('supplier_id').annotate(total=Sum('amount'))
+    )
+    for p in pending:
+        if p['supplier_id'] in rows:
+            rows[p['supplier_id']]["pending_cheques_amount"] = p['total'] or zero
+    return Response(list(rows.values()))

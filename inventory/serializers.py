@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db.models.functions import Upper
 from decimal import Decimal
-from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService, VehicleInspection, PurchaseOrder, PurchaseOrderItem
+from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService, VehicleInspection, PurchaseOrder, PurchaseOrderItem, SupplierInvoice, SupplierCheque, ChequeAllocation
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -566,3 +566,128 @@ class VehicleInspectionSerializer(serializers.ModelSerializer):
             if any(entry[k] for k in ('code', 'module', 'description')):
                 cleaned.append(entry)
         return cleaned
+
+
+# --- SUPPLIER INVOICES & CHEQUES ---
+
+def invoice_paid_amount(invoice):
+    """Paid so far: allocations from cheques that weren't cancelled. Reads the
+    prefetched allocations (prefetch 'allocations__cheque') when present."""
+    return sum(
+        (a.amount for a in invoice.allocations.all() if a.cheque.status != SupplierCheque.STATUS_CANCELLED),
+        Decimal('0'),
+    )
+
+
+def invoice_payment_info(invoice, today=None):
+    from django.utils import timezone
+    today = today or timezone.localdate()
+    paid = invoice_paid_amount(invoice)
+    outstanding = max(invoice.amount - paid, Decimal('0'))
+    if outstanding <= 0:
+        state = 'PAID'
+    elif paid > 0:
+        state = 'PARTIAL'
+    else:
+        state = 'UNPAID'
+    return {
+        "paid_amount": paid,
+        "outstanding": outstanding,
+        "payment_status": state,
+        "is_overdue": outstanding > 0 and invoice.due_date < today,
+    }
+
+
+class SupplierInvoiceSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    due_date = serializers.DateField(read_only=True)
+    paid_amount = serializers.SerializerMethodField()
+    outstanding = serializers.SerializerMethodField()
+    payment_status = serializers.SerializerMethodField()
+    is_overdue = serializers.SerializerMethodField()
+    payments = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupplierInvoice
+        fields = [
+            'id', 'supplier', 'supplier_name', 'invoice_number', 'invoice_date', 'amount',
+            'credit_days', 'due_date', 'notes', 'paid_amount', 'outstanding', 'payment_status',
+            'is_overdue', 'payments', 'created_at', 'updated_at',
+        ]
+
+    def _info(self, obj):
+        cache = getattr(obj, '_payment_info', None)
+        if cache is None:
+            cache = obj._payment_info = invoice_payment_info(obj)
+        return cache
+
+    def get_paid_amount(self, obj):
+        return str(self._info(obj)["paid_amount"])
+
+    def get_outstanding(self, obj):
+        return str(self._info(obj)["outstanding"])
+
+    def get_payment_status(self, obj):
+        return self._info(obj)["payment_status"]
+
+    def get_is_overdue(self, obj):
+        return self._info(obj)["is_overdue"]
+
+    def get_payments(self, obj):
+        return [
+            {
+                "cheque": a.cheque_id,
+                "cheque_number": a.cheque.cheque_number,
+                "cheque_date": a.cheque.cheque_date,
+                "cheque_status": a.cheque.status,
+                "amount": str(a.amount),
+            }
+            for a in obj.allocations.all()
+        ]
+
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Amount must be greater than zero.")
+        return value
+
+    def validate(self, attrs):
+        supplier = attrs.get('supplier', getattr(self.instance, 'supplier', None))
+        number = (attrs.get('invoice_number', getattr(self.instance, 'invoice_number', '')) or '').strip()
+        if not number:
+            raise serializers.ValidationError({"invoice_number": "Invoice number is required."})
+        if 'invoice_number' in attrs:
+            attrs['invoice_number'] = number
+        clash = SupplierInvoice.objects.filter(supplier=supplier, invoice_number__iexact=number)
+        if self.instance:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise serializers.ValidationError({"invoice_number": "This supplier already has an invoice with that number."})
+        if self.instance:
+            if 'supplier' in attrs and attrs['supplier'] != self.instance.supplier and self.instance.allocations.exists():
+                raise serializers.ValidationError({"supplier": "This invoice has cheque payments; its supplier can't be changed."})
+            if 'amount' in attrs:
+                paid = invoice_paid_amount(self.instance)
+                if attrs['amount'] < paid:
+                    raise serializers.ValidationError({"amount": f"Amount can't be less than what has already been paid ({paid})."})
+        return attrs
+
+
+class ChequeAllocationSerializer(serializers.ModelSerializer):
+    invoice_number = serializers.CharField(source='invoice.invoice_number', read_only=True)
+    invoice_amount = serializers.DecimalField(source='invoice.amount', max_digits=12, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = ChequeAllocation
+        fields = ['id', 'invoice', 'invoice_number', 'invoice_amount', 'amount']
+
+
+class SupplierChequeSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    allocations = ChequeAllocationSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SupplierCheque
+        fields = [
+            'id', 'supplier', 'supplier_name', 'cheque_number', 'bank', 'cheque_date', 'issued_date',
+            'amount', 'status', 'notes', 'allocations', 'created_at', 'updated_at',
+        ]

@@ -3860,3 +3860,288 @@ class PayrollAPITest(TestCase):
         self.assertEqual(payroll.earnings, Decimal('19000.00'))     # frozen once paid
         self.assertEqual(self.client.put(reverse('update_payroll_record', args=[payroll.pk]),
                                          {"allowances": 5}, format='json').status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class SupplierInvoiceChequeAPITest(TestCase):
+    """Supplier invoices, split cheque payments, balances and the monthly report."""
+
+    def setUp(self):
+        from .models import SupplierInvoice
+        self.SupplierInvoice = SupplierInvoice
+        self.client = APIClient()
+        self.client.force_authenticate(user=User.objects.create_user(username="payuser", password="password"))
+        self.supplier = Supplier.objects.create(name="Lanka Parts")
+        self.other = Supplier.objects.create(name="Other Parts")
+
+    def _invoice(self, number, amount, supplier=None, invoice_date="2026-10-01", credit_days=None):
+        payload = {
+            "supplier": (supplier or self.supplier).pk, "invoice_number": number,
+            "invoice_date": invoice_date, "amount": str(amount),
+        }
+        if credit_days is not None:
+            payload["credit_days"] = credit_days
+        response = self.client.post(reverse('add_supplier_invoice'), payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        return response.data
+
+    def _cheque(self, number, amount, allocations, cheque_date="2026-11-10", supplier=None, expect=201):
+        response = self.client.post(reverse('add_supplier_cheque'), {
+            "supplier": (supplier or self.supplier).pk, "cheque_number": number, "bank": "BOC",
+            "cheque_date": cheque_date, "amount": str(amount),
+            "allocations": [{"invoice": inv["id"], "amount": str(a)} for inv, a in allocations],
+        }, format='json')
+        self.assertEqual(response.status_code, expect, response.data)
+        return response.data
+
+    def _get_invoice(self, inv):
+        rows = self.client.get(reverse('get_supplier_invoices'), {"supplier": self.supplier.pk}).data
+        return next(r for r in rows if r["id"] == inv["id"])
+
+    def test_due_date_with_and_without_credit_period(self):
+        a = self._invoice("INV-1", 1000, credit_days=60)
+        b = self._invoice("INV-2", 1000)
+        self.assertEqual(str(a["due_date"]), "2026-11-30")
+        self.assertEqual(str(b["due_date"]), "2026-10-01")
+
+    def test_duplicate_invoice_number_rejected_per_supplier(self):
+        self._invoice("INV-1", 1000)
+        response = self.client.post(reverse('add_supplier_invoice'), {
+            "supplier": self.supplier.pk, "invoice_number": "inv-1", "invoice_date": "2026-10-02", "amount": "5",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self._invoice("INV-1", 1000, supplier=self.other)
+
+    def test_invoice_paid_by_two_cheques(self):
+        inv = self._invoice("INV-1", 10000)
+        self._cheque("C1", 4000, [(inv, 4000)])
+        row = self._get_invoice(inv)
+        self.assertEqual(row["payment_status"], "PARTIAL")
+        self.assertEqual(Decimal(row["outstanding"]), Decimal("6000"))
+        self._cheque("C2", 6000, [(inv, 6000)])
+        row = self._get_invoice(inv)
+        self.assertEqual(row["payment_status"], "PAID")
+        self.assertEqual(len(row["payments"]), 2)
+
+    def test_one_cheque_split_across_invoices(self):
+        a = self._invoice("INV-A", 60000)
+        b = self._invoice("INV-B", 50000)
+        cheque = self._cheque("C1", 100000, [(a, 60000), (b, 40000)])
+        self.assertEqual(len(cheque["allocations"]), 2)
+        self.assertEqual(self._get_invoice(a)["payment_status"], "PAID")
+        self.assertEqual(Decimal(self._get_invoice(b)["outstanding"]), Decimal("10000"))
+
+    def test_rejects_bad_allocations(self):
+        inv = self._invoice("INV-1", 1000)
+        foreign = self._invoice("INV-X", 1000, supplier=self.other)
+        self._cheque("C1", 1500, [(inv, 1500)], expect=400)          # more than outstanding
+        self._cheque("C2", 900, [(inv, 800)], expect=400)            # total mismatch
+        self._cheque("C3", 1000, [(foreign, 1000)], expect=400)      # other supplier's invoice
+        self.assertFalse(self.supplier.cheques.exists())
+
+    def test_cancelled_cheque_restores_outstanding(self):
+        inv = self._invoice("INV-1", 1000)
+        cheque = self._cheque("C1", 1000, [(inv, 1000)])
+        response = self.client.post(reverse('set_supplier_cheque_status', args=[cheque["id"]]), {"status": "CANCELLED"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self._get_invoice(inv)["payment_status"], "UNPAID")
+        # Paid again by another cheque, so the cancelled one can't come back.
+        self._cheque("C2", 1000, [(inv, 1000)])
+        response = self.client.post(reverse('set_supplier_cheque_status', args=[cheque["id"]]), {"status": "PENDING"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_edit_cheque_reallocates(self):
+        a = self._invoice("INV-A", 1000)
+        b = self._invoice("INV-B", 1000)
+        cheque = self._cheque("C1", 1000, [(a, 1000)])
+        response = self.client.put(reverse('update_supplier_cheque', args=[cheque["id"]]), {
+            "allocations": [{"invoice": a["id"], "amount": "500"}, {"invoice": b["id"], "amount": "500"}],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(self._get_invoice(a)["payment_status"], "PARTIAL")
+        self.assertEqual(self._get_invoice(b)["payment_status"], "PARTIAL")
+
+    def test_invoice_with_payments_cannot_be_deleted_or_reduced(self):
+        inv = self._invoice("INV-1", 1000)
+        self._cheque("C1", 600, [(inv, 600)])
+        self.assertEqual(self.client.delete(reverse('delete_supplier_invoice', args=[inv["id"]])).status_code, 400)
+        response = self.client.put(reverse('update_supplier_invoice', args=[inv["id"]]), {"amount": "500"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.client.delete(reverse('delete_supplier', args=[self.supplier.pk])).status_code, 400)
+
+    def test_balances(self):
+        overdue = self._invoice("INV-OLD", 3000, invoice_date="2020-01-01", credit_days=30)
+        self._invoice("INV-NEW", 2000, invoice_date=timezone.localdate().isoformat(), credit_days=60)
+        self._cheque("C1", 1000, [(overdue, 1000)])
+        rows = {r["supplier"]: r for r in self.client.get(reverse('get_supplier_balances')).data}
+        row = rows[self.supplier.pk]
+        self.assertEqual(row["total_invoiced"], Decimal("5000"))
+        self.assertEqual(row["total_paid"], Decimal("1000"))
+        self.assertEqual(row["outstanding"], Decimal("4000"))
+        self.assertEqual(row["overdue_amount"], Decimal("2000"))
+        self.assertEqual(row["pending_cheques_amount"], Decimal("1000"))
+        self.assertEqual(rows[self.other.pk]["outstanding"], Decimal("0"))
+
+    def _bulk(self, cheques, expect=201):
+        response = self.client.post(reverse('add_supplier_cheques_bulk'), {
+            "supplier": self.supplier.pk, "bank": "BOC", "issued_date": "2026-11-01",
+            "cheques": [
+                {"cheque_number": n, "cheque_date": d, "amount": str(a),
+                 "allocations": [{"invoice": inv["id"], "amount": str(x)} for inv, x in allocs]}
+                for n, d, a, allocs in cheques
+            ],
+        }, format='json')
+        self.assertEqual(response.status_code, expect, response.data)
+        return response.data
+
+    def test_bulk_weekly_series_pays_invoice(self):
+        inv = self._invoice("INV-1", 100000)
+        dates = ["2026-11-02", "2026-11-09", "2026-11-16", "2026-11-23"]
+        data = self._bulk([(f"00024{5 + i}", d, 25000, [(inv, 25000)]) for i, d in enumerate(dates)])
+        self.assertEqual([str(c["cheque_date"]) for c in data], dates)
+        self.assertTrue(all(c["bank"] == "BOC" and c["status"] == "PENDING" for c in data))
+        row = self._get_invoice(inv)
+        self.assertEqual(row["payment_status"], "PAID")
+        self.assertEqual(len(row["payments"]), 4)
+
+    def test_bulk_series_across_two_invoices(self):
+        a = self._invoice("INV-A", 30000)
+        b = self._invoice("INV-B", 20000)
+        self._bulk([
+            ("1", "2026-11-02", 25000, [(a, 25000)]),
+            ("2", "2026-11-09", 25000, [(a, 5000), (b, 20000)]),
+        ])
+        self.assertEqual(self._get_invoice(a)["payment_status"], "PAID")
+        self.assertEqual(self._get_invoice(b)["payment_status"], "PAID")
+
+    def test_bulk_overpay_rolls_back_everything(self):
+        inv = self._invoice("INV-1", 50000)
+        data = self._bulk([
+            ("1", "2026-11-02", 30000, [(inv, 30000)]),
+            ("2", "2026-11-09", 30000, [(inv, 30000)]),
+        ], expect=400)
+        self.assertIn("Cheque 2 (#2)", data["error"])
+        self.assertFalse(self.supplier.cheques.exists())
+
+    def test_bulk_rejects_duplicate_numbers(self):
+        inv = self._invoice("INV-1", 50000)
+        self._bulk([
+            ("7", "2026-11-02", 10000, [(inv, 10000)]),
+            ("7", "2026-11-09", 10000, [(inv, 10000)]),
+        ], expect=400)
+        self._bulk([], expect=400)
+        self.assertFalse(self.supplier.cheques.exists())
+
+    def test_cheque_number_cannot_be_reused(self):
+        inv = self._invoice("INV-1", 100000)
+        first = self._cheque("352051", 25000, [(inv, 25000)])
+        data = self._cheque("352051", 25000, [(inv, 25000)], expect=400)
+        self.assertIn("already used", str(data))
+        # Also across suppliers, in a batch, and when editing another cheque onto it.
+        other_inv = self._invoice("INV-X", 1000, supplier=self.other)
+        self._cheque(" 352051 ", 1000, [(other_inv, 1000)], supplier=self.other, expect=400)
+        data = self._bulk([("352052", "2026-11-02", 1000, [(inv, 1000)]), ("352051", "2026-11-09", 1000, [(inv, 1000)])], expect=400)
+        self.assertIn("Cheque 2 (#352051)", data["error"])
+        self.assertEqual(self.supplier.cheques.count(), 1)
+        second = self._cheque("352053", 1000, [(inv, 1000)])
+        response = self.client.put(reverse('update_supplier_cheque', args=[second["id"]]), {"cheque_number": "352051"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # Saving a cheque under its own number is fine.
+        response = self.client.put(reverse('update_supplier_cheque', args=[first["id"]]), {"bank": "HNB"}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+
+    def _month_with_sale(self):
+        # Revenue 10,000, parts cost 6,000, profit 4,000; no employees.
+        part = Part.objects.create(name="Filter", part_number="F-CHQ", buy_price=600, sell_price=1000, stock_qty=50)
+        from datetime import datetime
+        sale = Sale.objects.create(
+            customer_name="C", total_amount=10000, amount_paid=10000,
+            created_at=timezone.make_aware(datetime(2026, 11, 3, 10)),
+        )
+        SaleItem.objects.create(sale=sale, part=part, quantity=10, unit_price=1000, discount=0)
+
+    def _monthly(self):
+        response = self.client.get(reverse('monthly_report'), {"month": 11, "year": 2026})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        return response.data
+
+    def test_monthly_report_cheques_within_parts_cost(self):
+        self._month_with_sale()
+        inv = self._invoice("INV-1", 50000)
+        self._cheque("C1", 2500, [(inv, 2500)], cheque_date="2026-11-20")
+        self._cheque("C2", 3000, [(inv, 3000)], cheque_date="2026-12-05")   # next month
+        cancelled = self._cheque("C3", 4000, [(inv, 4000)], cheque_date="2026-11-21")
+        self.client.post(reverse('set_supplier_cheque_status', args=[cancelled["id"]]), {"status": "CANCELLED"}, format='json')
+        data = self._monthly()
+        self.assertEqual(data["cheque_cost"], Decimal("2500"))
+        self.assertEqual(data["cheque_count"], 1)
+        self.assertEqual(data["cheques_from_parts_cost"], Decimal("2500"))
+        self.assertEqual(data["cheques_from_profit"], Decimal("0"))
+        self.assertEqual(data["parts_cost_remaining"], Decimal("3500"))
+        self.assertEqual(data["profit_after_cheques"], data["profit_after_salaries"])
+
+    def test_monthly_report_cheques_beyond_parts_cost_come_from_profit(self):
+        self._month_with_sale()
+        inv = self._invoice("INV-1", 50000)
+        self._cheque("C1", 7000, [(inv, 7000)], cheque_date="2026-11-20")
+        data = self._monthly()
+        self.assertEqual(data["cheques_from_parts_cost"], Decimal("6000"))
+        self.assertEqual(data["cheques_from_profit"], Decimal("1000"))
+        self.assertEqual(data["parts_cost_remaining"], Decimal("0"))
+        self.assertEqual(data["profit_after_cheques"], data["profit_after_salaries"] - Decimal("1000"))
+
+
+class LabourCostTest(TestCase):
+    """A repair/labour line can carry what the shop paid for it; that comes off profit."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(user=User.objects.create_user(username="labourcost", password="password"))
+        self.part = Part.objects.create(name="Filter", part_number="F-LC", buy_price=600, sell_price=1000, stock_qty=10)
+
+    def _sell(self, labour, expect=201):
+        response = self.client.post(reverse('create_sale'), {
+            "customer_name": "C", "vehicle_number": "CAB-9",
+            "items": [
+                {"item_type": "PART", "part_id": str(self.part.id), "quantity": 1, "unit_price": 1000, "discount": 0},
+                {"item_type": "LABOR", "description": "Alternator rewind", "quantity": 1, "unit_price": 5000, "discount": 0, **labour},
+            ],
+        }, format='json')
+        self.assertEqual(response.status_code, expect, response.data)
+        return response.data
+
+    def _today(self):
+        return self.client.get(reverse('daily_report'), {"date": timezone.localdate().isoformat()}).data
+
+    def test_cost_comes_off_profit_not_parts_cost(self):
+        self._sell({"unit_cost": "3000"})
+        data = self._today()
+        self.assertEqual(Decimal(str(data["today_profit"])), Decimal("400") + Decimal("2000"))
+        self.assertEqual(Decimal(str(data["labor_cost"])), Decimal("3000"))
+        self.assertEqual(Decimal(str(data["total_investment"])), Decimal("600"))
+        labour = SaleItem.objects.get(item_type='LABOR')
+        self.assertEqual(labour.unit_cost, Decimal("3000"))
+
+    def test_no_cost_is_all_profit(self):
+        self._sell({})
+        data = self._today()
+        self.assertEqual(Decimal(str(data["today_profit"])), Decimal("5400"))
+        self.assertEqual(Decimal(str(data["labor_cost"])), Decimal("0"))
+
+    def test_rejects_bad_cost(self):
+        self._sell({"unit_cost": "-5"}, expect=400)
+        self._sell({"unit_cost": "abc"}, expect=400)
+        self.assertFalse(Sale.objects.exists())
+
+    def test_monthly_matches_daily(self):
+        self._sell({"unit_cost": "3000"})
+        today = timezone.localdate()
+        month = self.client.get(reverse('monthly_report'), {"month": today.month, "year": today.year}).data
+        day = self._today()
+        for key in ("today_profit", "labor_cost", "total_investment"):
+            self.assertEqual(Decimal(str(month[key])), Decimal(str(day[key])), key)
+
+    def test_reverse_keeps_cost(self):
+        sale = self._sell({"unit_cost": "3000"})
+        cart = self.client.post(reverse('reverse_sale', args=[sale["id"]])).data
+        labour = next(i for i in cart["items"] if i.get("item_type") == "LABOR")
+        self.assertEqual(labour["cost"], 3000.0)

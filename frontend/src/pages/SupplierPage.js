@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   fetchSuppliers,
   deleteSupplier,
   createSupplier,
   updateSupplier,
+  fetchSupplierBalances,
 } from "../services/api";
 import AddSupplierForm from "../components/forms/AddSupplierForm";
 import AlertComponent from "../components/AlertComponent";
@@ -23,6 +24,7 @@ import {
   Trash2,
   XCircle,
   Landmark,
+  Receipt,
 } from "lucide-react";
 
 // Payment details, shown only once something is on file — suppliers paid in cash
@@ -64,8 +66,38 @@ const BankDetails = ({ supplier }) => {
   );
 };
 
+const formatOwed = (amount) =>
+  `Rs ${new Intl.NumberFormat("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(parseFloat(amount) || 0)}`;
+
+// What we owe the supplier on their invoices; links to the Supplier Payments page.
+const OwedStrip = ({ supplier, balance }) => {
+  if (!balance || !balance.invoice_count) return null;
+  const owed = parseFloat(balance.outstanding) || 0;
+  const overdue = parseFloat(balance.overdue_amount) || 0;
+  return (
+    <Link
+      to={`/supplier-payments?tab=invoices&supplier=${supplier.id}`}
+      className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 mt-2 border transition-colors ${overdue > 0
+        ? "bg-red-50 border-red-200 hover:bg-red-100"
+        : owed > 0
+          ? "bg-amber-50 border-amber-200 hover:bg-amber-100"
+          : "bg-green-50 border-green-200 hover:bg-green-100"
+        }`}
+      title="See invoices and cheques"
+    >
+      <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-gray-500">
+        <Receipt size={13} /> {owed > 0 ? "We owe" : "All paid"}
+      </span>
+      <span className="text-right">
+        {owed > 0 && <span className="block text-sm font-black text-gray-900">{formatOwed(owed)}</span>}
+        {overdue > 0 && <span className="block text-[11px] font-bold text-red-600">{formatOwed(overdue)} overdue</span>}
+      </span>
+    </Link>
+  );
+};
+
 // --- Supplier card ---
-const SupplierCard = ({ supplier, onEdit, onDelete }) => {
+const SupplierCard = ({ supplier, balance, onEdit, onDelete }) => {
   const contacts = supplier.contacts || [];
   const phoneCount = contacts.reduce((n, c) => n + (c.phones ? c.phones.length : 0), 0);
 
@@ -190,6 +222,7 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
       </div>
 
       <BankDetails supplier={supplier} />
+      <OwedStrip supplier={supplier} balance={balance} />
 
       {/* Footer: primary number + call action */}
       <div className="border-t border-gray-100 mt-4 pt-4 flex items-end justify-between gap-3">
@@ -235,6 +268,7 @@ const SupplierCard = ({ supplier, onEdit, onDelete }) => {
 const SupplierPage = () => {
   const location = useLocation();
   const [suppliers, setSuppliers] = useState([]);
+  const [balances, setBalances] = useState({});
   const [loading, setLoading] = useState(true);
   const [saveLoading, setSaveLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState(location.state?.search || "");
@@ -253,8 +287,12 @@ const SupplierPage = () => {
   const loadSuppliers = async () => {
     setLoading(true);
     try {
-      const data = await fetchSuppliers();
+      const [data, owed] = await Promise.all([
+        fetchSuppliers(),
+        fetchSupplierBalances().catch(() => []),
+      ]);
       setSuppliers(data);
+      setBalances(Object.fromEntries(owed.map((b) => [b.supplier, b])));
     } catch (error) {
       console.error("Failed to load suppliers", error);
       setAlertInfo({ type: "error", message: "Failed to load supplier list." });
@@ -298,6 +336,7 @@ const SupplierPage = () => {
       setAlertInfo({
         type: "error",
         message:
+          error.response?.data?.error ||
           "Failed to delete. Ensure they are not linked to existing parts.",
       });
     }
@@ -454,6 +493,7 @@ const SupplierPage = () => {
               <SupplierCard
                 key={supplier.id}
                 supplier={supplier}
+                balance={balances[supplier.id]}
                 onEdit={handleEdit}
                 onDelete={confirmDelete}
               />

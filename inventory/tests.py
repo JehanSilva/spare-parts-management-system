@@ -4140,6 +4140,12 @@ class LabourCostTest(TestCase):
         for key in ("today_profit", "labor_cost", "total_investment"):
             self.assertEqual(Decimal(str(month[key])), Decimal(str(day[key])), key)
 
+    def test_price_pending_repair_blocks_sale(self):
+        data = self._sell({"price_pending": True}, expect=400)
+        self.assertIn("still needs a price", data["error"])
+        self.assertFalse(Sale.objects.exists())
+        self._sell({"price_pending": False})
+
     def test_reverse_keeps_cost(self):
         sale = self._sell({"unit_cost": "3000"})
         cart = self.client.post(reverse('reverse_sale', args=[sale["id"]])).data

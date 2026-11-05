@@ -1113,6 +1113,28 @@ const PaymentModal = ({
 const normalizeRepairDescription = (text) =>
   (text || "").trim().toLowerCase().split(/\s+/).join(" ");
 
+// Search over the repair lines already in the cart: every typed word must
+// appear somewhere in the description, so "brake pad" finds "Front brake pads".
+const queryWords = (query) => normalizeRepairDescription(query).split(" ").filter(Boolean);
+const matchesRepairQuery = (text, words) => {
+  const hay = normalizeRepairDescription(text);
+  return words.every((w) => hay.includes(w));
+};
+
+// Wraps the matched words of `text` in a highlight, for the filtered cart list.
+const highlightMatch = (text, words) => {
+  if (!words.length || !text) return text;
+  const escaped = words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const parts = String(text).split(new RegExp(`(${escaped.join("|")})`, "gi"));
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <mark key={i} className="bg-yellow-200 text-gray-900 rounded px-0.5">{part}</mark>
+    ) : (
+      part
+    )
+  );
+};
+
 const formatMoney = (value) =>
   Number(value || 0).toLocaleString("en-LK", {
     minimumFractionDigits: 2,
@@ -1126,12 +1148,15 @@ const formatBillDate = (iso) =>
     year: "numeric",
   });
 
-const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => {
+const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber, initialDescription = "" }) => {
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
   // What the shop paid for this job (outside part, sublet work). Optional;
   // it only reduces profit and never appears on the bill.
   const [cost, setCost] = useState("");
+  // Add the repair now and fill in the price later; the sale can't be
+  // completed until every pending price is entered.
+  const [pricePending, setPricePending] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -1141,12 +1166,15 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
 
   useEffect(() => {
     if (isOpen) {
-      setDescription(editItem ? editItem.name : "");
-      setPrice(editItem ? String(editItem.sell_price) : "");
+      setDescription(editItem ? editItem.name : initialDescription);
+      setPrice(editItem && !editItem.price_pending ? String(editItem.sell_price) : "");
       setCost(editItem && Number(editItem.cost) > 0 ? String(editItem.cost) : "");
+      setPricePending(!!editItem?.price_pending);
       setShowDropdown(false);
       setServiceError("");
     }
+    // initialDescription only seeds a fresh open; it isn't tracked while open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editItem]);
 
   // Refetch on every open so a repair billed moments ago is already suggestible.
@@ -1206,13 +1234,14 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
   if (!isOpen) return null;
 
   const costValue = parseFloat(cost) || 0;
-  const canAdd = description.trim().length > 0 && parseFloat(price) > 0 && costValue >= 0;
+  const canAdd =
+    description.trim().length > 0 && (pricePending || parseFloat(price) > 0) && costValue >= 0;
   const isEdit = !!editItem;
   const lineProfit = (parseFloat(price) || 0) - costValue;
 
   const handleAdd = () => {
     if (!canAdd) return;
-    onAdd(description.trim(), price, costValue, editItem ? editItem.id : null);
+    onAdd(description.trim(), pricePending ? 0 : price, costValue, editItem ? editItem.id : null, pricePending);
   };
 
   const applySuggestion = (suggestion) => {
@@ -1359,11 +1388,28 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
               type="number"
               min="0"
               step="0.01"
-              value={price}
+              value={pricePending ? "" : price}
               onChange={(e) => setPrice(e.target.value)}
-              placeholder="e.g. 3500"
-              className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400"
+              disabled={pricePending}
+              placeholder={pricePending ? "Price to be added later" : "e.g. 3500"}
+              className="w-full px-2.5 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:bg-white outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             />
+            <label className="mt-2 flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={pricePending}
+                onChange={(e) => setPricePending(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-amber-500"
+              />
+              <span className="text-[11px] leading-snug">
+                <span className="font-bold text-gray-700">Price pending — add the amount later</span>
+                {pricePending && (
+                  <span className="block text-amber-700">
+                    The sale can't be completed until a price is entered.
+                  </span>
+                )}
+              </span>
+            </label>
           </div>
 
           <div>
@@ -1382,7 +1428,7 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
             <p className="mt-1 text-[10px] text-gray-500 leading-snug">
               What we paid for this job, e.g. an outside part or sublet work. Not shown on the bill.
             </p>
-            {costValue > 0 && parseFloat(price) > 0 && (
+            {!pricePending && costValue > 0 && parseFloat(price) > 0 && (
               <p
                 className={`mt-1.5 text-[11px] font-bold rounded-lg px-2 py-1 ${
                   lineProfit >= 0 ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
@@ -1432,7 +1478,7 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
             </p>
           )}
 
-          {canAdd && !matchedSuggestion?.is_catalog && (
+          {canAdd && !pricePending && !matchedSuggestion?.is_catalog && (
             <button
               type="button"
               onClick={handleSaveAsService}
@@ -1457,7 +1503,7 @@ const LaborItemModal = ({ isOpen, onClose, onAdd, editItem, vehicleNumber }) => 
             disabled={!canAdd}
             className="w-full py-2.5 text-sm font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-50"
           >
-            {isEdit ? "Save Changes" : "Add to Cart"}
+            {isEdit ? "Save Changes" : pricePending ? "Add to Cart — price pending" : "Add to Cart"}
           </button>
         </div>
       </div>
@@ -1615,6 +1661,18 @@ const POSPage = () => {
   // Purely a view filter; the cart itself stays one list, so totals, the
   // ActiveCart sync and checkout are untouched by it.
   const [cartTab, setCartTab] = useState("PARTS");
+  // Search within the repair lines already added (view filter only).
+  const [laborSearchOpen, setLaborSearchOpen] = useState(false);
+  const [laborQuery, setLaborQuery] = useState("");
+  const [laborPrefill, setLaborPrefill] = useState("");
+  const closeLaborSearch = () => {
+    setLaborSearchOpen(false);
+    setLaborQuery("");
+  };
+  useEffect(() => {
+    setLaborSearchOpen(false);
+    setLaborQuery("");
+  }, [activeCartId]);
   const [showNoCustomerConfirm, setShowNoCustomerConfirm] = useState(false);
   const [itemToRemove, setItemToRemove] = useState(null);
   const [showMileageWarning, setShowMileageWarning] = useState(false);
@@ -2218,7 +2276,7 @@ const POSPage = () => {
   // cart item already has, so quantity/discount handling and totals work
   // unchanged. When editItemId is set (editing an existing line via the
   // pencil button) the item is updated in place instead of prepended.
-  const handleAddLaborItem = (description, price, cost, editItemId) => {
+  const handleAddLaborItem = (description, price, cost, editItemId, pricePending = false) => {
     setCarts((prev) =>
       prev.map((c) => {
         if (c.id !== activeCartId) return c;
@@ -2226,10 +2284,17 @@ const POSPage = () => {
         if (editItemId) {
           const newItems = c.items.map((item) => {
             if (item.id !== editItemId) return item;
-            const newPrice = parseFloat(price);
+            const newPrice = parseFloat(price) || 0;
             let discountAmount = item.discountAmount || 0;
             if (discountAmount > newPrice) discountAmount = newPrice;
-            return { ...item, name: description, sell_price: newPrice, cost: parseFloat(cost) || 0, discountAmount };
+            return {
+              ...item,
+              name: description,
+              sell_price: newPrice,
+              cost: parseFloat(cost) || 0,
+              price_pending: !!pricePending,
+              discountAmount,
+            };
           });
           return { ...c, items: newItems };
         }
@@ -2241,8 +2306,9 @@ const POSPage = () => {
           id: `labor_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           item_type: "LABOR",
           name: description,
-          sell_price: parseFloat(price),
+          sell_price: parseFloat(price) || 0,
           cost: parseFloat(cost) || 0,
+          price_pending: !!pricePending,
           quantity: 1,
           discountAmount: 0,
           discountPercentInput: "",
@@ -2252,6 +2318,8 @@ const POSPage = () => {
     );
     setLaborModalOpen(false);
     setEditingLaborItem(null);
+    setLaborPrefill("");
+    closeLaborSearch();
     // Show the line that was just added/edited rather than leaving the
     // cashier on the Parts tab wondering whether it registered.
     setCartTab("LABOR");
@@ -2479,7 +2547,18 @@ const POSPage = () => {
     () => cart.filter((item) => item.item_type === "LABOR"),
     [cart]
   );
-  const visibleCartLines = cartTab === "LABOR" ? laborLines : partLines;
+  // Repairs added with "price pending" — they block checkout until priced.
+  const pendingPriceLines = useMemo(
+    () => laborLines.filter((item) => item.price_pending),
+    [laborLines]
+  );
+  const laborWords = useMemo(() => queryWords(laborQuery), [laborQuery]);
+  const filteredLaborLines = useMemo(
+    () => (laborWords.length ? laborLines.filter((item) => matchesRepairQuery(item.name, laborWords)) : laborLines),
+    [laborLines, laborWords]
+  );
+  const laborFiltering = cartTab === "LABOR" && laborWords.length > 0;
+  const visibleCartLines = cartTab === "LABOR" ? filteredLaborLines : partLines;
 
   const sectionTotal = useCallback(
     (lines) =>
@@ -2531,6 +2610,14 @@ const POSPage = () => {
       setAlertInfo({
         type: "error",
         message: "Cart is empty. Add items first.",
+      });
+      return;
+    }
+    if (pendingPriceLines.length > 0) {
+      setCartTab("LABOR");
+      setAlertInfo({
+        type: "error",
+        message: `${pendingPriceLines.length} ${pendingPriceLines.length === 1 ? "repair still needs" : "repairs still need"} a price before the sale can be completed: ${pendingPriceLines.map((i) => i.name).join(", ")}.`,
       });
       return;
     }
@@ -2612,6 +2699,7 @@ const POSPage = () => {
             quantity: parseInt(item.quantity),
             unit_price: originalPrice,
             unit_cost: parseFloat(item.cost) || 0,
+            price_pending: !!item.price_pending,
             discount: discountAmount,
           };
         }
@@ -3136,9 +3224,11 @@ const POSPage = () => {
         onClose={() => {
           setLaborModalOpen(false);
           setEditingLaborItem(null);
+          setLaborPrefill("");
         }}
         onAdd={handleAddLaborItem}
         editItem={editingLaborItem}
+        initialDescription={laborPrefill}
         vehicleNumber={vehicleNumber}
       />
 
@@ -3316,21 +3406,58 @@ const POSPage = () => {
             {/* Running total for whichever half is open — the figure a cashier
                 is asked for ("how much is the labour?") without doing the
                 arithmetic off the grand total. */}
-            {visibleCartLines.length > 0 && (
+            {(cartTab === "LABOR" ? laborLines : partLines).length > 0 && (
               <span className="ml-auto pb-2 text-[10px] font-bold text-gray-400 whitespace-nowrap">
-                LKR {sectionTotal(visibleCartLines).toLocaleString()}
+                LKR {sectionTotal(cartTab === "LABOR" ? laborLines : partLines).toLocaleString()}
               </span>
             )}
           </div>
 
           {cartTab === "LABOR" && (
             <div className="shrink-0 px-3 pt-3 bg-gray-50/50">
-              <button
-                onClick={() => setLaborModalOpen(true)}
-                className="w-full flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-dashed border-blue-200 hover:border-blue-300 rounded-xl py-2 transition-colors"
-              >
-                <Wrench size={13} /> Add Repair / Labor
-              </button>
+              {laborSearchOpen ? (
+                <div className="flex items-center gap-1.5 bg-white border border-blue-300 rounded-xl px-2.5 py-1.5 ring-1 ring-blue-100">
+                  <Search size={14} className="text-blue-500 shrink-0" />
+                  <input
+                    autoFocus
+                    value={laborQuery}
+                    onChange={(e) => setLaborQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Escape" && closeLaborSearch()}
+                    placeholder="Search added repairs…"
+                    className="flex-1 min-w-0 text-xs bg-transparent outline-none text-gray-800"
+                  />
+                  <button
+                    onClick={closeLaborSearch}
+                    className="text-gray-400 hover:text-gray-700 p-0.5 rounded-full shrink-0"
+                    title="Close search (Esc)"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => setLaborModalOpen(true)}
+                    className="flex-1 flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-dashed border-blue-200 hover:border-blue-300 rounded-xl py-2 transition-colors"
+                  >
+                    <Wrench size={13} /> Add Repair / Labor
+                  </button>
+                  {laborLines.length > 0 && (
+                    <button
+                      onClick={() => setLaborSearchOpen(true)}
+                      className="shrink-0 w-9 flex items-center justify-center text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors"
+                      title="Search the repairs already added"
+                    >
+                      <Search size={14} />
+                    </button>
+                  )}
+                </div>
+              )}
+              {laborFiltering && filteredLaborLines.length > 0 && (
+                <p className="mt-1.5 text-[10px] font-bold text-green-700">
+                  ✓ Already added · {filteredLaborLines.length} of {laborLines.length} repair{laborLines.length === 1 ? "" : "s"} match
+                </p>
+              )}
             </div>
           )}
 
@@ -3342,6 +3469,23 @@ const POSPage = () => {
                 </div>
                 <p className="text-lg font-semibold text-gray-500">Cart is empty</p>
                 <p className="text-sm">Select items to start a sale</p>
+              </div>
+            ) : laborFiltering && visibleCartLines.length === 0 ? (
+              <div className="text-center text-gray-400 mt-10 flex flex-col items-center gap-2 px-4">
+                <Search size={22} className="opacity-40" />
+                <p className="text-sm font-semibold text-gray-600">
+                  Not added yet: <span className="text-gray-900">“{laborQuery.trim()}”</span>
+                </p>
+                <p className="text-xs">None of the {laborLines.length} repairs on this job match.</p>
+                <button
+                  onClick={() => {
+                    setLaborPrefill(laborQuery.trim());
+                    setLaborModalOpen(true);
+                  }}
+                  className="mt-1 flex items-center gap-1.5 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl px-3 py-1.5"
+                >
+                  <Wrench size={12} /> Add “{laborQuery.trim()}”
+                </button>
               </div>
             ) : visibleCartLines.length === 0 ? (
               // This half is empty but the sale isn't (or the Add button is
@@ -3438,13 +3582,22 @@ const POSPage = () => {
 
                       <div className="flex-1 min-w-0">
                         <h4 className="font-bold text-[13px] text-gray-800 leading-snug line-clamp-2">
-                          {item.name}
+                          {laborFiltering && item.item_type === "LABOR" ? highlightMatch(item.name, laborWords) : item.name}
                         </h4>
                         {item.item_type === "LABOR" ? (
                           <>
                             <p className="text-[10px] text-blue-600 font-bold uppercase tracking-wide flex items-center gap-1">
                               <Wrench size={10} /> Repair / Labor
                             </p>
+                            {item.price_pending && (
+                              <button
+                                onClick={() => handleOpenEditLabor(item)}
+                                className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-800 text-[10px] font-bold hover:bg-amber-200"
+                                title="Enter the price for this repair"
+                              >
+                                <AlertTriangle size={10} /> Price pending · Set price
+                              </button>
+                            )}
                             {Number(item.cost) > 0 && (() => {
                               const qty = parseInt(item.quantity) || 1;
                               const profit =
@@ -3761,6 +3914,19 @@ const POSPage = () => {
                     </span>
                     {" — "}
                     {overLimitLines.map((i) => i.name).join(", ")}. You can still complete the sale.
+                  </p>
+                </div>
+              )}
+
+              {pendingPriceLines.length > 0 && (
+                <div className="mb-2 flex items-start gap-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                  <p>
+                    <span className="font-bold">
+                      {pendingPriceLines.length} {pendingPriceLines.length === 1 ? "repair needs" : "repairs need"} a price
+                    </span>
+                    {" — "}
+                    {pendingPriceLines.map((i) => i.name).join(", ")}
                   </p>
                 </div>
               )}

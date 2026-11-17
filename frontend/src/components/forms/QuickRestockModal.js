@@ -10,9 +10,14 @@ import {
   History,
   ArrowRight,
   AlertCircle,
+  CalendarDays,
 } from "lucide-react";
 import { fetchParts, restockPart, fetchRestockHistory, fetchSuppliers } from "../../services/api";
 import SupplierSelect from "./SupplierSelect";
+
+// Today as local "YYYY-MM-DD" (toISOString would give the UTC day).
+const localDay = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const formatLKR = (val) =>
@@ -26,6 +31,7 @@ const emptyEntry = () => ({
   supplier_id: "",
   quantity: "",
   buy_price: "",
+  invoice_number: "",
   notes: "",
 });
 
@@ -146,6 +152,9 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
     initialPart ? [entryForPart(initialPart)] : [emptyEntry()]
   );
   const [sellPrice, setSellPrice] = useState(initialPart ? initialPart.sell_price || "" : "");
+  // The day the stock arrived — today unless it's being entered late.
+  const today = localDay();
+  const [restockDate, setRestockDate] = useState(today);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
@@ -259,12 +268,13 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
       supplier_id: en.supplier_id ? parseInt(en.supplier_id, 10) : null,
       quantity: parseInt(en.quantity, 10),
       buy_price: parseFloat(en.buy_price),
+      invoice_number: (en.invoice_number || "").trim(),
       notes: en.notes || "",
     }));
 
     setIsSubmitting(true);
     try {
-      const result = await restockPart(selectedPart.id, payload, parseFloat(sellPrice));
+      const result = await restockPart(selectedPart.id, payload, parseFloat(sellPrice), restockDate || today);
       const supplierCount = new Set(payload.map((p) => p.supplier_id).filter(Boolean)).size;
       const msg =
         supplierCount > 1
@@ -430,6 +440,30 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
               {activeTab === "restock" && (
                 <form onSubmit={handleSubmit} className="space-y-4">
 
+                  {/* Restock date — defaults to today, can be set back */}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                      <CalendarDays size={14} /> Restock date
+                    </label>
+                    <input
+                      type="date"
+                      value={restockDate}
+                      max={today}
+                      onChange={(e) => setRestockDate(e.target.value > today ? today : e.target.value)}
+                      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                    {restockDate && restockDate !== today ? (
+                      <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-0.5">
+                        Back-dated ·{" "}
+                        <button type="button" onClick={() => setRestockDate(today)} className="underline">
+                          use today
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">Today</span>
+                    )}
+                  </div>
+
                   {/* Supplier entries */}
                   <div className="space-y-3">
                     {entries.map((entry, idx) => (
@@ -453,9 +487,9 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
                           )}
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {/* Supplier dropdown */}
-                          <div className="sm:col-span-3">
+                          <div className="sm:col-span-2">
                             <label className="block text-xs font-semibold text-gray-600 mb-1">
                               Supplier <span className="text-gray-400 font-normal">(optional)</span>
                             </label>
@@ -513,6 +547,20 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
                             )}
                           </div>
 
+                          {/* Invoice number */}
+                          <div>
+                            <label className="block text-xs font-semibold text-gray-600 mb-1">
+                              Invoice No. <span className="text-gray-400 font-normal">(optional)</span>
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. INV-0023"
+                              className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
+                              value={entry.invoice_number}
+                              onChange={(e) => updateEntry(entry.id, "invoice_number", e.target.value)}
+                            />
+                          </div>
+
                           {/* Notes */}
                           <div>
                             <label className="block text-xs font-semibold text-gray-600 mb-1">
@@ -520,7 +568,7 @@ const QuickRestockModal = ({ onClose, onSuccess, initialPart = null }) => {
                             </label>
                             <input
                               type="text"
-                              placeholder="e.g. Invoice #123"
+                              placeholder="Anything else about this batch"
                               className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
                               value={entry.notes}
                               onChange={(e) => updateEntry(entry.id, "notes", e.target.value)}

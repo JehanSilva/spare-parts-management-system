@@ -40,6 +40,12 @@ const formatLKR = (val) =>
     maximumFractionDigits: 2,
   })}`;
 
+// A timestamp's local day as "YYYY-MM-DD", for a date input.
+const localDay = (value) => {
+  const d = value ? new Date(value) : new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 const formatDate = (iso) =>
   new Date(iso).toLocaleDateString("en-LK", {
     day: "2-digit",
@@ -93,6 +99,9 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
   const [editSupplierId, setEditSupplierId] = useState("");
   const [editQty, setEditQty] = useState("");
   const [editPrice, setEditPrice] = useState("");
+  const [editDate, setEditDate] = useState("");
+  const [editInvoice, setEditInvoice] = useState("");
+  const [editNotes, setEditNotes] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState("");
 
@@ -126,6 +135,9 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
     setEditSupplierId(record.supplier ? String(record.supplier) : "");
     setEditQty(record.quantity);
     setEditPrice(record.buy_price);
+    setEditDate(localDay(record.restocked_at));
+    setEditInvoice(record.invoice_number || "");
+    setEditNotes(record.notes || "");
     setEditError("");
   };
 
@@ -155,6 +167,9 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
         supplier_id: editSupplierId === "" ? null : editSupplierId,
         quantity: editQty,
         buy_price: editPrice,
+        restock_date: editDate,
+        invoice_number: editInvoice,
+        notes: editNotes,
       });
       closePanel();
       load();
@@ -384,6 +399,37 @@ const RestockHistorySection = ({ partId, onRefresh }) => {
                         className="w-full border border-blue-300 rounded-lg px-3 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-400"
                       />
                     </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 block mb-1">Purchase Date</label>
+                      <input
+                        type="date"
+                        max={localDay()}
+                        value={editDate}
+                        onChange={(e) => { setEditDate(e.target.value); setEditError(""); }}
+                        className="w-full bg-white border border-blue-300 rounded-lg px-3 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-semibold text-gray-600 block mb-1">Invoice No.</label>
+                      <input
+                        type="text"
+                        value={editInvoice}
+                        placeholder="e.g. INV-0023"
+                        onChange={(e) => { setEditInvoice(e.target.value); setEditError(""); }}
+                        className="w-full border border-blue-300 rounded-lg px-3 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-600 block mb-1">Notes</label>
+                    <input
+                      type="text"
+                      value={editNotes}
+                      onChange={(e) => { setEditNotes(e.target.value); setEditError(""); }}
+                      className="w-full border border-blue-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
                   </div>
                   {editError && <p className="text-xs text-red-600 font-medium">{editError}</p>}
                   <div className="flex justify-end gap-2 pt-1">

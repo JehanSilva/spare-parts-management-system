@@ -269,7 +269,8 @@ class EstimateSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'estimate_number', 'vehicle', 'vehicle_details', 'vehicle_number',
             'make_model', 'mileage', 'first_registered_date', 'registration_number',
-            'chassis_number', 'insurance_company', 'date', 'validity_days',
+            'chassis_number', 'insurance_company', 'addressed_to', 'client_name', 'client_address',
+            'date', 'validity_days',
             'owner_name', 'owner_phone', 'owner_address', 'notes', 'show_bank_details', 'sections',
             'total_amount', 'has_pending_quotation', 'created_at', 'updated_at',
         ]
@@ -381,6 +382,7 @@ class RestockEntrySerializer(serializers.Serializer):
     supplier_id = serializers.IntegerField(required=False, allow_null=True)
     quantity = serializers.IntegerField(min_value=1)
     buy_price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    invoice_number = serializers.CharField(required=False, allow_blank=True, default='', max_length=100)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
 
 

@@ -13,10 +13,15 @@ import {
   Trash2,
   Car,
   Building2,
+  User,
   Link2,
   Link2Off,
   Clock,
 } from "lucide-react";
+
+// Who an estimate is written to: the customer's name or the insurer.
+const addresseeLabel = (estimate) =>
+  estimate.addressed_to === "CUSTOMER" ? estimate.client_name : estimate.insurance_company;
 
 const formatLKR = (amount) =>
   new Intl.NumberFormat("en-LK", {
@@ -163,7 +168,7 @@ const EstimateListPage = () => {
           <input
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by reference, plate, insurer or model..."
+            placeholder="Search by reference, plate, insurer, customer or model..."
             className="w-full pl-10 pr-10 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
           />
           {searchTerm && (
@@ -234,8 +239,12 @@ const EstimateListPage = () => {
                   </div>
 
                   <div className="flex items-center gap-2 mt-3 text-xs text-gray-600">
-                    <Building2 size={12} className="text-gray-400 shrink-0" />
-                    <span className="truncate">{estimate.insurance_company || "No insurer"}</span>
+                    {estimate.addressed_to === "CUSTOMER" ? (
+                      <User size={12} className="text-gray-400 shrink-0" />
+                    ) : (
+                      <Building2 size={12} className="text-gray-400 shrink-0" />
+                    )}
+                    <span className="truncate">{addresseeLabel(estimate) || "No insurer"}</span>
                   </div>
                   <p className="text-xs text-gray-400 mt-1">{formatDate(estimate.date)}</p>
 
@@ -265,7 +274,7 @@ const EstimateListPage = () => {
                   <tr className="bg-gray-50 text-left text-xs uppercase tracking-wider text-gray-500">
                     <th className="px-5 py-3 font-bold">Reference</th>
                     <th className="px-5 py-3 font-bold">Vehicle</th>
-                    <th className="px-5 py-3 font-bold">Insurance Company</th>
+                    <th className="px-5 py-3 font-bold">Addressed To</th>
                     <th className="px-5 py-3 font-bold">Date</th>
                     <th className="px-5 py-3 font-bold text-right">Total</th>
                     <th className="px-5 py-3 font-bold text-right">Actions</th>
@@ -300,7 +309,16 @@ const EstimateListPage = () => {
                         </div>
                       </td>
                       <td className="px-5 py-4 text-gray-700">
-                        {estimate.insurance_company || <span className="text-gray-400">—</span>}
+                        {addresseeLabel(estimate) ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            {estimate.addressed_to === "CUSTOMER" && (
+                              <User size={13} className="text-gray-400 shrink-0" />
+                            )}
+                            {addresseeLabel(estimate)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
                       </td>
                       <td className="px-5 py-4 text-gray-500 whitespace-nowrap">
                         {formatDate(estimate.date)}

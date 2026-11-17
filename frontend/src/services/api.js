@@ -82,13 +82,15 @@ export const linkCompatiblePart = async (id, otherId) =>
   (await API.post(`/parts/${id}/compatible/link/`, { part_id: otherId })).data;
 export const unlinkCompatiblePart = async (id) =>
   (await API.post(`/parts/${id}/compatible/unlink/`)).data;
-export const restockPart = async (id, entries, sellPrice) =>
+// restockDate: optional "YYYY-MM-DD" to back-date the restock (today or earlier).
+export const restockPart = async (id, entries, sellPrice, restockDate) =>
   (
     await API.post(`/parts/${id}/restock/`, {
       entries,
       ...(sellPrice !== undefined && sellPrice !== null && sellPrice !== ""
         ? { sell_price: sellPrice }
         : {}),
+      ...(restockDate ? { restock_date: restockDate } : {}),
     })
   ).data;
 export const fetchRestockHistory = async (id) =>

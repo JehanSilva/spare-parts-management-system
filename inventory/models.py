@@ -358,6 +358,12 @@ class Estimate(models.Model):
     registration_number = models.CharField(max_length=50, blank=True)
     chassis_number = models.CharField(max_length=50, blank=True)
     insurance_company = models.CharField(max_length=150, blank=True)
+    # Who the estimate is written to: the insurer's claims department, or a
+    # customer paying for the repair themselves (not necessarily the owner).
+    ADDRESSED_TO_CHOICES = [('INSURANCE', 'Insurance company'), ('CUSTOMER', 'Customer')]
+    addressed_to = models.CharField(max_length=10, choices=ADDRESSED_TO_CHOICES, default='INSURANCE')
+    client_name = models.CharField(max_length=100, blank=True)
+    client_address = models.TextField(blank=True)
     date = models.DateField(null=True, blank=True)
     validity_days = models.PositiveIntegerField(default=30)
     # Whoever owns the vehicle. Copied onto the estimate rather than read
@@ -620,7 +626,8 @@ class RestockRecord(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name='restock_records')
     quantity = models.PositiveIntegerField()
     buy_price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Unit buy price from this supplier for this batch")
-    restocked_at = models.DateTimeField(auto_now_add=True)
+    # Defaults to now; Quick Restock can back-date it to the day stock actually arrived.
+    restocked_at = models.DateTimeField(default=timezone.now)
     notes = models.TextField(blank=True)
     invoice_number = models.CharField(max_length=100, blank=True, default='')
 

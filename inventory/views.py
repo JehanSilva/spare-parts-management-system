@@ -11,8 +11,8 @@ from datetime import date, timedelta
 from django.db.models.functions import TruncDate, Coalesce, Replace, Upper
 from rest_framework import status
 from django.db.models import Sum, F, Value, DecimalField
-from .models import InterchangeGroup, Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem, SupplierInvoice, SupplierCheque, ChequeAllocation
-from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context, PurchaseOrderSerializer, SupplierInvoiceSerializer, SupplierChequeSerializer, invoice_payment_info
+from .models import InterchangeGroup, Part, Supplier, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Customer, CustomerVehicle, Estimate, RepairService, VehicleInspection, INSPECTION_NUMBER_START, PurchaseOrder, PurchaseOrderItem, SupplierInvoice, SupplierCheque, ChequeAllocation, ChequeBank, ChequeBook
+from .serializers import PartSerializer, SupplierSerializer, SaleSerializer, PartMinimalSerializer, ActiveCartSerializer, EmployeeSerializer, AttendanceSerializer, PayrollSerializer, HolidaySerializer, RestockEntrySerializer, RestockRecordSerializer, CustomerSerializer, CustomerVehicleSerializer, EstimateSerializer, RepairServiceSerializer, VehicleInspectionSerializer, build_vehicle_registry_context, PurchaseOrderSerializer, SupplierInvoiceSerializer, SupplierChequeSerializer, ChequeBankSerializer, ChequeBookSerializer, invoice_payment_info
 from decimal import Decimal, InvalidOperation
 from .models import Vehicle, normalize_repair_description
 from .text import title_case_name
@@ -2267,7 +2267,7 @@ def _month_cheque_cost(year, month, parts_cost, profit_after_salaries, revenue):
             {
                 "id": c.id,
                 "supplier": c.supplier_id,
-                "supplier_name": c.supplier.name,
+                "supplier_name": c.payee_name,
                 "cheque_number": c.cheque_number,
                 "bank": c.bank,
                 "cheque_date": c.cheque_date,
@@ -3847,14 +3847,21 @@ def _save_cheque(data, cheque=None):
     """
     Create or update a cheque and replace its invoice allocations. Returns
     (cheque, None) or (None, error dict). Must run inside a transaction.
+
+    The cheque goes to a supplier or, with no supplier, to a named payee.
+    Invoice allocations are optional: a cheque can be recorded without one.
     """
     errors = {}
     supplier = None
     supplier_id = data.get('supplier', cheque.supplier_id if cheque else None)
-    try:
-        supplier = Supplier.objects.get(pk=int(supplier_id))
-    except (Supplier.DoesNotExist, TypeError, ValueError):
-        errors["supplier"] = "Choose a supplier."
+    payee = str(data.get('payee', cheque.payee if cheque else '') or '').strip()
+    if supplier_id not in (None, ''):
+        try:
+            supplier = Supplier.objects.get(pk=int(supplier_id))
+        except (Supplier.DoesNotExist, TypeError, ValueError):
+            errors["supplier"] = "Supplier not found."
+    elif not payee:
+        errors["supplier"] = "Choose a supplier or enter who the cheque is for."
 
     cheque_number = str(data.get('cheque_number', cheque.cheque_number if cheque else '') or '').strip()
     if not cheque_number:
@@ -3869,13 +3876,23 @@ def _save_cheque(data, cheque=None):
         if clash:
             errors["cheque_number"] = (
                 f"Cheque number {cheque_number} is already used "
-                f"({clash.supplier.name}, {clash.cheque_date:%d %b %Y})."
+                f"({clash.payee_name}, {clash.cheque_date:%d %b %Y})."
             )
 
     raw_date = data.get('cheque_date', cheque.cheque_date.isoformat() if cheque else None)
     cheque_date = parse_date(str(raw_date)) if raw_date else None
     if not cheque_date:
         errors["cheque_date"] = "Cheque date is required."
+
+    # The account the cheque is written from (optional). Its label is kept as
+    # the cheque's bank text; without one, free bank text is still accepted.
+    cheque_bank = None
+    bank_id = data.get('cheque_bank', cheque.cheque_bank_id if cheque else None)
+    if bank_id not in (None, ''):
+        try:
+            cheque_bank = ChequeBank.objects.get(pk=int(bank_id))
+        except (ChequeBank.DoesNotExist, TypeError, ValueError):
+            errors["cheque_bank"] = "Bank account not found."
 
     raw_issued = data.get('issued_date') or (cheque.issued_date.isoformat() if cheque else None)
     issued_date = parse_date(str(raw_issued)) if raw_issued else timezone.localdate()
@@ -3887,10 +3904,10 @@ def _save_cheque(data, cheque=None):
         errors["amount"] = "Amount must be greater than zero."
 
     raw_allocs = data.get('allocations')
-    if raw_allocs is None and cheque:
-        raw_allocs = [{"invoice": a.invoice_id, "amount": a.amount} for a in cheque.allocations.all()]
-    if not isinstance(raw_allocs, list) or not raw_allocs:
-        errors["allocations"] = "Assign the cheque to at least one invoice."
+    if raw_allocs is None:
+        raw_allocs = [{"invoice": a.invoice_id, "amount": a.amount} for a in cheque.allocations.all()] if cheque else []
+    if not isinstance(raw_allocs, list):
+        errors["allocations"] = "Invalid allocations."
     if errors:
         return None, errors
 
@@ -3908,8 +3925,8 @@ def _save_cheque(data, cheque=None):
             return None, {"allocations": "The same invoice is listed twice."}
         seen.add(invoice_id)
         parsed.append((invoice_id, part))
-    if not parsed:
-        return None, {"allocations": "Assign the cheque to at least one invoice."}
+    if parsed and supplier is None:
+        return None, {"allocations": "Only a cheque to a supplier can pay invoices."}
 
     invoices = {
         inv.pk: inv
@@ -3931,14 +3948,16 @@ def _save_cheque(data, cheque=None):
             return None, {"allocations": f"Invoice {inv.invoice_number} only has {outstanding} left to pay."}
 
     allocated = sum((p for _, p in parsed), Decimal('0'))
-    if allocated != amount:
+    if parsed and allocated != amount:
         return None, {"allocations": f"Assigned total ({allocated}) must equal the cheque amount ({amount})."}
 
     if cheque is None:
         cheque = SupplierCheque(status=SupplierCheque.STATUS_PENDING)
     cheque.supplier = supplier
+    cheque.payee = '' if supplier else payee
     cheque.cheque_number = cheque_number
-    cheque.bank = str(data.get('bank', cheque.bank or '') or '').strip()
+    cheque.cheque_bank = cheque_bank
+    cheque.bank = cheque_bank.label if cheque_bank else str(data.get('bank', cheque.bank or '') or '').strip()
     cheque.cheque_date = cheque_date
     cheque.issued_date = issued_date
     cheque.amount = amount
@@ -3965,9 +3984,9 @@ def add_supplier_cheque(request):
 @api_view(['POST'])
 def add_supplier_cheques_bulk(request):
     """
-    Several cheques to one supplier in one go, e.g. four weekly cheques for one
-    invoice. Body: {supplier, bank, issued_date, notes, cheques: [{cheque_number,
-    cheque_date, amount, allocations: [{invoice, amount}]}]}. All or nothing:
+    Several cheques to one supplier (or payee) in one go, e.g. four weekly
+    cheques for one invoice. Body: {supplier, payee, bank, issued_date, notes,
+    cheques: [{cheque_number, cheque_date, amount, allocations: [{invoice, amount}]}]}. All or nothing:
     each cheque is checked against what the earlier ones in the batch already
     paid, and any failure saves none of them.
     """
@@ -3982,7 +4001,7 @@ def add_supplier_cheques_bulk(request):
     if dupes:
         return Response({"error": f"Cheque number {dupes[0]} is used more than once."}, status=status.HTTP_400_BAD_REQUEST)
 
-    shared = {k: request.data.get(k) for k in ('supplier', 'bank', 'issued_date', 'notes') if k in request.data}
+    shared = {k: request.data.get(k) for k in ('supplier', 'payee', 'cheque_bank', 'bank', 'issued_date', 'notes') if k in request.data}
     created = []
     with transaction.atomic():
         for index, row in enumerate(rows, start=1):
@@ -4048,6 +4067,158 @@ def set_supplier_cheque_status(request, pk):
 def delete_supplier_cheque(request, pk):
     cheque = get_object_or_404(SupplierCheque, pk=pk)
     cheque.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# --- BANK ACCOUNTS & CHEQUE BOOKS ---
+
+def cheque_book_usage(books):
+    """
+    How each cheque book has been used, worked out from the cheques written on
+    its account whose number falls in its range. Cancelled cheques count: the
+    leaf is gone. A book is REPLACED when a newer book for the same account
+    arrived while it still had blank leaves; those leaves are "untracked".
+    Returns {book_id: {...}}.
+    """
+    books = list(books)
+    by_bank = {}
+    rows = (
+        SupplierCheque.objects.filter(cheque_bank_id__in={b.bank_id for b in books})
+        .values_list('cheque_bank_id', 'cheque_number', 'issued_date')
+    )
+    for bank_id, number, issued in rows:
+        number = (number or '').strip()
+        if number.isdigit():
+            by_bank.setdefault(bank_id, {})[int(number)] = issued
+
+    # Every book of those accounts, oldest first, to find the one after each.
+    successors = {}
+    siblings = ChequeBook.objects.filter(bank_id__in={b.bank_id for b in books}).order_by('received_date', 'id')
+    previous = {}
+    for book in siblings:
+        if book.bank_id in previous:
+            successors[previous[book.bank_id]] = book
+        previous[book.bank_id] = book.pk
+
+    usage = {}
+    for book in books:
+        lo, hi = int(book.first_leaf), int(book.last_leaf)
+        written = {n: d for n, d in by_bank.get(book.bank_id, {}).items() if lo <= n <= hi}
+        total = hi - lo + 1
+        remaining = total - len(written)
+        next_leaf = None
+        if remaining:
+            n = lo
+            while n in written:
+                n += 1
+            next_leaf = str(n).zfill(len(book.first_leaf))
+        last_used = max(written.values()) if written else None
+        newer = successors.get(book.pk)
+        if remaining == 0:
+            state, finished = 'FINISHED', last_used
+        elif newer is not None:
+            state, finished = 'REPLACED', newer.received_date
+        else:
+            state, finished = 'IN_USE', None
+        usage[book.pk] = {
+            "total_leaves": total,
+            "used": len(written),
+            "remaining": remaining,
+            "untracked": remaining if state == 'REPLACED' else 0,
+            "next_leaf": next_leaf,
+            "last_used_date": last_used,
+            "finished_date": finished,
+            "status": state,
+        }
+    return usage
+
+
+def _book_rows(books):
+    books = list(books)
+    usage = cheque_book_usage(books)
+    return [{**ChequeBookSerializer(b).data, **usage[b.pk]} for b in books]
+
+
+@api_view(['GET'])
+def get_cheque_banks(request):
+    banks = list(ChequeBank.objects.all())
+    rows = _book_rows(ChequeBook.objects.select_related('bank'))
+    data = ChequeBankSerializer(banks, many=True).data
+    for row in data:
+        mine = [r for r in rows if r["bank"] == row["id"]]
+        row["book_count"] = len(mine)
+        row["leaves_left"] = sum(r["remaining"] for r in mine if r["status"] == 'IN_USE')
+    return Response(data)
+
+
+@api_view(['POST'])
+def add_cheque_bank(request):
+    serializer = ChequeBankSerializer(data=request.data)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PUT'])
+def update_cheque_bank(request, pk):
+    bank = get_object_or_404(ChequeBank, pk=pk)
+    serializer = ChequeBankSerializer(bank, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+def delete_cheque_bank(request, pk):
+    bank = get_object_or_404(ChequeBank, pk=pk)
+    if bank.books.exists():
+        return Response(
+            {"error": "This account has cheque books. Delete those first."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    bank.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(['GET'])
+def get_cheque_books(request):
+    """?bank=<id>"""
+    qs = ChequeBook.objects.select_related('bank')
+    if request.query_params.get('bank'):
+        qs = qs.filter(bank_id=request.query_params['bank'])
+    return Response(_book_rows(qs))
+
+
+@api_view(['POST'])
+def add_cheque_book(request):
+    serializer = ChequeBookSerializer(data=request.data)
+    if serializer.is_valid():
+        book = serializer.save()
+        return Response(_book_rows([book])[0], status=status.HTTP_201_CREATED)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PUT'])
+def update_cheque_book(request, pk):
+    book = get_object_or_404(ChequeBook, pk=pk)
+    serializer = ChequeBookSerializer(book, data=request.data, partial=True)
+    if serializer.is_valid():
+        book = serializer.save()
+        return Response(_book_rows([book])[0])
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['DELETE'])
+def delete_cheque_book(request, pk):
+    book = get_object_or_404(ChequeBook, pk=pk)
+    if cheque_book_usage([book])[book.pk]["used"]:
+        return Response(
+            {"error": "Cheques have been written from this book, so it can't be deleted."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    book.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 

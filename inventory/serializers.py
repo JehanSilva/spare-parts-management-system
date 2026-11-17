@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db.models.functions import Upper
 from decimal import Decimal
-from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService, VehicleInspection, PurchaseOrder, PurchaseOrderItem, SupplierInvoice, SupplierCheque, ChequeAllocation
+from .models import Supplier, Part, Vehicle, Customer, CustomerVehicle, Sale, SaleItem, ActiveCart, Employee, Attendance, Payroll, Holiday, RestockRecord, Estimate, RepairService, VehicleInspection, PurchaseOrder, PurchaseOrderItem, SupplierInvoice, SupplierCheque, ChequeAllocation, ChequeBank, ChequeBook
 
 # --- 1. SUPPLIER ---
 class SupplierSerializer(serializers.ModelSerializer):
@@ -682,12 +682,77 @@ class ChequeAllocationSerializer(serializers.ModelSerializer):
 
 
 class SupplierChequeSerializer(serializers.ModelSerializer):
-    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    # The supplier's name, or the payee for a cheque not written to a supplier.
+    supplier_name = serializers.CharField(source='payee_name', read_only=True)
     allocations = ChequeAllocationSerializer(many=True, read_only=True)
 
     class Meta:
         model = SupplierCheque
         fields = [
-            'id', 'supplier', 'supplier_name', 'cheque_number', 'bank', 'cheque_date', 'issued_date',
+            'id', 'supplier', 'payee', 'supplier_name', 'cheque_number', 'cheque_bank', 'bank', 'cheque_date', 'issued_date',
             'amount', 'status', 'notes', 'allocations', 'created_at', 'updated_at',
         ]
+
+
+def _clean(value):
+    return " ".join(str(value or "").split())
+
+
+class ChequeBankSerializer(serializers.ModelSerializer):
+    label = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = ChequeBank
+        fields = [
+            'id', 'name', 'bank_code', 'branch', 'branch_code', 'account_name', 'account_number',
+            'notes', 'label', 'created_at',
+        ]
+
+    def validate(self, attrs):
+        for key in ('name', 'bank_code', 'branch', 'branch_code', 'account_name', 'account_number'):
+            if key in attrs:
+                attrs[key] = _clean(attrs[key])
+        get = lambda key: attrs.get(key, getattr(self.instance, key, '') if self.instance else '')
+        if not get('name'):
+            raise serializers.ValidationError({"name": "Bank name is required."})
+        # The same bank can be listed twice for different branches or accounts.
+        same = ChequeBank.objects.filter(
+            name__iexact=get('name'), branch__iexact=get('branch'), account_number__iexact=get('account_number'),
+        )
+        if self.instance is not None:
+            same = same.exclude(pk=self.instance.pk)
+        if same.exists():
+            raise serializers.ValidationError({"name": "This bank account is already in the list."})
+        return attrs
+
+
+MAX_BOOK_LEAVES = 1000
+
+
+class ChequeBookSerializer(serializers.ModelSerializer):
+    bank_label = serializers.CharField(source='bank.label', read_only=True)
+
+    class Meta:
+        model = ChequeBook
+        fields = ['id', 'bank', 'bank_label', 'first_leaf', 'last_leaf', 'received_date', 'notes', 'created_at']
+
+    def validate(self, attrs):
+        get = lambda key: attrs.get(key, getattr(self.instance, key) if self.instance else None)
+        first, last = str(get('first_leaf') or '').strip(), str(get('last_leaf') or '').strip()
+        if not first.isdigit() or not last.isdigit():
+            raise serializers.ValidationError({"first_leaf": "Leaf numbers must be digits only."})
+        lo, hi = int(first), int(last)
+        if lo > hi:
+            raise serializers.ValidationError({"last_leaf": "The last leaf must come after the first."})
+        if hi - lo + 1 > MAX_BOOK_LEAVES:
+            raise serializers.ValidationError({"last_leaf": f"A book can't have more than {MAX_BOOK_LEAVES} leaves."})
+        others = ChequeBook.objects.filter(bank=get('bank'))
+        if self.instance is not None:
+            others = others.exclude(pk=self.instance.pk)
+        for other in others:
+            if int(other.first_leaf) <= hi and lo <= int(other.last_leaf):
+                raise serializers.ValidationError(
+                    {"first_leaf": f"These leaves overlap the book {other.first_leaf}–{other.last_leaf}."}
+                )
+        attrs['first_leaf'], attrs['last_leaf'] = first, last
+        return attrs

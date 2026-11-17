@@ -110,16 +110,13 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
       ? "Balance On Credit"
       : "Paid In Full";
 
-  // Joined rather than inlined so the settlement sentence, which only applies
-  // to an unpaid invoice, can drop out without leaving a double space behind.
+  // The fine-print terms, run together as one paragraph.
   const footerNotes = [
     "Thanks for your business.",
-    balanceDue > 0
-      ? "Please settle the outstanding balance within 14 days, quoting the invoice number above."
-      : "",
     "Please retain this invoice for warranty claims.",
     "No refunds or returns on electrical parts.",
     "Goods remain the property of NSS Auto Engineers until paid in full.",
+    "This is a system-generated invoice and does not require a signature.",
   ]
     .filter(Boolean)
     .join(" ");
@@ -226,42 +223,10 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
         </tbody>
       </table>
 
-      {/* ── BANK DETAILS + TOTALS ───────────────────────────────────────── */}
-      {/* The totals block only ever fills the right half, so the payment
-          details ride in the space beside it rather than costing the invoice
-          another band of its own. Kept whole: it looks broken if Sub Total and
-          Balance Due — or the bank and its account number — land on different
-          sheets. */}
-      <div className="flex justify-between items-start gap-6 mt-4 break-inside-avoid">
-        <div className="w-[45%]">
-          <div className="font-bold text-gray-900 uppercase tracking-wide text-[9px] pb-1 border-b border-gray-300">
-            Bank Transfer Details
-          </div>
-          <table className="w-full border-collapse mt-1.5">
-            <tbody>
-              {BANK_DETAILS.map(([label, value]) => (
-                <tr key={label}>
-                  <td className="py-0.5 pr-3 text-gray-600 align-top whitespace-nowrap">{label}</td>
-                  {/* The number is what gets copied into a banking app, so it
-                      is the one line set solid and spaced out. */}
-                  <td
-                    className={`py-0.5 align-top ${
-                      label === "Account No."
-                        ? "font-bold text-gray-900 tracking-wider"
-                        : "text-gray-900"
-                    }`}
-                  >
-                    {value}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="text-[9px] text-gray-500 mt-1.5">
-            Please quote invoice # {invoiceId} as the payment reference.
-          </div>
-        </div>
-
+      {/* ── TOTALS ──────────────────────────────────────────────────────── */}
+      {/* Kept whole: it looks broken if Sub Total and the final bar land on
+          different sheets. Bank details are a single line in the footer. */}
+      <div className="flex justify-end mt-4 break-inside-avoid">
         <div className="w-[45%]">
           <div className="flex justify-between px-3 py-1.5">
             <span className="text-gray-600">Sub Total</span>
@@ -311,6 +276,23 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
             {sale.credit_note}
           </p>
         )}
+        {/* Bank details on one line, just above the terms. The account number
+            is what gets copied into a banking app, so it's set in bold. */}
+        <p className="text-center text-[9.5px] leading-snug text-gray-700 mb-1.5">
+          <span className="font-bold text-gray-900">Bank transfer: </span>
+          {BANK_DETAILS.map(([label, value], i) => (
+            <React.Fragment key={label}>
+              {i > 0 && " · "}
+              <span className="text-gray-500">{label} </span>
+              <span className={label === "Account No." ? "font-bold text-gray-900 tracking-wider" : "text-gray-900"}>
+                {value}
+              </span>
+            </React.Fragment>
+          ))}
+          {" · "}
+          <span className="text-gray-500">Reference </span>
+          <span className="text-gray-900">invoice # {invoiceId}</span>
+        </p>
         <p className="text-center text-[9px] leading-snug text-gray-600">
           {footerNotes}
         </p>

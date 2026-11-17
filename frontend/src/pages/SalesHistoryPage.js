@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchSales, fetchParts, updateSale, cancelSale, reverseSale, markSaleAsPaid } from "../services/api";
 import BillingDocument from "../components/BillingDocument";
-import { getVehicleInfo } from "../components/billingVehicle";
+import { getVehicleInfo, billingFileName, printWithTitle } from "../components/billingVehicle";
 import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
 import { useSettings } from "../context/SettingsContext";
 import AlertComponent from "../components/AlertComponent";
@@ -463,14 +463,15 @@ const SalesHistoryPage = () => {
   useEffect(() => {
     if (!selectedSaleForPrint) return;
     // Let the Receipt content paint before invoking the print dialog.
-    const t = setTimeout(() => window.print(), 50);
+    // Named after the vehicle so "Save as PDF" suggests a useful file name.
+    const t = setTimeout(() => printWithTitle(billingFileName(selectedSaleForPrint, documentLabel)), 50);
     const handleAfterPrint = () => setSelectedSaleForPrint(null);
     window.addEventListener("afterprint", handleAfterPrint);
     return () => {
       clearTimeout(t);
       window.removeEventListener("afterprint", handleAfterPrint);
     };
-  }, [selectedSaleForPrint]);
+  }, [selectedSaleForPrint, documentLabel]);
 
   // --- Enrich Sale Items with Part Numbers ---
   const getEnrichedSale = (sale) => {

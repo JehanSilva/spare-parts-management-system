@@ -4,6 +4,7 @@ import { createSale, fetchActiveCarts, syncActiveCarts, lookupVehicle, suggestVe
 import { useParts } from "../context/PartsContext";
 import { useSettings } from "../context/SettingsContext";
 import BillingDocument from "../components/BillingDocument";
+import { billingFileName, printWithTitle } from "../components/billingVehicle";
 import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
@@ -302,7 +303,7 @@ const ProductItem = memo(({ part, cartQty = 0, alternativeCount = 0, compatibleW
         </span>
       )}
 
-      <div className="h-20 md:h-24 bg-gray-100 relative rounded-t-xl overflow-hidden">
+      <div className="h-28 md:h-36 bg-white relative rounded-t-xl overflow-hidden">
         {part.image ? (
           <>
             {!imgLoaded && (
@@ -318,7 +319,7 @@ const ProductItem = memo(({ part, cartQty = 0, alternativeCount = 0, compatibleW
               loading="lazy"
               decoding="async"
               onLoad={() => setImgLoaded(true)}
-              className={`w-full h-full object-cover transition-opacity duration-500 ${imgLoaded ? "opacity-100" : "opacity-0"
+              className={`w-full h-full object-contain scale-110 bg-white transition-opacity duration-500 ${imgLoaded ? "opacity-100" : "opacity-0"
                 }`}
             />
           </>
@@ -1802,7 +1803,8 @@ const POSPage = () => {
   // in the success screen below), rather than react-to-print's iframe-based
   // approach — iOS Safari doesn't reliably scope window.print() to an
   // offscreen iframe's content and falls back to printing the whole page.
-  const handlePrint = () => window.print();
+  // The page title becomes the suggested PDF name: plate, make/model and invoice no.
+  const handlePrint = () => printWithTitle(billingFileName(saleSuccess, documentLabel));
 
   // ── Share receipt/invoice to WhatsApp ──────────────────────────────────
   // The flow itself (option chooser, phone entry, rasterising) lives in the

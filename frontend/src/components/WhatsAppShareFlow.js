@@ -3,6 +3,7 @@ import html2canvas from "html2canvas";
 import { MessageCircle, XCircle, Users, Phone, UserCheck, ChevronRight, Loader2 } from "lucide-react";
 import BillingDocument from "./BillingDocument";
 import { useSettings } from "../context/SettingsContext";
+import { billingFileName } from "./billingVehicle";
 import { updateCustomer } from "../services/api";
 
 // Chrome won't composite a transform animation on an <svg>, so a plain
@@ -400,7 +401,7 @@ const WhatsAppShareFlow = ({ sale, onClose, onAlert, onSharingChange }) => {
 
     let cancelled = false;
     let timeoutId;
-    const fileName = `${documentLabel.toLowerCase()}-${sale.id.substring(0, 8)}.png`;
+    const fileName = `${billingFileName(sale, documentLabel)}.png`;
     const prepare = async () => {
       // Get the modal and its spinner on screen before the main thread locks
       // up, otherwise the cashier stares at a frozen, unmarked UI.

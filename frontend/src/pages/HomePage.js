@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchDashboardStats } from "../services/api";
+import { fetchDashboardStats, fetchSupplierCheques } from "../services/api";
 import Footer from "../components/Footer";
 import { useSettings } from "../context/SettingsContext";
 import {
@@ -19,7 +19,184 @@ import {
   ClipboardCheck,
   Layers,
   Wrench,
+  Landmark,
+  CalendarDays,
+  Minimize2,
+  Maximize2,
 } from "lucide-react";
+
+// --- Upcoming cheques (today + the next 7 days) ---
+const isoDay = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const lkr = (amount) =>
+  `Rs ${new Intl.NumberFormat("en-LK", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(parseFloat(amount) || 0)}`;
+const sumOf = (list) => list.reduce((n, c) => n + (parseFloat(c.amount) || 0), 0);
+const dayName = (iso, opts) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-GB", opts);
+
+const ChequeLine = ({ c, strong }) => (
+  <div className={`flex items-center justify-between gap-3 py-2 ${strong ? "" : "text-sm"}`}>
+    <div className="min-w-0">
+      <p className={`truncate ${strong ? "font-bold text-gray-900" : "font-semibold text-gray-700"}`}>{c.supplier_name}</p>
+      <p className="text-xs text-gray-500 truncate">
+        #{c.cheque_number}{c.bank && ` · ${c.bank}`}
+      </p>
+    </div>
+    <span className={`whitespace-nowrap ${strong ? "font-extrabold text-gray-900" : "font-bold text-gray-700"}`}>{lkr(c.amount)}</span>
+  </div>
+);
+
+// Whether the card is shrunk to a tile is remembered per device.
+const COLLAPSE_KEY = "nss_home_cheques_collapsed";
+const readCollapsed = () => {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+};
+
+const UpcomingCheques = () => {
+  const [cheques, setCheques] = useState(null);
+  const [collapsed, setCollapsedState] = useState(readCollapsed);
+  const setCollapsed = (value) => {
+    setCollapsedState(value);
+    try {
+      localStorage.setItem(COLLAPSE_KEY, value ? "1" : "0");
+    } catch {
+      // Storage blocked: it just won't be remembered.
+    }
+  };
+
+  useEffect(() => {
+    fetchSupplierCheques()
+      .then(setCheques)
+      .catch((error) => {
+        console.error("Failed to load cheques", error);
+        setCheques([]);
+      });
+  }, []);
+
+  if (cheques === null) return null;
+
+  const now = new Date();
+  const today = isoDay(now);
+  const days = Array.from({ length: 7 }, (_, i) => isoDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + i + 1)));
+  const live = cheques.filter((c) => c.status !== "CANCELLED");
+  const todays = live.filter((c) => String(c.cheque_date) === today);
+  const upcoming = days
+    .map((day) => ({ day, items: live.filter((c) => String(c.cheque_date) === day) }))
+    .filter((d) => d.items.length);
+  const weekCount = todays.length + upcoming.reduce((n, d) => n + d.items.length, 0);
+  const weekTotal = sumOf(todays) + upcoming.reduce((n, d) => n + sumOf(d.items), 0);
+  const laterCount = weekCount - todays.length;
+
+  if (collapsed) {
+    const hasToday = todays.length > 0;
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        title="Show this week's cheques"
+        className={`group mb-10 w-full sm:w-auto flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left shadow-sm transition-colors ${
+          hasToday ? "border-red-600 bg-red-50 hover:bg-red-100/70" : "border-gray-100 bg-white hover:border-gray-300"
+        }`}
+      >
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${hasToday ? "bg-red-600 text-white" : "bg-gray-100 text-gray-500"}`}>
+          <Landmark size={20} />
+        </div>
+        <div className="min-w-0">
+          <p className={`font-bold ${hasToday ? "text-red-800" : "text-gray-800"}`}>
+            {hasToday
+              ? `${todays.length} cheque${todays.length === 1 ? "" : "s"} today · ${lkr(sumOf(todays))}`
+              : "No cheques today"}
+          </p>
+          <p className="text-xs text-gray-500">
+            {laterCount ? `${laterCount} more in the next 7 days` : "Nothing else this week"}
+          </p>
+        </div>
+        <Maximize2 size={16} className="ml-auto sm:ml-4 text-gray-400 group-hover:text-gray-700 shrink-0" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="mb-10 bg-white rounded-3xl shadow-sm border border-gray-100 p-5 md:p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-red-50 text-red-700 flex items-center justify-center">
+            <Landmark size={20} />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Cheques this week</h2>
+            <p className="text-sm text-gray-500">
+              {weekCount
+                ? `${weekCount} cheque${weekCount === 1 ? "" : "s"} · ${lkr(weekTotal)} over the next 7 days`
+                : "Nothing due over the next 7 days"}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/supplier-payments?tab=calendar"
+            className="flex items-center gap-1.5 text-sm font-semibold text-red-700 hover:text-red-800"
+          >
+            <CalendarDays size={16} /> Cheque calendar <ArrowRight size={14} />
+          </Link>
+          <button
+            type="button"
+            onClick={() => setCollapsed(true)}
+            className="p-2 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+            title="Minimize"
+          >
+            <Minimize2 size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] gap-4">
+        {/* Today — highlighted */}
+        <div className={`h-fit rounded-2xl p-4 border-2 ${todays.length ? "border-red-600 bg-red-50/60" : "border-gray-200 bg-gray-50"}`}>
+          <div className="flex items-baseline justify-between gap-2">
+            <p className={`text-xs font-extrabold uppercase tracking-wider ${todays.length ? "text-red-700" : "text-gray-500"}`}>
+              Today · {dayName(today, { weekday: "short", day: "numeric", month: "short" })}
+            </p>
+            {todays.length > 0 && <span className="text-sm font-extrabold text-red-700">{lkr(sumOf(todays))}</span>}
+          </div>
+          {todays.length ? (
+            <div className="mt-1 divide-y divide-red-100">
+              {todays.map((c) => <ChequeLine key={c.id} c={c} strong />)}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-gray-500">No cheques dated today.</p>
+          )}
+        </div>
+
+        {/* Coming days — dimmed */}
+        <div className="rounded-2xl border border-gray-100 bg-gray-50/70 p-4 opacity-80 hover:opacity-100 transition-opacity">
+          <p className="text-xs font-extrabold uppercase tracking-wider text-gray-500 mb-1">Coming up</p>
+          {upcoming.length ? (
+            <div className="divide-y divide-gray-200/70">
+              {upcoming.map(({ day, items }) => (
+                <div key={day} className="flex gap-4 py-1">
+                  <div className="w-14 shrink-0 pt-2 text-center">
+                    <p className="text-[11px] font-bold uppercase text-gray-400">{dayName(day, { weekday: "short" })}</p>
+                    <p className="text-lg font-extrabold text-gray-600 leading-tight">{dayName(day, { day: "numeric" })}</p>
+                    <p className="text-[10px] text-gray-400">{dayName(day, { month: "short" })}</p>
+                  </div>
+                  <div className="flex-1 min-w-0 divide-y divide-gray-100">
+                    {items.map((c) => <ChequeLine key={c.id} c={c} />)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-gray-400">No cheques in the next 7 days.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // --- Quick Action Card Component ---
 const QuickActionCard = ({ to, title, icon: Icon, colorClass, gradient, desc }) => (
@@ -85,6 +262,8 @@ const HomePage = () => {
               </span>
            </div>
         </div>
+
+        <UpcomingCheques />
 
         {/* --- SECTION 1: Quick Actions (Navigation) --- */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">

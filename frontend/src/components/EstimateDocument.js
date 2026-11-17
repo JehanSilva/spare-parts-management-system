@@ -57,6 +57,9 @@ export const toEstimatePayload = (estimate) => ({
   // empty string is not a date and the serializer rejects it.
   date: estimate.date || null,
   insurance_company: estimate.insuranceCompany,
+  addressed_to: estimate.addressedTo === "CUSTOMER" ? "CUSTOMER" : "INSURANCE",
+  client_name: estimate.clientName || "",
+  client_address: estimate.clientAddress || "",
   vehicle_number: estimate.vehicleNumber,
   make_model: estimate.makeModel,
   mileage: estimate.mileage,
@@ -76,6 +79,9 @@ export const toEstimatePayload = (estimate) => ({
 export const fromEstimateRecord = (record) => ({
   date: record.date || "",
   insuranceCompany: record.insurance_company || "",
+  addressedTo: record.addressed_to === "CUSTOMER" ? "CUSTOMER" : "INSURANCE",
+  clientName: record.client_name || "",
+  clientAddress: record.client_address || "",
   vehicleNumber: record.vehicle_number || "",
   makeModel: record.make_model || "",
   mileage: record.mileage || "",
@@ -197,7 +203,10 @@ const Fact = ({ label, value }) => (
 const EstimateDocument = forwardRef(({ estimate }, ref) => {
   const {
     date,
-    insuranceCompany,
+    insuranceCompany: typedInsurer,
+    addressedTo,
+    clientName,
+    clientAddress,
     vehicleNumber,
     makeModel,
     mileage,
@@ -239,6 +248,15 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
     ["First Registered", formatDate(firstRegisteredDate)],
     ["Mileage", mileage],
   ]);
+
+  // Addressed to a customer: the insurer is never printed, even if one was
+  // typed before switching.
+  const toCustomer = addressedTo === "CUSTOMER";
+  const insuranceCompany = toCustomer ? "" : typedInsurer;
+  const customerName = toCustomer ? (clientName || "").trim() : "";
+  const customerAddressLines = toCustomer
+    ? (clientAddress || "").split("\n").map((l) => l.trim()).filter(Boolean)
+    : [];
 
   const customerFacts = filled([
     ["Owner", ownerName],
@@ -327,6 +345,18 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
           <div>Sri Lanka.</div>
         </div>
       )}
+      {customerName && (
+        <div className="mt-3 text-[10.5px] text-gray-800">
+          <div>To,</div>
+          <div>{customerName},</div>
+          {customerAddressLines.map((line, i) => (
+            <div key={i}>
+              {line}
+              {i === customerAddressLines.length - 1 ? "." : ","}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Vehicle on the left, owner on the right — but only once there is an
           owner to fill the second column; a lone group reads better as a single
@@ -392,7 +422,9 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
         *This estimate is valid for {validityDays} days
         {insuranceCompany
           ? ` and applies only to the Insurance company: ${insuranceCompany}`
-          : ""}
+          : customerName
+            ? ` and applies only to ${customerName}`
+            : ""}
       </p>
 
       {/* ── NOTE ────────────────────────────────────────────────────────── */}

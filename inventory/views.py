@@ -7,7 +7,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from django.db.models.functions import TruncDate, Coalesce, Replace, Upper
 from rest_framework import status
 from django.db.models import Sum, F, Value, DecimalField
@@ -714,7 +714,7 @@ def delete_part(request, pk):
     return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-def _apply_restock(part, entries, sell_price=None, invoice_number=''):
+def _apply_restock(part, entries, sell_price=None, invoice_number='', restocked_at=None):
     """
     Add stock to a part: one RestockRecord per entry, the part's weighted
     average buy price recalculated, and its primary supplier moved to whoever it
@@ -722,7 +722,11 @@ def _apply_restock(part, entries, sell_price=None, invoice_number=''):
     purchase order. `entries` are dicts of supplier (object or None), quantity,
     buy_price and notes. Returns (records, total_added_qty, new_avg_price),
     where `records` are the saved RestockRecords in entry order.
+    `restocked_at` back-dates the records (default: now).
     """
+    restocked_at = restocked_at or timezone.now()
+    # A back-dated restock only becomes the primary supplier if nothing newer exists.
+    is_latest = not RestockRecord.objects.filter(part=part, restocked_at__gt=restocked_at).exists()
     # --- Weighted Average Cost Calculation ---
     # Start with existing stock value
     old_qty = part.stock_qty
@@ -746,7 +750,9 @@ def _apply_restock(part, entries, sell_price=None, invoice_number=''):
             quantity=qty,
             buy_price=entry['buy_price'],
             notes=entry.get('notes', ''),
-            invoice_number=invoice_number,
+            # Quick Restock gives each entry its own; a received purchase order passes one for all.
+            invoice_number=entry.get('invoice_number') or invoice_number,
+            restocked_at=restocked_at,
         ))
 
     # Bulk create all restock records (Postgres hands back their primary keys)
@@ -763,7 +769,7 @@ def _apply_restock(part, entries, sell_price=None, invoice_number=''):
     # Point the part at whoever it was most recently bought from, so the next
     # restock defaults to that supplier. Entries left as "Unknown / No Supplier"
     # leave the existing one alone rather than clearing it.
-    if latest_supplier is not None:
+    if latest_supplier is not None and is_latest:
         part.supplier = latest_supplier
     part.save()
 
@@ -783,10 +789,11 @@ def restock_part(request, pk):
     Payload:
     {
         "entries": [
-            { "supplier_id": 1, "quantity": 10, "buy_price": 1500.00, "notes": "" },
+            { "supplier_id": 1, "quantity": 10, "buy_price": 1500.00, "invoice_number": "INV-1", "notes": "" },
             { "supplier_id": 2, "quantity": 5,  "buy_price": 1450.00, "notes": "" }
         ],
-        "sell_price": 1800.00  # optional; defaults to the part's current sell_price
+        "sell_price": 1800.00,  # optional; defaults to the part's current sell_price
+        "restock_date": "2026-11-10"  # optional; the day the stock arrived (not in the future)
     }
     """
     part = get_object_or_404(Part, pk=pk)
@@ -803,6 +810,22 @@ def restock_part(request, pk):
             return Response({"error": "Invalid sell_price."}, status=status.HTTP_400_BAD_REQUEST)
         if sell_price < 0:
             return Response({"error": "sell_price must be ≥ 0."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Back-dating: the day the stock arrived, at the current time of day so
+    # same-day records keep their order. Today (or nothing) means now.
+    restocked_at = None
+    raw_date = request.data.get('restock_date')
+    if raw_date:
+        restock_day = parse_date(str(raw_date))
+        today = timezone.localdate()
+        if restock_day is None:
+            return Response({"error": "Invalid restock date."}, status=status.HTTP_400_BAD_REQUEST)
+        if restock_day > today:
+            return Response({"error": "The restock date can't be in the future."}, status=status.HTTP_400_BAD_REQUEST)
+        if restock_day < today:
+            restocked_at = timezone.make_aware(
+                datetime.combine(restock_day, timezone.localtime().time().replace(microsecond=0))
+            )
 
     # Validate all entries first
     serializer = RestockEntrySerializer(data=entries_data, many=True)
@@ -828,10 +851,11 @@ def restock_part(request, pk):
             'supplier': supplier_obj,
             'quantity': entry['quantity'],
             'buy_price': entry['buy_price'],
+            'invoice_number': entry.get('invoice_number', '').strip(),
             'notes': entry.get('notes', ''),
         })
 
-    records, total_added_qty, new_avg_price = _apply_restock(part, entries, sell_price=sell_price)
+    records, total_added_qty, new_avg_price = _apply_restock(part, entries, sell_price=sell_price, restocked_at=restocked_at)
 
     return Response({
         "part": PartSerializer(part).data,
@@ -913,10 +937,12 @@ def return_restock_record(request, part_pk, record_pk):
 @transaction.atomic
 def edit_restock_record(request, part_pk, record_pk):
     """
-    Edit the supplier, quantity and/or buy_price on a restock record.
-    Adjusts part.stock_qty and recalculates the weighted average buy price.
+    Edit the supplier, quantity, buy_price, purchase date, invoice number
+    and/or notes on a restock record. Quantity and price changes adjust
+    part.stock_qty and recalculate the weighted average buy price.
 
-    Payload: { "supplier_id": <int|null>, "quantity": <int>, "buy_price": "<decimal>" }
+    Payload: { "supplier_id": <int|null>, "quantity": <int>, "buy_price": "<decimal>",
+               "restock_date": "YYYY-MM-DD", "invoice_number": "<str>", "notes": "<str>" }
 
     Re-pointing the supplier only corrects who this batch was bought from — it
     is deliberately left out of the stock and average-price maths below, and
@@ -943,6 +969,20 @@ def edit_restock_record(request, part_pk, record_pk):
 
     new_quantity = int(request.data.get('quantity', record.quantity))
     new_buy_price = Decimal(str(request.data.get('buy_price', record.buy_price)))
+
+    # Purchase date: a new day keeps the record's original time of day, so its
+    # order among same-day purchases doesn't jump around.
+    new_restocked_at = record.restocked_at
+    raw_date = request.data.get('restock_date')
+    if raw_date:
+        new_day = parse_date(str(raw_date))
+        if new_day is None:
+            return Response({"error": "Invalid purchase date."}, status=status.HTTP_400_BAD_REQUEST)
+        if new_day > timezone.localdate():
+            return Response({"error": "The purchase date can't be in the future."}, status=status.HTTP_400_BAD_REQUEST)
+        current = timezone.localtime(record.restocked_at)
+        if new_day != current.date():
+            new_restocked_at = timezone.make_aware(datetime.combine(new_day, current.time().replace(tzinfo=None)))
 
     if new_quantity < record.returned_quantity:
         return Response(
@@ -980,6 +1020,11 @@ def edit_restock_record(request, part_pk, record_pk):
     record.supplier = new_supplier
     record.quantity = new_quantity
     record.buy_price = new_buy_price
+    record.restocked_at = new_restocked_at
+    if 'invoice_number' in request.data:
+        record.invoice_number = str(request.data.get('invoice_number') or '').strip()[:100]
+    if 'notes' in request.data:
+        record.notes = str(request.data.get('notes') or '').strip()
     # Refresh status based on updated quantity
     if record.returned_quantity == 0:
         record.status = RestockRecord.STATUS_ACTIVE
@@ -1767,6 +1812,7 @@ def get_estimates(request):
             Q(estimate_number__icontains=search) |
             Q(vehicle_number__icontains=search) |
             Q(insurance_company__icontains=search) |
+            Q(client_name__icontains=search) |
             Q(make_model__icontains=search)
         )
     return Response(EstimateSerializer(qs, many=True).data)
@@ -2243,6 +2289,7 @@ def _month_cheque_cost(year, month, parts_cost, profit_after_salaries, revenue):
     goes beyond that comes out of profit.
     """
     zero = Decimal('0')
+    SupplierCheque.auto_clear()
     cheques = list(
         SupplierCheque.objects
         .filter(cheque_date__year=year, cheque_date__month=month)
@@ -3829,6 +3876,7 @@ def delete_supplier_invoice(request, pk):
 @api_view(['GET'])
 def get_supplier_cheques(request):
     """?supplier=<id>&status=PENDING|CLEARED|CANCELLED&month=&year= (by cheque date)"""
+    SupplierCheque.auto_clear()
     qs = _cheque_queryset()
     params = request.query_params
     if params.get('supplier'):
@@ -3953,6 +4001,9 @@ def _save_cheque(data, cheque=None):
 
     if cheque is None:
         cheque = SupplierCheque(status=SupplierCheque.STATUS_PENDING)
+    elif cheque.cheque_date != cheque_date:
+        # A new date is a fresh start: it clears on its own once that date passes.
+        cheque.hold_pending = False
     cheque.supplier = supplier
     cheque.payee = '' if supplier else payee
     cheque.cheque_number = cheque_number
@@ -4059,7 +4110,12 @@ def set_supplier_cheque_status(request, pk):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
         cheque.status = new_status
-        cheque.save(update_fields=['status', 'updated_at'])
+        # Set back to pending by hand after its date: it hasn't cleared, so
+        # don't let the auto-clear flip it straight back.
+        cheque.hold_pending = (
+            new_status == SupplierCheque.STATUS_PENDING and cheque.cheque_date < timezone.localdate()
+        )
+        cheque.save(update_fields=['status', 'hold_pending', 'updated_at'])
     return Response(SupplierChequeSerializer(_cheque_queryset().get(pk=pk)).data)
 
 
@@ -4226,6 +4282,7 @@ def delete_cheque_book(request, pk):
 def get_supplier_balances(request):
     """What we owe each supplier, from their invoices and cheques."""
     today = timezone.localdate()
+    SupplierCheque.auto_clear(today)
     zero = Decimal('0')
     rows = {
         s.pk: {

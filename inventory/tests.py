@@ -1456,6 +1456,95 @@ class RestockPrimarySupplierTest(TestCase):
         # (10 × 750 + 10 × 850) / 20 = 800
         self.assertEqual(float(self.part.buy_price), 800.00)
 
+    def _restock(self, supplier, restock_date=None):
+        payload = {"entries": [{"supplier_id": supplier.id, "quantity": 2, "buy_price": "800.00"}]}
+        if restock_date:
+            payload["restock_date"] = restock_date
+        return self.client.post(self.url, payload, format='json')
+
+    def test_back_dated_restock(self):
+        from .models import RestockRecord
+        day = timezone.localdate() - timedelta(days=5)
+        response = self._restock(self.new_supplier, day.isoformat())
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        record = RestockRecord.objects.get(part=self.part)
+        self.assertEqual(timezone.localtime(record.restocked_at).date(), day)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 12)
+
+    def test_today_or_no_date_is_now(self):
+        from .models import RestockRecord
+        self._restock(self.new_supplier, timezone.localdate().isoformat())
+        record = RestockRecord.objects.get(part=self.part)
+        self.assertLess(abs((timezone.now() - record.restocked_at).total_seconds()), 60)
+
+    def test_entry_invoice_number_and_notes_saved_separately(self):
+        from .models import RestockRecord
+        response = self.client.post(self.url, {"entries": [
+            {"supplier_id": self.new_supplier.id, "quantity": 1, "buy_price": "800.00",
+             "invoice_number": " INV-77 ", "notes": "Damaged box"},
+            {"supplier_id": self.old_supplier.id, "quantity": 1, "buy_price": "790.00"},
+        ]}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        records = {r.supplier_id: r for r in RestockRecord.objects.filter(part=self.part)}
+        self.assertEqual(records[self.new_supplier.id].invoice_number, "INV-77")
+        self.assertEqual(records[self.new_supplier.id].notes, "Damaged box")
+        self.assertEqual(records[self.old_supplier.id].invoice_number, "")
+
+    def test_future_date_rejected(self):
+        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
+        response = self._restock(self.new_supplier, tomorrow)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 10)
+
+    def test_back_dated_restock_doesnt_override_newer_supplier(self):
+        self._restock(self.new_supplier)
+        old_day = (timezone.localdate() - timedelta(days=10)).isoformat()
+        self._restock(self.old_supplier, old_day)
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.supplier, self.new_supplier)
+        history = self.client.get(reverse('get_restock_history', args=[self.part.id])).data
+        self.assertEqual(history[0]["supplier"], self.new_supplier.id)   # newest first
+
+
+class EditRestockRecordDetailsTest(TestCase):
+    """Purchase date, invoice number and notes can be corrected on a restock record."""
+
+    def setUp(self):
+        from .models import RestockRecord
+        self.client = APIClient()
+        self.client.force_authenticate(user=User.objects.create_user(username="editrec", password="password"))
+        self.part = Part.objects.create(name="Air Filter", part_number="AF-1", buy_price=900, sell_price=1950, stock_qty=5)
+        self.record = RestockRecord.objects.create(part=self.part, quantity=5, buy_price=900, notes="343542")
+        self.url = reverse('edit_restock_record', args=[self.part.id, self.record.id])
+
+    def test_edit_date_invoice_and_notes(self):
+        day = timezone.localdate() - timedelta(days=12)
+        original_time = timezone.localtime(self.record.restocked_at).time().replace(microsecond=0)
+        response = self.client.put(self.url, {
+            "restock_date": day.isoformat(), "invoice_number": " INV-343542 ", "notes": "",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.record.refresh_from_db()
+        local = timezone.localtime(self.record.restocked_at)
+        self.assertEqual(local.date(), day)
+        self.assertEqual(local.time().replace(microsecond=0), original_time)
+        self.assertEqual(self.record.invoice_number, "INV-343542")
+        self.assertEqual(self.record.notes, "")
+        self.part.refresh_from_db()
+        self.assertEqual(self.part.stock_qty, 5)   # stock untouched
+
+    def test_future_date_rejected(self):
+        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
+        response = self.client.put(self.url, {"restock_date": tomorrow}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_fields_left_out_are_unchanged(self):
+        self.client.put(self.url, {"quantity": 5}, format='json')
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.notes, "343542")
+
 
 class EditRestockRecordSupplierTest(TestCase):
     """A batch booked against the wrong supplier can be re-pointed in place."""
@@ -1626,6 +1715,23 @@ class EstimateAPITest(TestCase):
         self.assertEqual(vehicle.make, "TATA")
         self.assertEqual(vehicle.model, "Ace")
         self.assertEqual(estimate.estimate_number, "EST-0001")
+
+    def test_defaults_to_insurance_addressee(self):
+        response = self.client.post(self.create_url, self._payload(), format='json')
+        self.assertEqual(response.data['addressed_to'], 'INSURANCE')
+
+    def test_customer_addressee_round_trips_and_is_searchable(self):
+        response = self.client.post(self.create_url, self._payload(
+            insurance_company="", addressed_to="CUSTOMER",
+            client_name="Nimal Perera", client_address="12 Galle Rd\nColombo 3",
+        ), format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        estimate = Estimate.objects.get(pk=response.data['id'])
+        self.assertEqual(estimate.addressed_to, 'CUSTOMER')
+        self.assertEqual(estimate.client_name, "Nimal Perera")
+        self.assertEqual(estimate.client_address, "12 Galle Rd\nColombo 3")
+        found = self.client.get(self.list_url, {"search": "nimal"}).data
+        self.assertEqual([e['id'] for e in found], [str(estimate.id)])
 
     def test_total_is_computed_from_the_lines(self):
         response = self.client.post(self.create_url, self._payload(), format='json')
@@ -3971,7 +4077,8 @@ class SupplierInvoiceChequeAPITest(TestCase):
     def test_balances(self):
         overdue = self._invoice("INV-OLD", 3000, invoice_date="2020-01-01", credit_days=30)
         self._invoice("INV-NEW", 2000, invoice_date=timezone.localdate().isoformat(), credit_days=60)
-        self._cheque("C1", 1000, [(overdue, 1000)])
+        future = (timezone.localdate() + timedelta(days=10)).isoformat()   # not yet auto-cleared
+        self._cheque("C1", 1000, [(overdue, 1000)], cheque_date=future)
         rows = {r["supplier"]: r for r in self.client.get(reverse('get_supplier_balances')).data}
         row = rows[self.supplier.pk]
         self.assertEqual(row["total_invoiced"], Decimal("5000"))
@@ -4088,6 +4195,32 @@ class SupplierInvoiceChequeAPITest(TestCase):
         self.assertEqual(data["cheques_from_profit"], Decimal("1000"))
         self.assertEqual(data["parts_cost_remaining"], Decimal("0"))
         self.assertEqual(data["profit_after_cheques"], data["profit_after_salaries"] - Decimal("1000"))
+
+    def _list_status(self, cheque):
+        rows = self.client.get(reverse('get_supplier_cheques')).data
+        return next(r for r in rows if r["id"] == cheque["id"])
+
+    def test_past_cheques_auto_clear(self):
+        today = timezone.localdate()
+        past = self._cheque("C1", 100, [], cheque_date=(today - timedelta(days=1)).isoformat())
+        due_today = self._cheque("C2", 100, [], cheque_date=today.isoformat())
+        future = self._cheque("C3", 100, [], cheque_date=(today + timedelta(days=3)).isoformat())
+        self.assertEqual(self._list_status(past)["status"], "CLEARED")
+        self.assertEqual(self._list_status(due_today)["status"], "PENDING")
+        self.assertEqual(self._list_status(future)["status"], "PENDING")
+
+    def test_marked_not_cleared_stays_pending(self):
+        today = timezone.localdate()
+        cheque = self._cheque("C1", 100, [], cheque_date=(today - timedelta(days=2)).isoformat())
+        self.assertEqual(self._list_status(cheque)["status"], "CLEARED")
+        response = self.client.post(reverse('set_supplier_cheque_status', args=[cheque["id"]]), {"status": "PENDING"}, format='json')
+        self.assertTrue(response.data["hold_pending"])
+        row = self._list_status(cheque)
+        self.assertEqual((row["status"], row["hold_pending"]), ("PENDING", True))
+        # Moving it to a new date drops the hold; it clears again once that date passes.
+        new_date = (today - timedelta(days=1)).isoformat()
+        self.client.put(reverse('update_supplier_cheque', args=[cheque["id"]]), {"cheque_date": new_date}, format='json')
+        self.assertEqual(self._list_status(cheque)["status"], "CLEARED")
 
     def test_supplier_cheque_without_invoice(self):
         cheque = self._cheque("C1", 5000, [])

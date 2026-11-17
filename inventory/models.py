@@ -358,6 +358,12 @@ class Estimate(models.Model):
     registration_number = models.CharField(max_length=50, blank=True)
     chassis_number = models.CharField(max_length=50, blank=True)
     insurance_company = models.CharField(max_length=150, blank=True)
+    # Who the estimate is written to: the insurer's claims department, or a
+    # customer paying for the repair themselves (not necessarily the owner).
+    ADDRESSED_TO_CHOICES = [('INSURANCE', 'Insurance company'), ('CUSTOMER', 'Customer')]
+    addressed_to = models.CharField(max_length=10, choices=ADDRESSED_TO_CHOICES, default='INSURANCE')
+    client_name = models.CharField(max_length=100, blank=True)
+    client_address = models.TextField(blank=True)
     date = models.DateField(null=True, blank=True)
     validity_days = models.PositiveIntegerField(default=30)
     # Whoever owns the vehicle. Copied onto the estimate rather than read
@@ -620,7 +626,8 @@ class RestockRecord(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, related_name='restock_records')
     quantity = models.PositiveIntegerField()
     buy_price = models.DecimalField(max_digits=10, decimal_places=2, help_text="Unit buy price from this supplier for this batch")
-    restocked_at = models.DateTimeField(auto_now_add=True)
+    # Defaults to now; Quick Restock can back-date it to the day stock actually arrived.
+    restocked_at = models.DateTimeField(default=timezone.now)
     notes = models.TextField(blank=True)
     invoice_number = models.CharField(max_length=100, blank=True, default='')
 
@@ -823,6 +830,10 @@ class SupplierCheque(models.Model):
     issued_date = models.DateField(default=timezone.localdate, help_text="Day the cheque was handed over")
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    # Pending cheques are marked cleared automatically once their date has
+    # passed. Setting one back to pending by hand sets this, so it stays
+    # "not cleared" until someone clears it.
+    hold_pending = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -834,6 +845,14 @@ class SupplierCheque(models.Model):
             # check this first for a friendly message; this is the backstop.
             models.UniqueConstraint(Lower('cheque_number'), name='unique_cheque_number_ci'),
         ]
+
+    @classmethod
+    def auto_clear(cls, today=None):
+        """Mark pending cheques whose date has passed as cleared (unless held back by hand)."""
+        today = today or timezone.localdate()
+        return cls.objects.filter(
+            status=cls.STATUS_PENDING, hold_pending=False, cheque_date__lt=today,
+        ).update(status=cls.STATUS_CLEARED, updated_at=timezone.now())
 
     @property
     def payee_name(self):

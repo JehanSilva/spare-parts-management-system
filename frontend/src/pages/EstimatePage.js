@@ -37,6 +37,7 @@ import {
   PlusCircle,
   StickyNote,
   Landmark,
+  User,
 } from "lucide-react";
 
 const formatAmount = (amount) =>
@@ -275,6 +276,9 @@ const EstimatePage = () => {
     () => ({
       date: today,
       insuranceCompany: "",
+      addressedTo: "INSURANCE",
+      clientName: "",
+      clientAddress: "",
       vehicleNumber: "",
       makeModel: "",
       mileage: "",
@@ -372,6 +376,19 @@ const EstimatePage = () => {
   }, [id, navigate, blankEstimate]);
 
   const setField = (field, value) => setEstimate((prev) => ({ ...prev, [field]: value }));
+  // Switching to a customer addressee starts from the vehicle owner's details,
+  // without overwriting anything already typed.
+  const setAddressedTo = (mode) =>
+    setEstimate((prev) => ({
+      ...prev,
+      addressedTo: mode,
+      ...(mode === "CUSTOMER"
+        ? {
+            clientName: prev.clientName.trim() ? prev.clientName : prev.ownerName,
+            clientAddress: prev.clientAddress.trim() ? prev.clientAddress : prev.ownerAddress,
+          }
+        : {}),
+    }));
 
   // Look the plate up in the vehicle registry as it's typed, so the form can
   // say whether this estimate will attach to a vehicle already on file and
@@ -636,7 +653,7 @@ const EstimatePage = () => {
                   )}
                 </h1>
                 <p className="text-gray-500 mt-0.5">
-                  Build an insurance claim estimate on the NSS Auto Engineers letterhead.
+                  Build a repair estimate for an insurance claim or a customer on the NSS Auto Engineers letterhead.
                 </p>
               </div>
             </div>
@@ -694,16 +711,52 @@ const EstimatePage = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">
-                  <Building2 size={14} className="inline mr-1 -mt-0.5 text-gray-400" />
-                  Insurance Company
-                </label>
-                <input
-                  value={estimate.insuranceCompany}
-                  onChange={caseOnChange(titleCaseName, (v) => setField("insuranceCompany", v))}
-                  placeholder="e.g. Amana Takaful Insurance"
-                  className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                />
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="block text-sm font-semibold text-gray-700">Address to</label>
+                  <div className="inline-flex rounded-lg border border-gray-300 bg-gray-50 p-0.5 text-xs font-bold">
+                    {[
+                      ["INSURANCE", "Insurance company", Building2],
+                      ["CUSTOMER", "Customer", User],
+                    ].map(([mode, label, Icon]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setAddressedTo(mode)}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition ${
+                          estimate.addressedTo === mode
+                            ? "bg-white text-red-700 shadow-sm"
+                            : "text-gray-500 hover:text-gray-700"
+                        }`}
+                      >
+                        <Icon size={12} /> {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {estimate.addressedTo === "CUSTOMER" ? (
+                  <div className="space-y-2">
+                    <input
+                      value={estimate.clientName}
+                      onChange={caseOnChange(titleCaseName, (v) => setField("clientName", v))}
+                      placeholder="Customer name, e.g. Nimal Perera"
+                      className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                    />
+                    <textarea
+                      value={estimate.clientAddress}
+                      onChange={caseOnChange(sentenceCase, (v) => setField("clientAddress", v))}
+                      rows={2}
+                      placeholder="Address (optional)"
+                      className="w-full p-2.5 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                    />
+                  </div>
+                ) : (
+                  <input
+                    value={estimate.insuranceCompany}
+                    onChange={caseOnChange(titleCaseName, (v) => setField("insuranceCompany", v))}
+                    placeholder="e.g. Amana Takaful Insurance"
+                    className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                  />
+                )}
               </div>
 
               <div>

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchSales, fetchParts, updateSale, cancelSale, reverseSale, markSaleAsPaid } from "../services/api";
 import BillingDocument from "../components/BillingDocument";
-import { getVehicleInfo } from "../components/billingVehicle";
+import { getVehicleInfo, billingFileName, printWithTitle } from "../components/billingVehicle";
 import WhatsAppShareFlow from "../components/WhatsAppShareFlow";
 import { useSettings } from "../context/SettingsContext";
 import AlertComponent from "../components/AlertComponent";
@@ -26,7 +26,24 @@ import {
   CheckCircle,
   RotateCcw,
   MessageCircle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
+
+// --- date range helpers (all in local "YYYY-MM-DD" / "YYYY-MM") ---
+const isoDay = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const monthRange = (ym) => {
+  const [y, m] = ym.split("-").map(Number);
+  return { from: `${ym}-01`, to: isoDay(new Date(y, m, 0)) };
+};
+const shiftMonth = (ym, delta) => {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+const monthName = (ym) =>
+  new Date(`${ym}-01T00:00:00`).toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
 // --- Edit Sale Modal Component ---
 // The date is stored as a full timestamp; the picker only deals in days, so
@@ -416,7 +433,9 @@ const SalesHistoryPage = () => {
   const [parts, setParts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterDate, setFilterDate] = useState("");
+  // Date range (inclusive). Empty ends are open; both empty = all time.
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("ALL"); // ALL | CREDIT
   const [expandedSaleId, setExpandedSaleId] = useState(null);
 
@@ -444,14 +463,15 @@ const SalesHistoryPage = () => {
   useEffect(() => {
     if (!selectedSaleForPrint) return;
     // Let the Receipt content paint before invoking the print dialog.
-    const t = setTimeout(() => window.print(), 50);
+    // Named after the vehicle so "Save as PDF" suggests a useful file name.
+    const t = setTimeout(() => printWithTitle(billingFileName(selectedSaleForPrint, documentLabel)), 50);
     const handleAfterPrint = () => setSelectedSaleForPrint(null);
     window.addEventListener("afterprint", handleAfterPrint);
     return () => {
       clearTimeout(t);
       window.removeEventListener("afterprint", handleAfterPrint);
     };
-  }, [selectedSaleForPrint]);
+  }, [selectedSaleForPrint, documentLabel]);
 
   // --- Enrich Sale Items with Part Numbers ---
   const getEnrichedSale = (sale) => {
@@ -626,12 +646,44 @@ const SalesHistoryPage = () => {
 
     // Check if the sale matches the selected date
     // sale.created_at is typically "YYYY-MM-DDTHH:MM..."
-    const matchDate = !filterDate || sale.created_at.startsWith(filterDate);
+    const day = String(sale.created_at).slice(0, 10);
+    const matchDate = (!dateFrom || day >= dateFrom) && (!dateTo || day <= dateTo);
 
     const matchPayment = paymentFilter !== "CREDIT" || sale.payment_status === "CREDIT" || sale.payment_status === "PARTIAL";
 
     return matchSearch && matchDate && matchPayment;
   });
+
+  // --- date range controls ---
+  const todayISO = isoDay(new Date());
+  const thisMonth = todayISO.slice(0, 7);
+  // The month the range covers exactly, if it does (drives the month picker).
+  const activeMonth =
+    dateFrom && dateTo && dateFrom.slice(0, 7) === dateTo.slice(0, 7) &&
+    monthRange(dateFrom.slice(0, 7)).from === dateFrom && monthRange(dateFrom.slice(0, 7)).to === dateTo
+      ? dateFrom.slice(0, 7)
+      : "";
+  // Months to offer: every month from the oldest sale up to this one, newest first.
+  const saleMonths = (() => {
+    const oldest = sales.reduce((min, x) => {
+      const m = String(x.created_at).slice(0, 7);
+      return m && m < min ? m : min;
+    }, thisMonth);
+    const list = [];
+    for (let m = thisMonth; m >= oldest && list.length < 120; m = shiftMonth(m, -1)) list.push(m);
+    return list;
+  })();
+  const setRange = (from, to) => {
+    setDateFrom(from);
+    setDateTo(to);
+  };
+  const pickMonth = (ym) => (ym ? setRange(monthRange(ym).from, monthRange(ym).to) : setRange("", ""));
+  const rangeSales = filteredSales.filter((x) => x.status !== "CANCELLED");
+  const rangeTotal = rangeSales.reduce((n, x) => n + (parseFloat(x.total_amount) || 0), 0);
+  const presetCls = (active) =>
+    `px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+      active ? "bg-red-700 text-white border-red-700" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+    }`;
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleString("en-LK", {
@@ -733,30 +785,6 @@ const SalesHistoryPage = () => {
           />
         </div>
 
-        {/* Date Filter — no custom left icon: iOS Safari's native date-input
-            renderer doesn't reliably make room for padding-based overlays,
-            and ends up clipping its own placeholder text instead. The
-            native calendar affordance (desktop and mobile) is enough on
-            its own; bg-white + appearance-none keeps iOS from applying its
-            own greyed-out control background. */}
-        <div className="relative md:w-56 shrink-0">
-          <input
-            type="date"
-            className="w-full pr-10 p-3 border border-gray-300 rounded-lg shadow-sm bg-white appearance-none focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm text-gray-700"
-            value={filterDate}
-            onChange={(e) => setFilterDate(e.target.value)}
-          />
-          {filterDate && (
-            <button
-              onClick={() => setFilterDate("")}
-              className="absolute right-3 top-3.5 text-gray-400 hover:text-red-500"
-              title="Clear Date"
-            >
-              <XCircle size={16} />
-            </button>
-          )}
-        </div>
-
         {/* Payment Status Filter — always available (not tied to whether
             there's currently outstanding credit) so it can always be
             toggled back to "All Sales". */}
@@ -772,6 +800,82 @@ const SalesHistoryPage = () => {
           <Wallet size={16} />
           {paymentFilter === "CREDIT" ? "Credit Only" : "All Sales"}
         </button>
+      </div>
+
+      {/* Date range: month picker + from/to + quick presets */}
+      <div className="mb-6 w-full bg-white border border-gray-200 rounded-xl shadow-sm p-3 md:p-4 flex flex-col lg:flex-row lg:items-center gap-3">
+        {/* Month selector */}
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => pickMonth(shiftMonth(activeMonth || thisMonth, activeMonth ? -1 : 0))}
+            className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
+            title="Previous month"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <div className="relative">
+            <Calendar size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <select
+              value={activeMonth}
+              onChange={(e) => pickMonth(e.target.value)}
+              className="pl-9 pr-8 py-2 border border-gray-300 rounded-lg bg-white text-sm font-semibold text-gray-800 focus:ring-2 focus:ring-red-500 outline-none appearance-none min-w-[11rem]"
+            >
+              <option value="">{dateFrom || dateTo ? "Custom range" : "All time"}</option>
+              {saleMonths.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
+            </select>
+            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          </div>
+          <button
+            type="button"
+            onClick={() => activeMonth && activeMonth < thisMonth && pickMonth(shiftMonth(activeMonth, 1))}
+            disabled={!activeMonth || activeMonth >= thisMonth}
+            className="p-2 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+            title="Next month"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+
+        {/* From / To */}
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="flex-1 min-w-0 p-2 border border-gray-300 rounded-lg bg-white appearance-none text-[16px] md:text-sm text-gray-700 focus:ring-2 focus:ring-red-500 outline-none"
+            title="From"
+          />
+          <span className="text-gray-400 text-sm">to</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="flex-1 min-w-0 p-2 border border-gray-300 rounded-lg bg-white appearance-none text-[16px] md:text-sm text-gray-700 focus:ring-2 focus:ring-red-500 outline-none"
+            title="To"
+          />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => setRange("", "")} className="text-gray-400 hover:text-red-500" title="Clear dates">
+              <XCircle size={18} />
+            </button>
+          )}
+        </div>
+
+        {/* Presets */}
+        <div className="flex flex-wrap gap-1.5">
+          <button type="button" onClick={() => setRange(todayISO, todayISO)} className={presetCls(dateFrom === todayISO && dateTo === todayISO)}>Today</button>
+          <button type="button" onClick={() => pickMonth(thisMonth)} className={presetCls(activeMonth === thisMonth)}>This month</button>
+          <button type="button" onClick={() => pickMonth(shiftMonth(thisMonth, -1))} className={presetCls(activeMonth === shiftMonth(thisMonth, -1))}>Last month</button>
+          <button type="button" onClick={() => setRange("", "")} className={presetCls(!dateFrom && !dateTo)}>All time</button>
+        </div>
+
+        {/* Range summary */}
+        <div className="lg:ml-auto text-sm text-gray-600 whitespace-nowrap">
+          <span className="font-bold text-gray-900">{rangeSales.length}</span> sale{rangeSales.length === 1 ? "" : "s"} ·{" "}
+          <span className="font-bold text-green-700">{formatLKR(rangeTotal)}</span>
+        </div>
       </div>
 
       {/* --- CONTENT --- */}

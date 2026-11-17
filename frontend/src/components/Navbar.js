@@ -49,7 +49,7 @@ const MORE_ITEMS = [
   { path: "/employees", label: "Employees & Payroll", icon: UserCog, desc: "Staff, attendance & salaries" },
   { path: "/repairs", label: "Repair Services", icon: Wrench, desc: "Standard repairs & their prices" },
   { path: "/vehicle-models", label: "Vehicle Models", icon: Layers, desc: "Make, model & year catalog" },
-  { path: "/options", label: "Options", icon: Settings, desc: "Billing method & preferences" },
+  { path: "/options", label: "Options", icon: Settings, desc: "Billing method, bank accounts & preferences" },
 ];
 
 // A tab stays lit on its section's sub-routes too — /estimates/new and

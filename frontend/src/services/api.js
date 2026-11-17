@@ -136,6 +136,18 @@ export const setSupplierChequeStatus = async (id, status) =>
 export const deleteSupplierCheque = async (id) =>
   await API.delete(`/supplier-cheques/${id}/delete/`);
 
+// --- BANK ACCOUNTS (Options page) & CHEQUE BOOKS (Supplier Payments) ---
+// account: { name, bank_code, branch, branch_code, account_name, account_number, notes }
+export const fetchChequeBanks = async () => (await API.get("/cheque-banks/")).data;
+export const createChequeBank = async (data) => (await API.post("/cheque-banks/add/", data)).data;
+export const updateChequeBank = async (id, data) => (await API.put(`/cheque-banks/${id}/update/`, data)).data;
+export const deleteChequeBank = async (id) => await API.delete(`/cheque-banks/${id}/delete/`);
+// book: { bank, first_leaf, last_leaf, received_date, notes } — usage fields come back computed
+export const fetchChequeBooks = async (params = {}) => (await API.get("/cheque-books/", { params })).data;
+export const createChequeBook = async (data) => (await API.post("/cheque-books/add/", data)).data;
+export const updateChequeBook = async (id, data) => (await API.put(`/cheque-books/${id}/update/`, data)).data;
+export const deleteChequeBook = async (id) => await API.delete(`/cheque-books/${id}/delete/`);
+
 export const fetchVehicles = async () => (await API.get("/vehicles/")).data;
 // Turn "Toyota Aqua, Honda Vezel 2018" into catalogue vehicles (existing ones
 // reused, the rest created). Returns { vehicles, created, skipped }.

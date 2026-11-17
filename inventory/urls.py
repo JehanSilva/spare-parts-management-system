@@ -30,6 +30,14 @@ urlpatterns = [
     path('supplier-cheques/<int:pk>/update/', views.update_supplier_cheque, name='update_supplier_cheque'),
     path('supplier-cheques/<int:pk>/status/', views.set_supplier_cheque_status, name='set_supplier_cheque_status'),
     path('supplier-cheques/<int:pk>/delete/', views.delete_supplier_cheque, name='delete_supplier_cheque'),
+    path('cheque-banks/', views.get_cheque_banks, name='get_cheque_banks'),
+    path('cheque-banks/add/', views.add_cheque_bank, name='add_cheque_bank'),
+    path('cheque-banks/<int:pk>/update/', views.update_cheque_bank, name='update_cheque_bank'),
+    path('cheque-banks/<int:pk>/delete/', views.delete_cheque_bank, name='delete_cheque_bank'),
+    path('cheque-books/', views.get_cheque_books, name='get_cheque_books'),
+    path('cheque-books/add/', views.add_cheque_book, name='add_cheque_book'),
+    path('cheque-books/<int:pk>/update/', views.update_cheque_book, name='update_cheque_book'),
+    path('cheque-books/<int:pk>/delete/', views.delete_cheque_book, name='delete_cheque_book'),
     
     # Parts
     path('parts/', views.get_parts, name='get_parts'),

@@ -4089,6 +4089,161 @@ class SupplierInvoiceChequeAPITest(TestCase):
         self.assertEqual(data["parts_cost_remaining"], Decimal("0"))
         self.assertEqual(data["profit_after_cheques"], data["profit_after_salaries"] - Decimal("1000"))
 
+    def test_supplier_cheque_without_invoice(self):
+        cheque = self._cheque("C1", 5000, [])
+        self.assertEqual(cheque["allocations"], [])
+        self.assertEqual(cheque["supplier_name"], "Lanka Parts")
+
+    def test_cheque_to_payee_without_supplier(self):
+        response = self.client.post(reverse('add_supplier_cheque'), {
+            "supplier": None, "payee": "  Sunil (rent) ", "cheque_number": "P1",
+            "cheque_date": "2026-11-15", "amount": "20000",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertIsNone(response.data["supplier"])
+        self.assertEqual(response.data["supplier_name"], "Sunil (rent)")
+        # Shows in the cheque list and in the monthly report like any other cheque.
+        listed = self.client.get(reverse('get_supplier_cheques'), {"month": 11, "year": 2026}).data
+        self.assertEqual([c["cheque_number"] for c in listed], ["P1"])
+        data = self._monthly()
+        self.assertEqual(data["cheque_cost"], Decimal("20000"))
+        self.assertEqual(data["cheque_breakdown"][0]["supplier_name"], "Sunil (rent)")
+        # Balances skip it rather than crash.
+        self.assertEqual(self.client.get(reverse('get_supplier_balances')).status_code, status.HTTP_200_OK)
+
+    def test_cheque_needs_supplier_or_payee(self):
+        response = self.client.post(reverse('add_supplier_cheque'), {
+            "supplier": "", "payee": " ", "cheque_number": "P1", "cheque_date": "2026-11-15", "amount": "100",
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("supplier", response.data)
+
+    def test_payee_cheque_cannot_pay_invoices(self):
+        inv = self._invoice("INV-1", 1000)
+        response = self.client.post(reverse('add_supplier_cheque'), {
+            "payee": "Someone", "cheque_number": "P1", "cheque_date": "2026-11-15", "amount": "1000",
+            "allocations": [{"invoice": inv["id"], "amount": "1000"}],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_switch_cheque_from_supplier_to_payee(self):
+        inv = self._invoice("INV-1", 1000)
+        cheque = self._cheque("C1", 1000, [(inv, 1000)])
+        response = self.client.put(reverse('update_supplier_cheque', args=[cheque["id"]]), {
+            "supplier": None, "payee": "Kamal", "allocations": [],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertEqual(response.data["supplier_name"], "Kamal")
+        self.assertEqual(self._get_invoice(inv)["payment_status"], "UNPAID")
+
+    def test_bulk_cheques_to_payee(self):
+        response = self.client.post(reverse('add_supplier_cheques_bulk'), {
+            "payee": "Landlord", "cheques": [
+                {"cheque_number": "R1", "cheque_date": "2026-11-01", "amount": "15000"},
+                {"cheque_number": "R2", "cheque_date": "2026-12-01", "amount": "15000"},
+            ],
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual([c["supplier_name"] for c in response.data], ["Landlord", "Landlord"])
+
+
+class ChequeBankAPITest(TestCase):
+    """Bank accounts, the cheque books received for them, and how much of each book is used."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.client.force_authenticate(user=User.objects.create_user(username="bankuser", password="password"))
+        self.supplier = Supplier.objects.create(name="Lanka Parts")
+
+    def _bank(self, expect=201, **fields):
+        response = self.client.post(reverse('add_cheque_bank'), fields, format='json')
+        self.assertEqual(response.status_code, expect, response.data)
+        return response.data
+
+    def _book(self, bank, first, last, received="2026-11-01", expect=201):
+        response = self.client.post(reverse('add_cheque_book'), {
+            "bank": bank["id"], "first_leaf": first, "last_leaf": last, "received_date": received,
+        }, format='json')
+        self.assertEqual(response.status_code, expect, response.data)
+        return response.data
+
+    def _cheque(self, bank, number, issued="2026-11-05"):
+        response = self.client.post(reverse('add_supplier_cheque'), {
+            "supplier": self.supplier.pk, "cheque_bank": bank["id"], "cheque_number": number,
+            "cheque_date": issued, "issued_date": issued, "amount": "1000",
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data
+
+    def _books(self):
+        return {b["id"]: b for b in self.client.get(reverse('get_cheque_books')).data}
+
+    def test_bank_account_fields_and_label(self):
+        full = self._bank(
+            name=" Commercial  Bank ", bank_code="7056", branch="Ja-Ela", branch_code="123",
+            account_name="NSS Auto Spares", account_number="1234567", notes="Main account",
+        )
+        self.assertEqual(full["name"], "Commercial Bank")
+        self.assertEqual(full["label"], "Commercial Bank – Ja-Ela (A/C 1234567)")
+        only_name = self._bank(name="BOC")
+        self.assertEqual(only_name["label"], "BOC")
+        self._bank(name="Commercial Bank", branch="Negombo")      # another branch is fine
+        self._bank(expect=400, name="commercial bank", branch="ja-ela", account_number="1234567")
+        self._bank(expect=400, name="  ")
+
+    def test_book_validation(self):
+        bank = self._bank(name="BOC")
+        self._book(bank, "00A1", "0050", expect=400)
+        self._book(bank, "000150", "000101", expect=400)
+        self._book(bank, "000101", "000150")
+        self._book(bank, "000140", "000190", expect=400)            # overlaps
+        other = self._bank(name="HNB")
+        self._book(other, "000140", "000190")                       # other account: fine
+
+    def test_usage_replaced_and_finished(self):
+        bank = self._bank(name="BOC", branch="Gampaha")
+        old = self._book(bank, "000101", "000150", received="2026-10-01")
+        self.assertEqual((old["used"], old["remaining"], old["status"]), (0, 50, "IN_USE"))
+
+        self._cheque(bank, "000101")
+        cancelled = self._cheque(bank, "000102")
+        self.client.post(reverse('set_supplier_cheque_status', args=[cancelled["id"]]), {"status": "CANCELLED"}, format='json')
+        self._cheque(bank, "000104", issued="2026-11-07")
+        row = self._books()[old["id"]]
+        self.assertEqual((row["used"], row["remaining"], row["next_leaf"]), (3, 47, "000103"))
+        self.assertEqual(str(row["last_used_date"]), "2026-11-07")
+
+        new = self._book(bank, "000151", "000152", received="2026-11-10")
+        books = self._books()
+        self.assertEqual(books[old["id"]]["status"], "REPLACED")
+        self.assertEqual(books[old["id"]]["untracked"], 47)
+        self.assertEqual(str(books[old["id"]]["finished_date"]), "2026-11-10")
+        self.assertEqual(books[new["id"]]["status"], "IN_USE")
+
+        self._cheque(bank, "000151", issued="2026-11-11")
+        self._cheque(bank, "000152", issued="2026-11-12")
+        row = self._books()[new["id"]]
+        self.assertEqual((row["status"], row["remaining"], row["next_leaf"]), ("FINISHED", 0, None))
+        self.assertEqual(str(row["finished_date"]), "2026-11-12")
+
+        banks = self.client.get(reverse('get_cheque_banks')).data
+        self.assertEqual(banks[0]["book_count"], 2)
+
+    def test_cheque_keeps_account_label(self):
+        bank = self._bank(name="BOC", account_number="998877")
+        cheque = self._cheque(bank, "5001")
+        self.assertEqual(cheque["bank"], "BOC (A/C 998877)")
+        self.assertEqual(cheque["cheque_bank"], bank["id"])
+
+    def test_delete_guards(self):
+        bank = self._bank(name="BOC")
+        book = self._book(bank, "1", "10")
+        self.assertEqual(self.client.delete(reverse('delete_cheque_bank', args=[bank["id"]])).status_code, 400)
+        self._cheque(bank, "1")
+        self.assertEqual(self.client.delete(reverse('delete_cheque_book', args=[book["id"]])).status_code, 400)
+        empty = self._book(bank, "11", "20")
+        self.assertEqual(self.client.delete(reverse('delete_cheque_book', args=[empty["id"]])).status_code, 204)
+
 
 class LabourCostTest(TestCase):
     """A repair/labour line can carry what the shop paid for it; that comes off profit."""

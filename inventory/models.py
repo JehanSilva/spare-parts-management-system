@@ -744,11 +744,63 @@ class SupplierInvoice(models.Model):
         return f"{self.invoice_number} | {self.supplier.name} | {self.amount}"
 
 
+class ChequeBank(models.Model):
+    """
+    A bank account the business writes cheques from. Only the bank name is
+    required. Cheques link to it and also keep its label as text, so renaming
+    one here doesn't change how cheques already written read.
+    """
+    name = models.CharField(max_length=100, help_text="Bank name")
+    bank_code = models.CharField(max_length=10, blank=True)
+    branch = models.CharField(max_length=100, blank=True)
+    branch_code = models.CharField(max_length=10, blank=True)
+    account_name = models.CharField(max_length=150, blank=True)
+    account_number = models.CharField(max_length=30, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name', 'branch', 'id']
+
+    @property
+    def label(self):
+        text = self.name
+        if self.branch:
+            text += f" – {self.branch}"
+        if self.account_number:
+            text += f" (A/C {self.account_number})"
+        return text
+
+    def __str__(self):
+        return self.label
+
+
+class ChequeBook(models.Model):
+    """
+    A cheque book received for a bank account, covering leaves first_leaf to
+    last_leaf. Leaves are stored as text to keep leading zeros. How many are
+    used, left or skipped is worked out from the cheques written, never stored.
+    """
+    bank = models.ForeignKey(ChequeBank, on_delete=models.PROTECT, related_name='books')
+    first_leaf = models.CharField(max_length=20)
+    last_leaf = models.CharField(max_length=20)
+    received_date = models.DateField(default=timezone.localdate)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-received_date', '-id']
+
+    def __str__(self):
+        return f"{self.bank.label}: {self.first_leaf}–{self.last_leaf}"
+
+
 class SupplierCheque(models.Model):
     """
-    A cheque given to a supplier. cheque_date is the date written on it (when
-    it can be banked) and decides which month it counts against in reports.
-    A cheque may be split across several of the same supplier's invoices.
+    A cheque we've written. cheque_date is the date written on it (when it can
+    be banked) and decides which month it counts against in reports. It is
+    made out to a supplier (and may be split across several of that
+    supplier's invoices, or pay none) or, with no supplier, to `payee`.
     """
     STATUS_PENDING = 'PENDING'
     STATUS_CLEARED = 'CLEARED'
@@ -759,7 +811,12 @@ class SupplierCheque(models.Model):
         (STATUS_CANCELLED, 'Cancelled'),
     ]
 
-    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='cheques')
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='cheques', null=True, blank=True)
+    payee = models.CharField(max_length=150, blank=True, help_text="Who the cheque is for when it isn't a supplier")
+    cheque_bank = models.ForeignKey(
+        ChequeBank, on_delete=models.SET_NULL, null=True, blank=True, related_name='cheques',
+        help_text="Account the cheque is written from; `bank` keeps its label as text",
+    )
     cheque_number = models.CharField(max_length=50)
     bank = models.CharField(max_length=100, blank=True)
     cheque_date = models.DateField(help_text="Date written on the cheque")
@@ -778,8 +835,12 @@ class SupplierCheque(models.Model):
             models.UniqueConstraint(Lower('cheque_number'), name='unique_cheque_number_ci'),
         ]
 
+    @property
+    def payee_name(self):
+        return self.supplier.name if self.supplier_id else self.payee
+
     def __str__(self):
-        return f"Cheque {self.cheque_number} | {self.supplier.name} | {self.amount}"
+        return f"Cheque {self.cheque_number} | {self.payee_name} | {self.amount}"
 
 
 class ChequeAllocation(models.Model):

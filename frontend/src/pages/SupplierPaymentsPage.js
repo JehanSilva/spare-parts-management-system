@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Receipt,
   Plus,
@@ -22,6 +22,9 @@ import {
   CalendarDays,
   Repeat,
   X,
+  BookOpen,
+  ChevronUp,
+  Check,
 } from "lucide-react";
 import {
   fetchSuppliers,
@@ -36,6 +39,11 @@ import {
   updateSupplierCheque,
   setSupplierChequeStatus,
   deleteSupplierCheque,
+  fetchChequeBanks,
+  fetchChequeBooks,
+  createChequeBook,
+  updateChequeBook,
+  deleteChequeBook,
 } from "../services/api";
 import AlertComponent from "../components/AlertComponent";
 import ConfirmModal from "../components/ConfirmModal";
@@ -86,6 +94,12 @@ const CHEQUE_BADGE = {
   PENDING: "bg-blue-100 text-blue-700 border-blue-200",
   CLEARED: "bg-green-100 text-green-700 border-green-200",
   CANCELLED: "bg-gray-200 text-gray-500 border-gray-300 line-through",
+};
+
+const BOOK_BADGE = {
+  IN_USE: { cls: "bg-blue-100 text-blue-700 border-blue-200", label: "In use" },
+  FINISHED: { cls: "bg-green-100 text-green-700 border-green-200", label: "Finished" },
+  REPLACED: { cls: "bg-amber-100 text-amber-700 border-amber-200", label: "Replaced" },
 };
 
 const CREDIT_PRESETS = [30, 45, 60, 90];
@@ -143,6 +157,159 @@ const nthChequeNumber = (first, i) => {
   const m = base.match(/^(.*?)(\d+)$/);
   if (!m) return i === 0 ? base : `${base}-${i + 1}`;
   return m[1] + String(Number(m[2]) + i).padStart(m[2].length, "0");
+};
+
+// A leaf number as a number, for comparing "000101" with "101". NaN if not all digits.
+const leafNo = (v) => (/^\d+$/.test(String(v ?? "").trim()) ? Number(String(v).trim()) : NaN);
+
+// The unused leaves of an account's cheque books, in order: the book in use
+// first, then leaves left blank in older books. A leaf is used once any saved
+// cheque on the account carries its number (excludeId: the cheque being edited).
+const freeLeafGroups = (accountId, books, cheques, excludeId) => {
+  if (!accountId) return [];
+  const used = new Set(
+    cheques
+      .filter((c) => String(c.cheque_bank) === String(accountId) && c.id !== excludeId)
+      .map((c) => leafNo(c.cheque_number))
+      .filter((n) => !Number.isNaN(n))
+  );
+  return books
+    .filter((b) => String(b.bank) === String(accountId))
+    .sort((a, b) =>
+      (a.status === "IN_USE") === (b.status === "IN_USE")
+        ? Number(a.first_leaf) - Number(b.first_leaf)
+        : a.status === "IN_USE" ? -1 : 1
+    )
+    .map((book) => {
+      const leaves = [];
+      for (let n = Number(book.first_leaf); n <= Number(book.last_leaf); n += 1) {
+        if (!used.has(n)) leaves.push(String(n).padStart(book.first_leaf.length, "0"));
+      }
+      return { book, leaves };
+    })
+    .filter((g) => g.leaves.length > 0);
+};
+
+// Cheque number picker for an account with cheque books: a searchable list of
+// its unused leaves, grouped by book. `taken` maps leaf numbers already chosen
+// on another cheque in the same form to a short note. A number that isn't in
+// any book can still be typed into the search and used.
+const ChequeLeafSelect = ({ groups, value, onChange, taken = {}, invalid = false, className = "", compact = false }) => {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onClickOutside);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const choose = (leaf) => {
+    onChange(leaf);
+    setOpen(false);
+    setSearch("");
+  };
+
+  const q = search.trim();
+  const shown = groups
+    .map((g) => ({ ...g, leaves: q ? g.leaves.filter((l) => l.includes(q)) : g.leaves }))
+    .filter((g) => g.leaves.length);
+  const firstFree = shown.flatMap((g) => g.leaves).find((l) => !taken[leafNo(l)]);
+  const exact = q && groups.some((g) => g.leaves.some((l) => leafNo(l) === leafNo(q) || l === q));
+  const current = leafNo(value);
+
+  return (
+    <div className={`relative ${className}`} ref={wrapRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`w-full flex items-center justify-between gap-2 border text-left bg-white ${
+          compact ? "rounded-lg px-2 py-1.5 text-sm" : "rounded-xl px-3 py-2 text-sm"
+        } ${invalid ? "border-red-500 bg-red-50" : "border-gray-300"} focus:ring-2 focus:ring-red-500 outline-none`}
+      >
+        <span className={`truncate font-mono ${value ? "text-gray-900" : "text-gray-400 font-sans"}`}>
+          {value || "Cheque no."}
+        </span>
+        {open ? <ChevronUp size={15} className="text-gray-400 shrink-0" /> : <ChevronDown size={15} className="text-gray-400 shrink-0" />}
+      </button>
+
+      {open && (
+        <div className="absolute z-30 left-0 mt-1 w-full min-w-[240px] bg-white border border-gray-200 rounded-xl shadow-xl flex flex-col max-h-72 overflow-hidden">
+          <div className="p-2 border-b border-gray-100">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 text-gray-400" size={14} />
+              <input
+                type="text"
+                inputMode="numeric"
+                autoFocus
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  if (firstFree) choose(firstFree);
+                  else if (q) choose(q);
+                }}
+                placeholder="Find a leaf number…"
+                className="w-full pl-8 p-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:bg-white focus:border-gray-900 focus:outline-none"
+              />
+            </div>
+          </div>
+          <div className="overflow-y-auto">
+            {shown.map(({ book, leaves }) => (
+              <div key={book.id}>
+                <div className="sticky top-0 bg-gray-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-500 flex justify-between gap-2 border-b border-gray-100">
+                  <span>Book {book.first_leaf}–{book.last_leaf}</span>
+                  <span className={book.status === "IN_USE" ? "text-blue-700" : "text-amber-700"}>
+                    {book.status === "IN_USE" ? "In use" : "Older book"} · {leaves.length} free
+                  </span>
+                </div>
+                {leaves.map((leaf) => {
+                  const note = taken[leafNo(leaf)];
+                  const chosen = leafNo(leaf) === current;
+                  return (
+                    <button
+                      key={leaf}
+                      type="button"
+                      disabled={!!note}
+                      onClick={() => choose(leaf)}
+                      className={`w-full px-3 py-2 flex items-center justify-between gap-2 text-left text-sm border-b border-gray-50 ${
+                        note ? "text-gray-300 cursor-not-allowed" : "text-gray-800 hover:bg-red-50"
+                      } ${chosen ? "bg-gray-100 font-semibold" : ""}`}
+                    >
+                      <span className="font-mono">{leaf}</span>
+                      {note ? <span className="text-[11px]">{note}</span> : chosen && <Check size={15} className="text-gray-900" />}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {!shown.length && <p className="p-4 text-center text-sm text-gray-400">No unused leaf matches.</p>}
+            {q && !exact && (
+              <button
+                type="button"
+                onClick={() => choose(q)}
+                className="w-full px-3 py-2 text-left text-sm text-red-700 font-semibold hover:bg-red-50 border-t border-gray-100"
+              >
+                Use “{q}” (not in a cheque book)
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 // Equal split in cents; the last cheque takes the rounding.
@@ -341,6 +508,80 @@ const ModalShell = ({ title, icon: Icon, onClose, children, footer, size = "md" 
   </div>
 );
 
+// The bank account the cheque is written from (accounts are added on the
+// Options page). A cheque saved before accounts existed only has bank text;
+// that's shown as the empty choice so editing it doesn't lose it. Under the
+// select, the in-use cheque book's next leaf is shown as a reminder.
+const BankSelect = ({ banks, books = [], value, legacyText, onChange }) => {
+  if (!banks.length) {
+    return (
+      <div className={`${inputCls} bg-gray-50 text-gray-500`}>
+        {legacyText ? `${legacyText} · ` : "No bank accounts yet. "}
+        <Link to="/options" className="font-semibold text-red-700 underline">Add bank accounts in Options</Link>
+      </div>
+    );
+  }
+  const current = value && books.find((b) => String(b.bank) === String(value) && b.status === "IN_USE" && b.next_leaf);
+  return (
+    <>
+      <select className={inputCls} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{legacyText ? `${legacyText} (not linked)` : "Select bank…"}</option>
+        {banks.map((b) => <option key={b.id} value={String(b.id)}>{b.label}</option>)}
+      </select>
+      {current && (
+        <p className="text-[11px] text-gray-500 mt-1">
+          Next leaf <span className="font-semibold text-gray-700">{current.next_leaf}</span> · {current.remaining} left in this book
+        </p>
+      )}
+    </>
+  );
+};
+
+// With exactly one bank account, it's the bank for every new cheque.
+const defaultBank = (banks) => (banks.length === 1 ? String(banks[0].id) : "");
+
+// Who a cheque is made out to: a supplier (whose invoices it can pay) or anyone else by name.
+const PayToField = ({ payTo, onPayTo, supplier, onSupplier, payee, onPayee, suppliers }) => (
+  <div>
+    <div className="flex items-center justify-between mb-1">
+      <label className={labelCls.replace("mb-1", "")}>Pay to</label>
+      <div className="flex rounded-lg border border-gray-200 p-0.5 text-xs font-semibold">
+        {[
+          { id: "supplier", label: "Supplier" },
+          { id: "other", label: "Someone else" },
+        ].map((o) => (
+          <button
+            key={o.id}
+            type="button"
+            onClick={() => onPayTo(o.id)}
+            className={`px-2.5 py-1 rounded-md ${payTo === o.id ? "bg-red-700 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+    {payTo === "supplier" ? (
+      <SupplierSelect
+        floating
+        allowNone={false}
+        suppliers={suppliers}
+        value={supplier}
+        onChange={onSupplier}
+        placeholder="Select supplier…"
+        triggerClassName={inputCls}
+      />
+    ) : (
+      <input
+        className={inputCls}
+        value={payee}
+        onChange={(e) => onPayee(e.target.value)}
+        placeholder="Name of the person or business"
+      />
+    )}
+  </div>
+);
+
 // --- Invoice modal ---
 
 const InvoiceModal = ({ invoice, suppliers, defaultSupplier, onClose, onSaved, onError }) => {
@@ -484,11 +725,13 @@ const InvoiceModal = ({ invoice, suppliers, defaultSupplier, onClose, onSaved, o
 
 // --- Cheque modal (one cheque split across the supplier's open invoices) ---
 
-const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier, onClose, onSaved, onError }) => {
+const ChequeModal = ({ cheque, suppliers, banks, books, invoices, allCheques, defaultSupplier, onClose, onSaved, onError }) => {
   const [form, setForm] = useState(() => ({
     supplier: cheque?.supplier ?? defaultSupplier ?? "",
+    payee: cheque?.payee ?? "",
     cheque_number: cheque?.cheque_number ?? "",
     bank: cheque?.bank ?? "",
+    cheque_bank: cheque ? (cheque.cheque_bank ? String(cheque.cheque_bank) : "") : defaultBank(banks),
     cheque_date: cheque?.cheque_date ?? localISO(),
     issued_date: cheque?.issued_date ?? localISO(),
     amount: cheque?.amount ?? "",
@@ -500,8 +743,15 @@ const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier,
     (cheque?.allocations || []).forEach((a) => { map[a.invoice] = a.amount; });
     return map;
   });
+  const [payTo, setPayTo] = useState(cheque && !cheque.supplier ? "other" : "supplier");
   const [saving, setSaving] = useState(false);
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const changePayTo = (mode) => {
+    if (mode === payTo) return;
+    setPayTo(mode);
+    setAlloc({});
+  };
 
   // What this cheque already pays on each invoice — still "available" to it when editing.
   const ownAlloc = useMemo(() => {
@@ -514,11 +764,11 @@ const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier,
   const rows = useMemo(
     () =>
       invoices
-        .filter((inv) => String(inv.supplier) === String(form.supplier))
+        .filter((inv) => payTo === "supplier" && String(inv.supplier) === String(form.supplier))
         .map((inv) => ({ ...inv, available: cents(inv.outstanding) + (ownAlloc[inv.id] || 0) }))
         .filter((inv) => inv.available > 0)
         .sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : a.id - b.id)),
-    [invoices, form.supplier, ownAlloc]
+    [invoices, form.supplier, ownAlloc, payTo]
   );
 
   const changeSupplier = (id) => {
@@ -545,16 +795,25 @@ const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier,
 
   const usedNumbers = useMemo(() => chequesByNumber(allCheques, cheque?.id), [allCheques, cheque]);
   const numberClash = usedNumbers[form.cheque_number.trim().toLowerCase()];
+  const leafGroups = useMemo(
+    () => freeLeafGroups(form.cheque_bank, books, allCheques, cheque?.id),
+    [form.cheque_bank, books, allCheques, cheque]
+  );
 
+  // Linking to invoices is optional, but if any are filled in they must add up to the cheque.
+  const hasPayee = payTo === "supplier" ? !!form.supplier : !!form.payee.trim();
   const valid =
-    form.supplier && form.cheque_number.trim() && !numberClash && form.cheque_date && total > 0 &&
-    allocated === total && !overRow;
+    hasPayee && form.cheque_number.trim() && !numberClash && form.cheque_date && total > 0 &&
+    (allocated === 0 || allocated === total) && !overRow;
 
   const save = async () => {
     if (!valid) return;
     setSaving(true);
     const payload = {
       ...form,
+      supplier: payTo === "supplier" ? form.supplier : null,
+      payee: payTo === "other" ? form.payee.trim() : "",
+      cheque_bank: form.cheque_bank || null,
       allocations: rows
         .filter((r) => cents(alloc[r.id]) > 0)
         .map((r) => ({ invoice: r.id, amount: fromCents(cents(alloc[r.id])) })),
@@ -599,29 +858,43 @@ const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier,
       <div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="sm:col-span-2">
-          <label className={labelCls}>Supplier</label>
-          <SupplierSelect
-            floating
-            allowNone={false}
+          <PayToField
+            payTo={payTo}
+            onPayTo={changePayTo}
+            supplier={form.supplier}
+            onSupplier={changeSupplier}
+            payee={form.payee}
+            onPayee={(v) => setForm((f) => ({ ...f, payee: v }))}
             suppliers={suppliers}
-            value={form.supplier}
-            onChange={changeSupplier}
-            placeholder="Select supplier…"
-            triggerClassName={inputCls}
           />
         </div>
         <div>
           <label className={labelCls}>Cheque no.</label>
-          <input
-            className={`${inputCls} ${numberClash ? "border-red-500 bg-red-50" : ""}`}
-            value={form.cheque_number}
-            onChange={set("cheque_number")}
-          />
+          {leafGroups.length ? (
+            <ChequeLeafSelect
+              groups={leafGroups}
+              value={form.cheque_number}
+              invalid={!!numberClash}
+              onChange={(v) => setForm((f) => ({ ...f, cheque_number: v }))}
+            />
+          ) : (
+            <input
+              className={`${inputCls} ${numberClash ? "border-red-500 bg-red-50" : ""}`}
+              value={form.cheque_number}
+              onChange={set("cheque_number")}
+            />
+          )}
           {numberClash && <p className="text-xs font-semibold text-red-600 mt-1">{usedNumberText(numberClash)}</p>}
         </div>
         <div>
           <label className={labelCls}>Bank</label>
-          <input className={inputCls} value={form.bank} onChange={set("bank")} placeholder="e.g. BOC Gampaha" />
+          <BankSelect
+            banks={banks}
+            books={books}
+            value={form.cheque_bank}
+            legacyText={cheque && !cheque.cheque_bank ? cheque.bank : ""}
+            onChange={(v) => setForm((f) => ({ ...f, cheque_bank: v }))}
+          />
         </div>
         <div>
           <label className={labelCls}>Cheque date</label>
@@ -639,9 +912,10 @@ const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier,
       </div>
 
       {/* Allocation */}
+      {payTo === "supplier" && (
       <div className="mt-5">
         <div className="flex items-center justify-between mb-2">
-          <h4 className="font-bold text-gray-800">Pays which invoices?</h4>
+          <h4 className="font-bold text-gray-800">Pays which invoices? <span className="font-normal text-gray-500 text-sm">(optional)</span></h4>
           <button
             type="button"
             onClick={autoFill}
@@ -656,7 +930,7 @@ const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier,
         {!form.supplier ? (
           <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-4">Choose a supplier to see their unpaid invoices.</p>
         ) : !rows.length ? (
-          <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-4">This supplier has no unpaid invoices. Add the invoice first.</p>
+          <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-4">This supplier has no unpaid invoices. The cheque will be saved without one.</p>
         ) : (
           <div className="border border-gray-200 rounded-xl overflow-hidden">
             <table className="w-full text-sm">
@@ -695,19 +969,28 @@ const ChequeModal = ({ cheque, suppliers, invoices, allCheques, defaultSupplier,
           </div>
         )}
 
-        <div className={`mt-3 flex flex-wrap justify-between gap-2 text-sm font-semibold rounded-xl px-3 py-2 ${remaining === 0 && total > 0 ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`}>
-          <span>Assigned {formatLKR(fromCents(allocated))} of {formatLKR(fromCents(total))}</span>
-          <span>
-            {overRow
-              ? `${overRow.invoice_number} only has ${formatLKR(fromCents(overRow.available))} left`
-              : remaining > 0
-                ? `${formatLKR(fromCents(remaining))} still to assign`
-                : remaining < 0
-                  ? `${formatLKR(fromCents(-remaining))} more than the cheque`
-                  : total > 0 ? "Fully assigned" : ""}
-          </span>
-        </div>
+        {allocated === 0 && !overRow ? (
+          rows.length > 0 && (
+            <p className="mt-3 text-sm text-gray-600 bg-gray-50 rounded-xl px-3 py-2">
+              Not linked to an invoice. Fill in amounts above if this cheque pays one.
+            </p>
+          )
+        ) : (
+          <div className={`mt-3 flex flex-wrap justify-between gap-2 text-sm font-semibold rounded-xl px-3 py-2 ${remaining === 0 && total > 0 ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`}>
+            <span>Assigned {formatLKR(fromCents(allocated))} of {formatLKR(fromCents(total))}</span>
+            <span>
+              {overRow
+                ? `${overRow.invoice_number} only has ${formatLKR(fromCents(overRow.available))} left`
+                : remaining > 0
+                  ? `${formatLKR(fromCents(remaining))} still to assign`
+                  : remaining < 0
+                    ? `${formatLKR(fromCents(-remaining))} more than the cheque`
+                    : total > 0 ? "Fully assigned" : ""}
+            </span>
+          </div>
+        )}
       </div>
+      )}
 
       <div className="mt-4">
         <label className={labelCls}>Notes</label>
@@ -744,16 +1027,18 @@ const newRow = (date = localISO(), cheque_number = "", amount = "") => ({
   amount,
 });
 
-const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, invoiceId, initialDate, onClose, onSaved, onError }) => {
+const ChequeBatchModal = ({ suppliers, banks, books, invoices, allCheques, defaultSupplier, invoiceId, initialDate, onClose, onSaved, onError }) => {
   const startInvoice = invoiceId ? invoices.find((i) => i.id === invoiceId) : null;
   const [form, setForm] = useState(() => ({
     supplier: startInvoice ? String(startInvoice.supplier) : defaultSupplier ?? "",
-    bank: "",
+    payee: "",
+    cheque_bank: defaultBank(banks),
     issued_date: localISO(),
     notes: "",
   }));
   // invoice id -> amount string (how much of each invoice this batch pays)
   const [alloc, setAlloc] = useState(() => (startInvoice ? { [startInvoice.id]: startInvoice.outstanding } : {}));
+  const [payTo, setPayTo] = useState("supplier");
   const [rows, setRows] = useState(() => [newRow(initialDate || localISO())]);
   const [activeKey, setActiveKey] = useState(() => rows[0].key);
   const [showSeries, setShowSeries] = useState(false);
@@ -780,15 +1065,21 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
   const invoiceRows = useMemo(
     () =>
       invoices
-        .filter((inv) => String(inv.supplier) === String(form.supplier) && cents(inv.outstanding) > 0)
+        .filter((inv) => payTo === "supplier" && String(inv.supplier) === String(form.supplier) && cents(inv.outstanding) > 0)
         .map((inv) => ({ ...inv, available: cents(inv.outstanding) }))
         .sort((a, b) => (a.due_date < b.due_date ? -1 : a.due_date > b.due_date ? 1 : a.id - b.id)),
-    [invoices, form.supplier]
+    [invoices, form.supplier, payTo]
   );
 
   const changeSupplier = (id) => {
     if (String(id) === String(form.supplier)) return;
     setForm((f) => ({ ...f, supplier: String(id) }));
+    setAlloc({});
+  };
+
+  const changePayTo = (mode) => {
+    if (mode === payTo) return;
+    setPayTo(mode);
     setAlloc({});
   };
 
@@ -814,11 +1105,41 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
   }, {});
 
   const usedNumbers = useMemo(() => chequesByNumber(allCheques), [allCheques]);
+
+  // Unused leaves of the chosen account's cheque books, in order.
+  const leafGroups = useMemo(() => freeLeafGroups(form.cheque_bank, books, allCheques), [form.cheque_bank, books, allCheques]);
+  const freeLeaves = useMemo(() => leafGroups.flatMap((g) => g.leaves), [leafGroups]);
+  // The next n free leaves after those already on other rows.
+  const nextLeaves = (n, skip = []) => {
+    const skipSet = new Set(skip.map(leafNo));
+    return freeLeaves.filter((l) => !skipSet.has(leafNo(l))).slice(0, n);
+  };
+  // Leaves chosen on each row, for greying them out on the other rows.
+  const takenFor = (key) => {
+    const map = {};
+    rows.forEach((r, i) => {
+      if (r.key !== key && !Number.isNaN(leafNo(r.cheque_number))) map[leafNo(r.cheque_number)] = `cheque ${i + 1}`;
+    });
+    return map;
+  };
+
+  // Choosing an account with cheque books fills the cheques with its next leaves in order.
+  const filledFor = useRef(null);
+  useEffect(() => {
+    if (filledFor.current === form.cheque_bank) return;
+    filledFor.current = form.cheque_bank;
+    if (!freeLeaves.length) return;
+    setRows((rs) => rs.map((r, i) => ({ ...r, cheque_number: freeLeaves[i] ?? "" })));
+  }, [form.cheque_bank, freeLeaves]);
+
   const rowsValid = rows.every((r) => {
     const n = r.cheque_number.trim().toLowerCase();
     return n && r.cheque_date && cents(r.amount) > 0 && numberCounts[n] === 1 && !usedNumbers[n];
   });
-  const valid = form.supplier && toPay > 0 && !overRow && rowsValid && diff === 0;
+  // Paying invoices is optional; when some are filled in, the cheques must cover them exactly.
+  const hasPayee = payTo === "supplier" ? !!form.supplier : !!form.payee.trim();
+  const linked = toPay > 0;
+  const valid = hasPayee && !overRow && rowsValid && chequeTotal > 0 && (!linked || diff === 0);
 
   const autoFill = () => {
     // Fill invoices oldest due first up to the cheques entered, or pay them all if no amounts yet.
@@ -834,9 +1155,12 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
 
   const addRow = () => {
     const last = rows[rows.length - 1];
+    const number = freeLeaves.length
+      ? nextLeaves(1, rows.map((r) => r.cheque_number))[0] || ""
+      : last ? nthChequeNumber(last.cheque_number, 1) : "";
     const row = newRow(
       last ? seriesDate(last.cheque_date, "weekly", 7, 1) : localISO(),
-      last ? nthChequeNumber(last.cheque_number, 1) : "",
+      number,
       diff > 0 ? fromCents(diff) : ""
     );
     setRows((rs) => [...rs, row]);
@@ -854,8 +1178,12 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
   const seriesCount = Math.max(1, Math.min(52, Number(series.count) || 1));
   const makeSeries = () => {
     const amounts = splitEqual(seriesTotal, seriesCount);
+    // With cheque books, the series takes the free leaves in order from the chosen one.
+    const from = freeLeaves.findIndex((l) => leafNo(l) === leafNo(series.firstNumber));
+    const numberAt = (i) =>
+      from >= 0 ? freeLeaves[from + i] || "" : nthChequeNumber(series.firstNumber, i);
     const next = amounts.map((c, i) =>
-      newRow(seriesDate(series.start, series.repeat, series.everyDays, i), nthChequeNumber(series.firstNumber, i), c > 0 ? fromCents(c) : "")
+      newRow(seriesDate(series.start, series.repeat, series.everyDays, i), numberAt(i), c > 0 ? fromCents(c) : "")
     );
     setRows(next);
     setActiveKey(next[0].key);
@@ -868,6 +1196,9 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
     const ordered = [...rows].sort((a, b) => (a.cheque_date < b.cheque_date ? -1 : a.cheque_date > b.cheque_date ? 1 : 0));
     const payload = {
       ...form,
+      supplier: payTo === "supplier" ? form.supplier : null,
+      payee: payTo === "other" ? form.payee.trim() : "",
+      cheque_bank: form.cheque_bank || null,
       cheques: ordered.map((r) => ({
         cheque_number: r.cheque_number.trim(),
         cheque_date: r.cheque_date,
@@ -914,20 +1245,24 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
           {/* Shared details */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-3">
-              <label className={labelCls}>Supplier</label>
-              <SupplierSelect
-            floating
-            allowNone={false}
-            suppliers={suppliers}
-            value={form.supplier}
-            onChange={changeSupplier}
-            placeholder="Select supplier…"
-            triggerClassName={inputCls}
-          />
+              <PayToField
+                payTo={payTo}
+                onPayTo={changePayTo}
+                supplier={form.supplier}
+                onSupplier={changeSupplier}
+                payee={form.payee}
+                onPayee={(v) => setForm((f) => ({ ...f, payee: v }))}
+                suppliers={suppliers}
+              />
             </div>
             <div className="sm:col-span-2">
               <label className={labelCls}>Bank</label>
-              <input className={inputCls} value={form.bank} onChange={set("bank")} placeholder="e.g. BOC Gampaha" />
+              <BankSelect
+                banks={banks}
+                books={books}
+                value={form.cheque_bank}
+                onChange={(v) => setForm((f) => ({ ...f, cheque_bank: v }))}
+              />
             </div>
             <div>
               <label className={labelCls}>Issued on</label>
@@ -936,9 +1271,10 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
           </div>
 
           {/* 1. Invoices */}
+          {payTo === "supplier" && (
           <div className="mt-5">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="font-bold text-gray-800">1. Which invoices are you paying?</h4>
+              <h4 className="font-bold text-gray-800">1. Which invoices are you paying? <span className="font-normal text-gray-500 text-sm">(optional)</span></h4>
               <button
                 type="button"
                 onClick={autoFill}
@@ -952,7 +1288,7 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
             {!form.supplier ? (
               <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-4">Choose a supplier to see their unpaid invoices.</p>
             ) : !invoiceRows.length ? (
-              <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-4">This supplier has no unpaid invoices. Add the invoice first.</p>
+              <p className="text-sm text-gray-500 bg-gray-50 rounded-xl p-4">This supplier has no unpaid invoices. The cheques will be saved without one.</p>
             ) : (
               <div className="border border-gray-200 rounded-xl overflow-hidden">
                 <table className="w-full text-sm">
@@ -1006,15 +1342,16 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
               </p>
             )}
           </div>
+          )}
 
           {/* 2. Cheques */}
           <div className="mt-6">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <h4 className="font-bold text-gray-800">2. Cheques</h4>
+              <h4 className="font-bold text-gray-800">{payTo === "supplier" ? "2. Cheques" : "Cheques"}</h4>
               <button
                 type="button"
                 onClick={() => {
-                  setSeries((sr) => ({ ...sr, start: activeDate || sr.start }));
+                  setSeries((sr) => ({ ...sr, start: activeDate || sr.start, firstNumber: sr.firstNumber || freeLeaves[0] || "" }));
                   setShowSeries((v) => !v);
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold border ${showSeries ? "bg-red-700 text-white border-red-700" : "text-red-700 border-red-200 hover:bg-red-50"}`}
@@ -1052,8 +1389,16 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
                   )}
                   <div>
                     <label className={labelCls}>First cheque no.</label>
-                    <input className={inputCls} value={series.firstNumber} placeholder="e.g. 000245"
-                      onChange={(e) => setSeries((sr) => ({ ...sr, firstNumber: e.target.value }))} />
+                    {leafGroups.length ? (
+                      <ChequeLeafSelect
+                        groups={leafGroups}
+                        value={series.firstNumber}
+                        onChange={(v) => setSeries((sr) => ({ ...sr, firstNumber: v }))}
+                      />
+                    ) : (
+                      <input className={inputCls} value={series.firstNumber} placeholder="e.g. 000245"
+                        onChange={(e) => setSeries((sr) => ({ ...sr, firstNumber: e.target.value }))} />
+                    )}
                   </div>
                   <div>
                     <label className={labelCls}>Total of series</label>
@@ -1064,6 +1409,15 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   {(() => {
+                    const from = freeLeaves.findIndex((l) => leafNo(l) === leafNo(series.firstNumber));
+                    if (from >= 0) {
+                      const short = seriesCount - freeLeaves.slice(from, from + seriesCount).length;
+                      return short > 0 ? (
+                        <p className="w-full text-xs font-semibold text-red-600">
+                          Only {seriesCount - short} unused lea{seriesCount - short === 1 ? "f" : "ves"} from here. Add the next cheque book first.
+                        </p>
+                      ) : null;
+                    }
                     const hits = Array.from({ length: seriesCount }, (_, i) => nthChequeNumber(series.firstNumber, i))
                       .filter((n) => n && usedNumbers[n.toLowerCase()]);
                     return hits.length > 0 ? (
@@ -1107,12 +1461,24 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
                   >
                     <div className="flex items-center gap-2">
                       <span className="w-6 text-center text-xs font-bold text-gray-400">{i + 1}</span>
-                      <input
-                        className={`flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-sm ${dupNumber || usedBefore ? "border-red-500 bg-red-50" : "border-gray-300"}`}
-                        placeholder="Cheque no."
-                        value={r.cheque_number}
-                        onChange={(e) => setRow(r.key, "cheque_number", e.target.value)}
-                      />
+                      {leafGroups.length ? (
+                        <ChequeLeafSelect
+                          compact
+                          className="flex-1 min-w-0"
+                          groups={leafGroups}
+                          value={r.cheque_number}
+                          taken={takenFor(r.key)}
+                          invalid={!!(dupNumber || usedBefore)}
+                          onChange={(v) => setRow(r.key, "cheque_number", v)}
+                        />
+                      ) : (
+                        <input
+                          className={`flex-1 min-w-0 border rounded-lg px-2 py-1.5 text-sm ${dupNumber || usedBefore ? "border-red-500 bg-red-50" : "border-gray-300"}`}
+                          placeholder="Cheque no."
+                          value={r.cheque_number}
+                          onChange={(e) => setRow(r.key, "cheque_number", e.target.value)}
+                        />
+                      )}
                       <input
                         type="date"
                         className="w-[150px] border border-gray-300 rounded-lg px-2 py-1.5 text-sm"
@@ -1166,20 +1532,27 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
               <Plus size={15} /> Add cheque
             </button>
 
-            <div className={`mt-3 flex flex-wrap justify-between gap-2 text-sm font-semibold rounded-xl px-3 py-2 ${diff === 0 && toPay > 0 ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`}>
+            {!linked ? (
+              <div className="mt-3 flex flex-wrap justify-between gap-2 text-sm font-semibold rounded-xl px-3 py-2 bg-gray-50 text-gray-700">
+                <span>
+                  {rows.length} cheque{rows.length === 1 ? "" : "s"}: {formatLKR(fromCents(chequeTotal))}
+                </span>
+                <span className="font-normal">Not linked to an invoice</span>
+              </div>
+            ) : (
+            <div className={`mt-3 flex flex-wrap justify-between gap-2 text-sm font-semibold rounded-xl px-3 py-2 ${diff === 0 ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`}>
               <span>
                 {rows.length} cheque{rows.length === 1 ? "" : "s"}: {formatLKR(fromCents(chequeTotal))} of {formatLKR(fromCents(toPay))} being paid
               </span>
               <span>
-                {toPay === 0
-                  ? "Enter how much of each invoice you're paying"
-                  : diff > 0
+                {diff > 0
                     ? `${formatLKR(fromCents(diff))} still to cover`
                     : diff < 0
                       ? `Cheques are ${formatLKR(fromCents(-diff))} more than the invoices`
                       : "Matches"}
               </span>
             </div>
+            )}
           </div>
 
           <div className="mt-4">
@@ -1193,7 +1566,7 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
           <div className="lg:sticky lg:top-0">
             <h4 className="font-bold text-gray-800 flex items-center gap-2 mb-1"><CalendarDays size={16} /> Cheque calendar</h4>
             <p className="text-xs text-gray-500 mb-3">
-              All suppliers' cheques. Click a day to set the date of cheque {rows.findIndex((r) => r.key === activeRow?.key) + 1}.
+              All cheques. Click a day to set the date of cheque {rows.findIndex((r) => r.key === activeRow?.key) + 1}.
             </p>
             <ChequeCalendar
               month={calMonth}
@@ -1207,6 +1580,123 @@ const ChequeBatchModal = ({ suppliers, invoices, allCheques, defaultSupplier, in
           </div>
         </div>
       </div>
+    </ModalShell>
+  );
+};
+
+// --- Cheque book modal (a book received for a bank account) ---
+
+const ChequeBookModal = ({ book, banks, onClose, onSaved, onError }) => {
+  const [form, setForm] = useState(() => ({
+    bank: book ? String(book.bank) : defaultBank(banks),
+    first_leaf: book?.first_leaf ?? "",
+    last_leaf: book?.last_leaf ?? "",
+    received_date: book?.received_date ?? localISO(),
+    notes: book?.notes ?? "",
+  }));
+  const [saving, setSaving] = useState(false);
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const digits = (v) => /^\d+$/.test(v.trim());
+  const first = form.first_leaf.trim();
+  const last = form.last_leaf.trim();
+  const leaves = digits(first) && digits(last) ? Number(last) - Number(first) + 1 : 0;
+  // Books come in 25 or 50 leaves; offer both, keeping the leading zeros.
+  const lastFor = (size) => (digits(first) ? String(Number(first) + size - 1).padStart(first.length, "0") : "");
+  const suggestedLast = lastFor(50);
+  const valid = form.bank && leaves > 0 && form.received_date;
+
+  const save = async () => {
+    if (!valid) return;
+    setSaving(true);
+    const payload = { ...form, first_leaf: first, last_leaf: last };
+    try {
+      const saved = book ? await updateChequeBook(book.id, payload) : await createChequeBook(payload);
+      onSaved(saved, book ? "Cheque book updated." : "Cheque book added.");
+    } catch (err) {
+      onError(errorText(err, "Could not save the cheque book."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      title={book ? "Edit cheque book" : "New cheque book"}
+      icon={BookOpen}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 font-semibold hover:bg-gray-100">
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={!valid || saving}
+            className="px-5 py-2 rounded-xl bg-red-700 text-white font-bold hover:bg-red-800 disabled:opacity-50 flex items-center gap-2"
+          >
+            {saving && <Loader2 size={16} className="animate-spin" />} Save book
+          </button>
+        </>
+      }
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="sm:col-span-2">
+          <label className={labelCls}>Bank account</label>
+          <BankSelect banks={banks} value={form.bank} onChange={(v) => setForm((f) => ({ ...f, bank: v }))} />
+        </div>
+        <div>
+          <label className={labelCls}>First leaf</label>
+          <input className={inputCls} value={form.first_leaf} onChange={set("first_leaf")} placeholder="e.g. 000101" inputMode="numeric" />
+        </div>
+        <div>
+          <label className={labelCls}>Last leaf</label>
+          <input
+            className={inputCls}
+            value={form.last_leaf}
+            onChange={set("last_leaf")}
+            placeholder={suggestedLast ? `e.g. ${suggestedLast}` : "e.g. 000150"}
+            inputMode="numeric"
+          />
+          {digits(first) && (
+            <div className="flex gap-2 mt-1.5">
+              {[25, 50].map((size) => {
+                const value = lastFor(size);
+                const active = last === value;
+                return (
+                  <button
+                    key={size}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, last_leaf: value }))}
+                    title={`Last leaf ${value}`}
+                    className={`px-2.5 py-1 rounded-lg border text-xs font-semibold ${
+                      active ? "bg-red-700 border-red-700 text-white" : "border-red-200 text-red-700 hover:bg-red-50"
+                    }`}
+                  >
+                    {size} leaves
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div>
+          <label className={labelCls}>Received on</label>
+          <input type="date" className={inputCls} value={form.received_date} onChange={set("received_date")} />
+        </div>
+        <div className="flex items-end">
+          <p className={`text-sm font-semibold ${leaves > 0 ? "text-gray-700" : "text-gray-400"}`}>
+            {leaves > 0 ? `${leaves} lea${leaves === 1 ? "f" : "ves"}` : first && last ? "Last leaf must come after the first" : ""}
+          </p>
+        </div>
+        <div className="sm:col-span-2">
+          <label className={labelCls}>Notes</label>
+          <textarea rows={2} className={inputCls} value={form.notes} onChange={set("notes")} />
+        </div>
+      </div>
+      <p className="text-xs text-gray-500 mt-3">
+        Used and remaining leaves, and the date the book was finished, are worked out from the cheques written on this account.
+      </p>
     </ModalShell>
   );
 };
@@ -1228,6 +1718,7 @@ const TABS = [
   { id: "invoices", label: "Invoices" },
   { id: "cheques", label: "Cheques" },
   { id: "calendar", label: "Calendar" },
+  { id: "books", label: "Cheque books" },
 ];
 
 const SupplierPaymentsPage = () => {
@@ -1239,6 +1730,9 @@ const SupplierPaymentsPage = () => {
   const [balances, setBalances] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [cheques, setCheques] = useState([]);
+  const [banks, setBanks] = useState([]);
+  const [books, setBooks] = useState([]);
+  const [bookModal, setBookModal] = useState(null); // { book } — null book for new
   const [loading, setLoading] = useState(true);
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const [search, setSearch] = useState("");
@@ -1262,12 +1756,16 @@ const SupplierPaymentsPage = () => {
 
   const load = useCallback(async () => {
     try {
-      const [s, b, i, c] = await Promise.all([
+      const [s, b, i, c, k, bk] = await Promise.all([
         fetchSuppliers(),
         fetchSupplierBalances(),
         fetchSupplierInvoices(),
         fetchSupplierCheques(),
+        fetchChequeBanks(),
+        fetchChequeBooks(),
       ]);
+      setBanks(k);
+      setBooks(bk);
       setSuppliers([...s].sort((a, z) => a.name.localeCompare(z.name)));
       setBalances(b);
       setInvoices(i);
@@ -1284,6 +1782,7 @@ const SupplierPaymentsPage = () => {
   const afterSave = (message) => {
     setInvoiceModal(null);
     setChequeModal(null);
+    setBookModal(null);
     setAlertInfo({ type: "success", message });
     load();
   };
@@ -1381,10 +1880,21 @@ const SupplierPaymentsPage = () => {
           onError={showError}
         />
       )}
+      {bookModal && (
+        <ChequeBookModal
+          book={bookModal.book}
+          banks={banks}
+          onClose={() => setBookModal(null)}
+          onSaved={(_, msg) => afterSave(msg)}
+          onError={showError}
+        />
+      )}
       {chequeModal?.cheque && (
         <ChequeModal
           cheque={chequeModal.cheque}
           suppliers={suppliers}
+          banks={banks}
+          books={books}
           invoices={invoices}
           allCheques={cheques}
           onClose={() => setChequeModal(null)}
@@ -1395,6 +1905,8 @@ const SupplierPaymentsPage = () => {
       {chequeModal && !chequeModal.cheque && (
         <ChequeBatchModal
           suppliers={suppliers}
+          banks={banks}
+          books={books}
           invoices={invoices}
           allCheques={cheques}
           defaultSupplier={chequeModal.supplier ?? supplierFilter}
@@ -1479,7 +1991,7 @@ const SupplierPaymentsPage = () => {
               className="w-full pl-9 pr-3 py-2 rounded-xl border border-gray-300 text-sm"
             />
           </div>
-          {tab !== "owed" && (
+          {tab !== "owed" && tab !== "books" && (
             <SupplierSelect
               floating
               className="w-full lg:w-64"
@@ -1511,7 +2023,7 @@ const SupplierPaymentsPage = () => {
           )}
         </div>
 
-        {filterSupplierName && tab !== "owed" && (
+        {filterSupplierName && tab !== "owed" && tab !== "books" && (
           <p className="mb-3 text-sm text-gray-600">
             Showing <span className="font-bold">{filterSupplierName}</span> only ·{" "}
             <button className="text-red-700 font-semibold underline" onClick={() => setParam({ supplier: "" })}>show all</button>
@@ -1563,6 +2075,131 @@ const SupplierPaymentsPage = () => {
                 ))}
               </tbody>
             </table>
+          </div>
+        ) : tab === "books" ? (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-gray-500">
+                Books received for each bank account. Leaves used and left are counted from the cheques written.
+              </p>
+              <button
+                onClick={() => setBookModal({ book: null })}
+                disabled={!banks.length}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-700 text-white font-bold hover:bg-red-800 disabled:opacity-50"
+              >
+                <Plus size={16} /> Cheque book
+              </button>
+            </div>
+            {!banks.length ? (
+              <div className="bg-white rounded-2xl border border-gray-200 p-10 text-center text-gray-500">
+                Add your bank accounts in <Link to="/options" className="font-semibold text-red-700 underline">Options</Link> first.
+              </div>
+            ) : (
+              banks
+                .filter((acct) => {
+                  const t = term;
+                  return !t || acct.label.toLowerCase().includes(t);
+                })
+                .map((acct) => {
+                  const mine = books.filter((b) => b.bank === acct.id);
+                  const inUse = mine.filter((b) => b.status === "IN_USE");
+                  const left = inUse.reduce((n, b) => n + b.remaining, 0);
+                  const untracked = mine.reduce((n, b) => n + b.untracked, 0);
+                  return (
+                    <div key={acct.id} className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Landmark size={18} className="text-gray-400 shrink-0" />
+                          <span className="font-bold text-gray-900 truncate">{acct.label}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-xs font-semibold">
+                          <span className="text-gray-700">{left} lea{left === 1 ? "f" : "ves"} left</span>
+                          {inUse[0]?.next_leaf && <span className="text-gray-500">Next leaf {inUse[0].next_leaf}</span>}
+                          {untracked > 0 && (
+                            <span className="text-amber-700 flex items-center gap-1">
+                              <AlertTriangle size={12} /> {untracked} not tracked
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {mine.length === 0 ? (
+                        <p className="p-6 text-center text-sm text-gray-400">No cheque books for this account yet.</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead className="text-[11px] uppercase tracking-wider text-gray-500">
+                              <tr>
+                                <th className="p-3 text-left">Leaves</th>
+                                <th className="p-3 text-left">Received</th>
+                                <th className="p-3 text-right">Used</th>
+                                <th className="p-3 text-right">Left</th>
+                                <th className="p-3 text-left">Next leaf</th>
+                                <th className="p-3 text-left">Finished</th>
+                                <th className="p-3 text-left">Status</th>
+                                <th className="p-3" />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {mine.map((b) => (
+                                <tr key={b.id} className="border-t border-gray-100 hover:bg-gray-50">
+                                  <td className="p-3 font-semibold text-gray-900 whitespace-nowrap">
+                                    {b.first_leaf} – {b.last_leaf}
+                                    {b.notes && <span className="block text-[11px] font-normal text-gray-500">{b.notes}</span>}
+                                  </td>
+                                  <td className="p-3 whitespace-nowrap">{formatDate(b.received_date)}</td>
+                                  <td className="p-3 text-right whitespace-nowrap">{b.used} / {b.total_leaves}</td>
+                                  <td className="p-3 text-right font-bold">{b.remaining}</td>
+                                  <td className="p-3">{b.next_leaf || "—"}</td>
+                                  <td className="p-3 whitespace-nowrap">
+                                    {b.finished_date ? formatDate(b.finished_date) : "—"}
+                                    {b.status === "REPLACED" && b.last_used_date && (
+                                      <span className="block text-[11px] text-gray-500">Last used {formatDate(b.last_used_date)}</span>
+                                    )}
+                                  </td>
+                                  <td className="p-3">
+                                    <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase ${BOOK_BADGE[b.status].cls}`}>
+                                      {BOOK_BADGE[b.status].label}
+                                    </span>
+                                    {b.untracked > 0 && (
+                                      <span className="block mt-1 text-[11px] font-semibold text-amber-700">
+                                        {b.untracked} lea{b.untracked === 1 ? "f" : "ves"} not tracked
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="p-3">
+                                    <div className="flex justify-end gap-1">
+                                      <button onClick={() => setBookModal({ book: b })} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100" title="Edit">
+                                        <Edit2 size={15} />
+                                      </button>
+                                      {b.used === 0 && (
+                                        <button
+                                          onClick={() =>
+                                            setConfirm({
+                                              title: `Delete cheque book ${b.first_leaf} – ${b.last_leaf}?`,
+                                              message: "No cheques have been written from it yet.",
+                                              label: "Delete",
+                                              action: () => deleteChequeBook(b.id),
+                                              success: "Cheque book deleted.",
+                                            })
+                                          }
+                                          className="p-1.5 rounded-lg text-gray-500 hover:bg-red-50 hover:text-red-600"
+                                          title="Delete"
+                                        >
+                                          <Trash2 size={15} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+            )}
           </div>
         ) : tab === "calendar" ? (
           (() => {
@@ -1747,7 +2384,7 @@ const SupplierPaymentsPage = () => {
                 <tr>
                   <th className="p-3 text-left">Cheque date</th>
                   <th className="p-3 text-left">Cheque</th>
-                  <th className="p-3 text-left">Supplier</th>
+                  <th className="p-3 text-left">Pay to</th>
                   <th className="p-3 text-left">Pays invoices</th>
                   <th className="p-3 text-right">Amount</th>
                   <th className="p-3 text-left">Status</th>
@@ -1768,9 +2405,13 @@ const SupplierPaymentsPage = () => {
                       <span className="font-semibold text-gray-900">{c.cheque_number}</span>
                       {c.bank && <span className="block text-xs text-gray-500">{c.bank}</span>}
                     </td>
-                    <td className="p-3 text-gray-700">{c.supplier_name}</td>
+                    <td className="p-3 text-gray-700">
+                      {c.supplier_name}
+                      {!c.supplier && <span className="block text-[11px] text-gray-400">Not a supplier</span>}
+                    </td>
                     <td className="p-3">
                       <div className="flex flex-wrap gap-1">
+                        {c.allocations.length === 0 && <span className="text-xs text-gray-400">No invoice</span>}
                         {c.allocations.map((a) => (
                           <span key={a.id} className="px-2 py-0.5 rounded-md bg-gray-100 text-xs text-gray-700 whitespace-nowrap">
                             {a.invoice_number}: {formatLKR(a.amount)}

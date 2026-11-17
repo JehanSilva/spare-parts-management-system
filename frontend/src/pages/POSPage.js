@@ -302,7 +302,7 @@ const ProductItem = memo(({ part, cartQty = 0, alternativeCount = 0, compatibleW
         </span>
       )}
 
-      <div className="h-20 md:h-24 bg-gray-100 relative rounded-t-xl overflow-hidden">
+      <div className="h-28 md:h-36 bg-white relative rounded-t-xl overflow-hidden">
         {part.image ? (
           <>
             {!imgLoaded && (
@@ -318,7 +318,7 @@ const ProductItem = memo(({ part, cartQty = 0, alternativeCount = 0, compatibleW
               loading="lazy"
               decoding="async"
               onLoad={() => setImgLoaded(true)}
-              className={`w-full h-full object-cover transition-opacity duration-500 ${imgLoaded ? "opacity-100" : "opacity-0"
+              className={`w-full h-full object-contain scale-110 bg-white transition-opacity duration-500 ${imgLoaded ? "opacity-100" : "opacity-0"
                 }`}
             />
           </>

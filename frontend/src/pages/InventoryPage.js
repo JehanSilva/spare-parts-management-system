@@ -1667,7 +1667,7 @@ const InventoryPage = () => {
                       alt={part.name}
                       loading="lazy"
                       onLoad={(e) => e.target.classList.remove('opacity-0')}
-                      className="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-500 z-10"
+                      className="absolute inset-0 w-full h-full object-contain scale-110 bg-white opacity-0 transition-opacity duration-500 z-10"
                     />
                    </>
                   ) : (

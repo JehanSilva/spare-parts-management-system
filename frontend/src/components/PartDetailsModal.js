@@ -760,7 +760,7 @@ const PartDetailsView = ({ part, onClose, onPartUpdated, onRestock, onOpenPart }
                 onClick={() => setShowFullImage(true)}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{ WebkitTouchCallout: "none", userSelect: "none" }}
-                className="w-full sm:w-40 h-48 sm:h-40 object-cover rounded-xl border border-gray-200 shadow-sm shrink-0 cursor-pointer active:scale-95 transition-transform"
+                className="w-full sm:w-40 h-48 sm:h-40 object-contain bg-white rounded-xl border border-gray-200 shadow-sm shrink-0 cursor-pointer active:scale-95 transition-transform"
                 title="Click or long press to view full image"
               />
             ) : (

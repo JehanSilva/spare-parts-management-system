@@ -3971,7 +3971,8 @@ class SupplierInvoiceChequeAPITest(TestCase):
     def test_balances(self):
         overdue = self._invoice("INV-OLD", 3000, invoice_date="2020-01-01", credit_days=30)
         self._invoice("INV-NEW", 2000, invoice_date=timezone.localdate().isoformat(), credit_days=60)
-        self._cheque("C1", 1000, [(overdue, 1000)])
+        future = (timezone.localdate() + timedelta(days=10)).isoformat()   # not yet auto-cleared
+        self._cheque("C1", 1000, [(overdue, 1000)], cheque_date=future)
         rows = {r["supplier"]: r for r in self.client.get(reverse('get_supplier_balances')).data}
         row = rows[self.supplier.pk]
         self.assertEqual(row["total_invoiced"], Decimal("5000"))
@@ -4088,6 +4089,32 @@ class SupplierInvoiceChequeAPITest(TestCase):
         self.assertEqual(data["cheques_from_profit"], Decimal("1000"))
         self.assertEqual(data["parts_cost_remaining"], Decimal("0"))
         self.assertEqual(data["profit_after_cheques"], data["profit_after_salaries"] - Decimal("1000"))
+
+    def _list_status(self, cheque):
+        rows = self.client.get(reverse('get_supplier_cheques')).data
+        return next(r for r in rows if r["id"] == cheque["id"])
+
+    def test_past_cheques_auto_clear(self):
+        today = timezone.localdate()
+        past = self._cheque("C1", 100, [], cheque_date=(today - timedelta(days=1)).isoformat())
+        due_today = self._cheque("C2", 100, [], cheque_date=today.isoformat())
+        future = self._cheque("C3", 100, [], cheque_date=(today + timedelta(days=3)).isoformat())
+        self.assertEqual(self._list_status(past)["status"], "CLEARED")
+        self.assertEqual(self._list_status(due_today)["status"], "PENDING")
+        self.assertEqual(self._list_status(future)["status"], "PENDING")
+
+    def test_marked_not_cleared_stays_pending(self):
+        today = timezone.localdate()
+        cheque = self._cheque("C1", 100, [], cheque_date=(today - timedelta(days=2)).isoformat())
+        self.assertEqual(self._list_status(cheque)["status"], "CLEARED")
+        response = self.client.post(reverse('set_supplier_cheque_status', args=[cheque["id"]]), {"status": "PENDING"}, format='json')
+        self.assertTrue(response.data["hold_pending"])
+        row = self._list_status(cheque)
+        self.assertEqual((row["status"], row["hold_pending"]), ("PENDING", True))
+        # Moving it to a new date drops the hold; it clears again once that date passes.
+        new_date = (today - timedelta(days=1)).isoformat()
+        self.client.put(reverse('update_supplier_cheque', args=[cheque["id"]]), {"cheque_date": new_date}, format='json')
+        self.assertEqual(self._list_status(cheque)["status"], "CLEARED")
 
     def test_supplier_cheque_without_invoice(self):
         cheque = self._cheque("C1", 5000, [])

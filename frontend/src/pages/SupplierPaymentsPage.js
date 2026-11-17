@@ -92,8 +92,24 @@ const INVOICE_BADGE = {
 
 const CHEQUE_BADGE = {
   PENDING: "bg-blue-100 text-blue-700 border-blue-200",
+  NOT_CLEARED: "bg-amber-100 text-amber-800 border-amber-300",
   CLEARED: "bg-green-100 text-green-700 border-green-200",
   CANCELLED: "bg-gray-200 text-gray-500 border-gray-300 line-through",
+};
+
+// How a cheque reads: the server marks pending cheques cleared once their date
+// passes, so a pending one with a past date is one marked "not cleared" by hand.
+const chequeState = (c) =>
+  c.status === "PENDING" && String(c.cheque_date) < localISO() ? "NOT_CLEARED" : c.status;
+const STATE_LABEL = { PENDING: "pending", NOT_CLEARED: "not cleared", CLEARED: "cleared", CANCELLED: "cancelled" };
+
+const ChequeBadge = ({ cheque, className = "" }) => {
+  const state = chequeState(cheque);
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase ${CHEQUE_BADGE[state]} ${className}`}>
+      {STATE_LABEL[state]}
+    </span>
+  );
 };
 
 const BOOK_BADGE = {
@@ -346,9 +362,10 @@ const chequesByDay = (cheques, excludeId) => {
   cheques.forEach((c) => {
     if (c.status === "CANCELLED" || c.id === excludeId) return;
     const day = String(c.cheque_date);
-    if (!map[day]) map[day] = { count: 0, total: 0, items: [] };
+    if (!map[day]) map[day] = { count: 0, total: 0, cleared: 0, items: [] };
     map[day].count += 1;
     map[day].total += cents(c.amount);
+    if (c.status === "CLEARED") map[day].cleared += 1;
     map[day].items.push(c);
   });
   return map;
@@ -366,6 +383,8 @@ const chequesByNumber = (cheques, excludeId) => {
 const usedNumberText = (c) => `Already used: ${c.supplier_name}, ${formatDate(c.cheque_date)}`;
 
 const COUNT_SHADE = ["bg-white", "bg-amber-50", "bg-amber-100", "bg-amber-200", "bg-orange-200"];
+// Days whose cheques have all cleared are green instead.
+const CLEARED_SHADE = ["bg-white", "bg-green-50", "bg-green-100", "bg-green-200", "bg-green-300"];
 
 // Month grid of the days cheques are written for. Saved cheques shade the day
 // (darker = more cheques), cheques being entered right now get a red outline,
@@ -441,7 +460,9 @@ const ChequeCalendar = ({
           const dr = draftDays[day];
           const count = (s?.count || 0) + (dr?.count || 0);
           const total = (s?.total || 0) + (dr?.total || 0);
-          const shade = COUNT_SHADE[Math.min(count, COUNT_SHADE.length - 1)];
+          const allCleared = !dr && s && s.cleared === s.count;
+          const shade = (allCleared ? CLEARED_SHADE : COUNT_SHADE)[Math.min(count, COUNT_SHADE.length - 1)];
+          const someCleared = !allCleared && s?.cleared > 0;
           const selected = day === selectedDate;
           return (
             <button
@@ -450,7 +471,7 @@ const ChequeCalendar = ({
               onClick={() => onPickDay && onPickDay(day)}
               title={
                 count
-                  ? `${count} cheque${count === 1 ? "" : "s"} · ${formatLKR(fromCents(total))}${dr ? ` (${dr.count} being added)` : ""}`
+                  ? `${count} cheque${count === 1 ? "" : "s"} · ${formatLKR(fromCents(total))}${s?.cleared ? ` · ${s.cleared} cleared` : ""}${dr ? ` (${dr.count} being added)` : ""}`
                   : "No cheques"
               }
               className={`relative rounded-lg border text-left transition-colors hover:border-gray-500 ${shade} ${dr ? "border-2 border-red-500" : "border-gray-200"
@@ -467,6 +488,11 @@ const ChequeCalendar = ({
                   <span className={`block text-gray-700 ${large ? "text-xs" : "text-[10px]"}`}>
                     {large ? formatLKR(fromCents(total)) : shortAmount(total)}
                   </span>
+                  {large && (allCleared || someCleared) && (
+                    <span className="block text-[10px] font-bold text-green-700">
+                      {allCleared ? "✓ cleared" : `✓ ${s.cleared} cleared`}
+                    </span>
+                  )}
                 </span>
               )}
               {dueDays[day] > 0 && (
@@ -478,7 +504,8 @@ const ChequeCalendar = ({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-100 border border-gray-200" /> Cheques written</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-100 border border-gray-200" /> Not cleared yet</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-green-100 border border-gray-200" /> All cleared</span>
         {drafts.length > 0 && <span className="flex items-center gap-1"><span className="w-3 h-3 rounded border-2 border-red-500" /> Being added now</span>}
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> Invoice due</span>
       </div>
@@ -1838,7 +1865,7 @@ const SupplierPaymentsPage = () => {
 
   const visibleCheques = cheques
     .filter(bySupplier)
-    .filter((c) => !chequeStatus || c.status === chequeStatus)
+    .filter((c) => !chequeStatus || c.status === chequeStatus || chequeState(c) === chequeStatus)
     .filter((c) => !term || c.cheque_number.toLowerCase().includes(term) || c.supplier_name.toLowerCase().includes(term));
 
   const filterSupplierName = supplierFilter && suppliers.find((s) => String(s.id) === supplierFilter)?.name;
@@ -1851,7 +1878,9 @@ const SupplierPaymentsPage = () => {
           ? "The invoices it paid will show as unpaid again, and it drops out of the monthly report. Use this for bounced or voided cheques."
           : status === "CLEARED"
             ? "Mark this cheque as cleared by the bank."
-            : "Set this cheque back to pending.",
+            : String(c.cheque_date) < localISO()
+              ? "Its date has passed but the bank hasn't cleared it. It will show as not cleared, and won't be cleared automatically again until you mark it cleared."
+              : "Set this cheque back to pending. It will be marked cleared automatically once its date passes.",
       label,
       tone: status === "CANCELLED" ? "danger" : "info",
       action: () => setSupplierChequeStatus(c.id, status),
@@ -2017,6 +2046,7 @@ const SupplierPaymentsPage = () => {
             <select value={chequeStatus} onChange={(e) => setChequeStatus(e.target.value)} className="px-3 py-2 rounded-xl border border-gray-300 text-sm bg-white">
               <option value="">All statuses</option>
               <option value="PENDING">Pending</option>
+              <option value="NOT_CLEARED">Not cleared</option>
               <option value="CLEARED">Cleared</option>
               <option value="CANCELLED">Cancelled</option>
             </select>
@@ -2244,9 +2274,7 @@ const SupplierPaymentsPage = () => {
                         </span>
                         <span className="text-right whitespace-nowrap">
                           <span className="block font-bold text-gray-900">{formatLKR(c.amount)}</span>
-                          <span className={`inline-block px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase ${CHEQUE_BADGE[c.status]}`}>
-                            {c.status.toLowerCase()}
-                          </span>
+                          <ChequeBadge cheque={c} />
                         </span>
                       </button>
                     ))}
@@ -2421,9 +2449,7 @@ const SupplierPaymentsPage = () => {
                     </td>
                     <td className="p-3 text-right whitespace-nowrap font-bold">{formatLKR(c.amount)}</td>
                     <td className="p-3">
-                      <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase ${CHEQUE_BADGE[c.status]}`}>
-                        {c.status.toLowerCase()}
-                      </span>
+                      <ChequeBadge cheque={c} />
                     </td>
                     <td className="p-3">
                       <div className="flex justify-end gap-1">
@@ -2447,9 +2473,15 @@ const SupplierPaymentsPage = () => {
                           </button>
                         )}
                         {c.status === "CLEARED" && (
-                          <button onClick={() => chequeAction(c, "PENDING", "Set pending")} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100" title="Back to pending">
-                            <Undo2 size={15} />
-                          </button>
+                          String(c.cheque_date) < localISO() ? (
+                            <button onClick={() => chequeAction(c, "PENDING", "Mark not cleared")} className="p-1.5 rounded-lg text-amber-600 hover:bg-amber-50" title="Mark as not cleared">
+                              <Undo2 size={15} />
+                            </button>
+                          ) : (
+                            <button onClick={() => chequeAction(c, "PENDING", "Set pending")} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100" title="Back to pending">
+                              <Undo2 size={15} />
+                            </button>
+                          )
                         )}
                         <button
                           onClick={() =>

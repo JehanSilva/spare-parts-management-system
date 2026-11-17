@@ -690,7 +690,7 @@ class SupplierChequeSerializer(serializers.ModelSerializer):
         model = SupplierCheque
         fields = [
             'id', 'supplier', 'payee', 'supplier_name', 'cheque_number', 'cheque_bank', 'bank', 'cheque_date', 'issued_date',
-            'amount', 'status', 'notes', 'allocations', 'created_at', 'updated_at',
+            'amount', 'status', 'hold_pending', 'notes', 'allocations', 'created_at', 'updated_at',
         ]
 
 

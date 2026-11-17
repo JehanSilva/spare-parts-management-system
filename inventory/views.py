@@ -2243,6 +2243,7 @@ def _month_cheque_cost(year, month, parts_cost, profit_after_salaries, revenue):
     goes beyond that comes out of profit.
     """
     zero = Decimal('0')
+    SupplierCheque.auto_clear()
     cheques = list(
         SupplierCheque.objects
         .filter(cheque_date__year=year, cheque_date__month=month)
@@ -3829,6 +3830,7 @@ def delete_supplier_invoice(request, pk):
 @api_view(['GET'])
 def get_supplier_cheques(request):
     """?supplier=<id>&status=PENDING|CLEARED|CANCELLED&month=&year= (by cheque date)"""
+    SupplierCheque.auto_clear()
     qs = _cheque_queryset()
     params = request.query_params
     if params.get('supplier'):
@@ -3953,6 +3955,9 @@ def _save_cheque(data, cheque=None):
 
     if cheque is None:
         cheque = SupplierCheque(status=SupplierCheque.STATUS_PENDING)
+    elif cheque.cheque_date != cheque_date:
+        # A new date is a fresh start: it clears on its own once that date passes.
+        cheque.hold_pending = False
     cheque.supplier = supplier
     cheque.payee = '' if supplier else payee
     cheque.cheque_number = cheque_number
@@ -4059,7 +4064,12 @@ def set_supplier_cheque_status(request, pk):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
         cheque.status = new_status
-        cheque.save(update_fields=['status', 'updated_at'])
+        # Set back to pending by hand after its date: it hasn't cleared, so
+        # don't let the auto-clear flip it straight back.
+        cheque.hold_pending = (
+            new_status == SupplierCheque.STATUS_PENDING and cheque.cheque_date < timezone.localdate()
+        )
+        cheque.save(update_fields=['status', 'hold_pending', 'updated_at'])
     return Response(SupplierChequeSerializer(_cheque_queryset().get(pk=pk)).data)
 
 
@@ -4226,6 +4236,7 @@ def delete_cheque_book(request, pk):
 def get_supplier_balances(request):
     """What we owe each supplier, from their invoices and cheques."""
     today = timezone.localdate()
+    SupplierCheque.auto_clear(today)
     zero = Decimal('0')
     rows = {
         s.pk: {

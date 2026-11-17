@@ -823,6 +823,10 @@ class SupplierCheque(models.Model):
     issued_date = models.DateField(default=timezone.localdate, help_text="Day the cheque was handed over")
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    # Pending cheques are marked cleared automatically once their date has
+    # passed. Setting one back to pending by hand sets this, so it stays
+    # "not cleared" until someone clears it.
+    hold_pending = models.BooleanField(default=False)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -834,6 +838,14 @@ class SupplierCheque(models.Model):
             # check this first for a friendly message; this is the backstop.
             models.UniqueConstraint(Lower('cheque_number'), name='unique_cheque_number_ci'),
         ]
+
+    @classmethod
+    def auto_clear(cls, today=None):
+        """Mark pending cheques whose date has passed as cleared (unless held back by hand)."""
+        today = today or timezone.localdate()
+        return cls.objects.filter(
+            status=cls.STATUS_PENDING, hold_pending=False, cheque_date__lt=today,
+        ).update(status=cls.STATUS_CLEARED, updated_at=timezone.now())
 
     @property
     def payee_name(self):

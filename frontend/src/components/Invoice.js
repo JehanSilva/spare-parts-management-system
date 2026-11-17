@@ -99,6 +99,9 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
   const amountPaid =
     paymentStatus === "PAID" ? grandTotal : parseFloat(sale?.amount_paid || 0);
   const balanceDue = Math.max(grandTotal - amountPaid, 0);
+  // Only a pay-later or part-paid invoice shows what's still owed; a paid one
+  // (including a credit sale settled since) would just read "LKR 0.00".
+  const showDue = paymentStatus === "CREDIT" || paymentStatus === "PARTIAL";
 
   const termsLabel =
     paymentStatus === "CREDIT"
@@ -169,10 +172,12 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
           <div>+94 71 618 8187</div>
         </div>
 
-        <div className="text-right">
-          <div className="text-gray-500">Balance Due</div>
-          <div className="text-xl font-bold mt-0.5">LKR {formatAmount(balanceDue)}</div>
-        </div>
+        {showDue && (
+          <div className="text-right">
+            <div className="text-gray-500">Balance Due</div>
+            <div className="text-xl font-bold mt-0.5">LKR {formatAmount(balanceDue)}</div>
+          </div>
+        )}
       </div>
 
       {/* ── BILL TO + META ──────────────────────────────────────────────── */}
@@ -268,20 +273,27 @@ const Invoice = forwardRef(({ sale, cartItems }, ref) => {
               <span>- {formatAmount(totalSavings)}</span>
             </div>
           )}
-          <div className="flex justify-between px-3 py-1.5">
-            <span className="text-gray-600">Total</span>
-            <span>{formatAmount(grandTotal)}</span>
-          </div>
-          {paymentStatus !== "PAID" && (
-            <div className="flex justify-between px-3 py-1.5">
-              <span className="text-gray-600">Amount Paid</span>
-              <span>{formatAmount(amountPaid)}</span>
+          {showDue ? (
+            <>
+              <div className="flex justify-between px-3 py-1.5">
+                <span className="text-gray-600">Total</span>
+                <span>{formatAmount(grandTotal)}</span>
+              </div>
+              <div className="flex justify-between px-3 py-1.5">
+                <span className="text-gray-600">Amount Paid</span>
+                <span>{formatAmount(amountPaid)}</span>
+              </div>
+              <div className="flex justify-between px-3 py-2.5 mt-1 bg-black text-white font-bold">
+                <span>Balance Due</span>
+                <span>LKR {formatAmount(balanceDue)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-between px-3 py-2.5 mt-1 bg-black text-white font-bold">
+              <span>Total</span>
+              <span>LKR {formatAmount(grandTotal)}</span>
             </div>
           )}
-          <div className="flex justify-between px-3 py-2.5 mt-1 bg-black text-white font-bold">
-            <span>Balance Due</span>
-            <span>LKR {formatAmount(balanceDue)}</span>
-          </div>
         </div>
       </div>
 

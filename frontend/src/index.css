@@ -435,3 +435,35 @@
   }
 }
 
+
+/* Tables marked .mcards turn into stacked cards on phones: each row is a
+   card, each cell a "label  value" line (label from data-label). .m-title is
+   the card heading, .m-actions the button row, .m-hide is desktop-only. */
+@media (max-width: 767px) {
+  table.mcards thead { display: none; }
+  table.mcards, table.mcards tbody, table.mcards tr { display: block; width: 100%; }
+  table.mcards tr { display: flex; flex-direction: column; padding: 0.5rem 0; }
+  table.mcards td {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem;
+    padding: 0.2rem 1rem; text-align: right; white-space: normal;
+  }
+  /* Label on the left; the cell's own content (value plus any second line)
+     stacks right-aligned in the other column. */
+  table.mcards td[data-label] {
+    display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 0.75rem; justify-items: end;
+  }
+  table.mcards td[data-label] > * { grid-column: 2; }
+  table.mcards td[data-label]::before {
+    grid-column: 1; grid-row: 1; justify-self: start; padding-top: 0.15rem;
+    content: attr(data-label); flex-shrink: 0; text-align: left;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280;
+  }
+  table.mcards td:empty, table.mcards td.m-hide { display: none; }
+  table.mcards td.m-title { order: -1; display: block; text-align: left; font-size: 1rem; padding-top: 0.4rem; padding-bottom: 0.4rem; }
+  table.mcards td.m-actions { order: 99; justify-content: flex-end; padding-top: 0.4rem; }
+  table.mcards td.m-last { order: 98; }
+  table.mcards td.m-full { display: block; text-align: left; padding: 0 1rem 0.5rem; }
+  table.mcards td[colspan] { display: block; text-align: center; }
+}
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

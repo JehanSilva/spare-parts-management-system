@@ -438,6 +438,8 @@ const SalesHistoryPage = () => {
   const [dateTo, setDateTo] = useState("");
   const [paymentFilter, setPaymentFilter] = useState("ALL"); // ALL | CREDIT
   const [expandedSaleId, setExpandedSaleId] = useState(null);
+  const PAGE_SIZE = 30;
+  const [shownCount, setShownCount] = useState(PAGE_SIZE);
 
   // --- Modal & Alert State ---
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -679,9 +681,15 @@ const SalesHistoryPage = () => {
   };
   const pickMonth = (ym) => (ym ? setRange(monthRange(ym).from, monthRange(ym).to) : setRange("", ""));
   const rangeSales = filteredSales.filter((x) => x.status !== "CANCELLED");
+  // Long histories are shown a page at a time; any filter change starts over.
+  const shownSales = filteredSales.slice(0, shownCount);
   const rangeTotal = rangeSales.reduce((n, x) => n + (parseFloat(x.total_amount) || 0), 0);
+  useEffect(() => {
+    setShownCount(PAGE_SIZE);
+  }, [searchTerm, paymentFilter, dateFrom, dateTo]);
+
   const presetCls = (active) =>
-    `px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
+    `px-2 sm:px-3 py-2 sm:py-1.5 rounded-lg text-xs font-bold border whitespace-nowrap transition-colors ${
       active ? "bg-red-700 text-white border-red-700" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
     }`;
 
@@ -772,13 +780,13 @@ const SalesHistoryPage = () => {
       )}
 
       {/* Filters Area */}
-      <div className="flex flex-col md:flex-row gap-4 mb-6 max-w-3xl w-full">
+      <div className="flex flex-row gap-2 md:gap-4 mb-4 md:mb-6 max-w-3xl w-full">
         {/* Search Bar */}
         <div className="relative flex-1">
           <Search className="absolute left-3 top-3 text-gray-400" size={20} />
           <input
             type="text"
-            placeholder="Search Customer, Vehicle, Invoice, Part Name/No..."
+            placeholder="Search customer, vehicle, invoice, part..."
             className="w-full pl-10 p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-red-500 outline-none text-[16px] md:text-sm"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -791,21 +799,22 @@ const SalesHistoryPage = () => {
         <button
           type="button"
           onClick={() => setPaymentFilter(paymentFilter === "CREDIT" ? "ALL" : "CREDIT")}
-          className={`shrink-0 px-4 py-3 rounded-lg text-sm font-bold border transition-colors flex items-center justify-center gap-2 ${
+          className={`shrink-0 px-3 md:px-4 py-3 rounded-lg text-sm font-bold border transition-colors flex items-center justify-center gap-2 whitespace-nowrap ${
             paymentFilter === "CREDIT"
               ? "bg-amber-600 text-white border-amber-600"
               : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
           }`}
         >
           <Wallet size={16} />
-          {paymentFilter === "CREDIT" ? "Credit Only" : "All Sales"}
+          <span className="hidden sm:inline">{paymentFilter === "CREDIT" ? "Credit Only" : "All Sales"}</span>
+          <span className="sm:hidden">{paymentFilter === "CREDIT" ? "Credit" : "All"}</span>
         </button>
       </div>
 
       {/* Date range: month picker + from/to + quick presets */}
       <div className="mb-6 w-full bg-white border border-gray-200 rounded-xl shadow-sm p-3 md:p-4 flex flex-col lg:flex-row lg:items-center gap-3">
         {/* Month selector */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 w-full lg:w-auto">
           <button
             type="button"
             onClick={() => pickMonth(shiftMonth(activeMonth || thisMonth, activeMonth ? -1 : 0))}
@@ -814,12 +823,12 @@ const SalesHistoryPage = () => {
           >
             <ChevronLeft size={16} />
           </button>
-          <div className="relative">
+          <div className="relative flex-1 lg:flex-none">
             <Calendar size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
             <select
               value={activeMonth}
               onChange={(e) => pickMonth(e.target.value)}
-              className="pl-9 pr-8 py-2 border border-gray-300 rounded-lg bg-white text-sm font-semibold text-gray-800 focus:ring-2 focus:ring-red-500 outline-none appearance-none min-w-[11rem]"
+              className="pl-9 pr-8 py-2 border border-gray-300 rounded-lg bg-white text-sm font-semibold text-gray-800 focus:ring-2 focus:ring-red-500 outline-none appearance-none w-full lg:w-auto lg:min-w-[11rem]"
             >
               <option value="">{dateFrom || dateTo ? "Custom range" : "All time"}</option>
               {saleMonths.map((m) => <option key={m} value={m}>{monthName(m)}</option>)}
@@ -864,7 +873,7 @@ const SalesHistoryPage = () => {
         </div>
 
         {/* Presets */}
-        <div className="flex flex-wrap gap-1.5">
+        <div className="grid grid-cols-4 sm:flex sm:flex-wrap gap-1.5">
           <button type="button" onClick={() => setRange(todayISO, todayISO)} className={presetCls(dateFrom === todayISO && dateTo === todayISO)}>Today</button>
           <button type="button" onClick={() => pickMonth(thisMonth)} className={presetCls(activeMonth === thisMonth)}>This month</button>
           <button type="button" onClick={() => pickMonth(shiftMonth(thisMonth, -1))} className={presetCls(activeMonth === shiftMonth(thisMonth, -1))}>Last month</button>
@@ -894,7 +903,7 @@ const SalesHistoryPage = () => {
               MOBILE VIEW (Cards)
              ========================================= */}
           <div className="md:hidden space-y-4">
-            {filteredSales.map((sale) => (
+            {shownSales.map((sale) => (
               <div
                 key={sale.id}
                 className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"
@@ -904,7 +913,7 @@ const SalesHistoryPage = () => {
                   className="p-4 flex justify-between items-start cursor-pointer active:bg-gray-50"
                   onClick={() => toggleExpand(sale.id)}
                 >
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
                         #{sale.id.substring(0, 8)}
@@ -913,7 +922,7 @@ const SalesHistoryPage = () => {
                         <Calendar size={10} /> {formatDate(sale.created_at)}
                       </span>
                     </div>
-                    <h3 className="font-bold text-gray-800 text-lg">
+                    <h3 className="font-bold text-gray-800 text-lg truncate">
                       {sale.customer_name}
                     </h3>
                     <div className="flex justify-between items-center mt-2">
@@ -954,7 +963,7 @@ const SalesHistoryPage = () => {
                             </span>
                           )}
                        </div>
-                      <span className={`text-lg font-bold ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : sale.payment_status === 'PARTIAL' ? 'text-blue-700' : 'text-green-700'}`}>
+                      <span className={`text-lg font-bold whitespace-nowrap ml-2 ${sale.status === 'CANCELLED' ? 'text-gray-400 line-through' : sale.payment_status === 'CREDIT' ? 'text-amber-700' : sale.payment_status === 'PARTIAL' ? 'text-blue-700' : 'text-green-700'}`}>
                         {formatLKR(sale.total_amount)}
                       </span>
                     </div>
@@ -1085,10 +1094,12 @@ const SalesHistoryPage = () => {
                               <p className="font-medium text-gray-700">
                                 {item.part_name || "Unknown Part"}
                               </p>
-                              <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
-                                <Hash size={10} />
-                                {getPartNumber(item.part || item.part_id)}
-                              </p>
+                              {getPartNumber(item.part || item.part_id) && (
+                                <p className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
+                                  <Hash size={10} />
+                                  {getPartNumber(item.part || item.part_id)}
+                                </p>
+                              )}
 
                               {item.list_price != null &&
                                 originalPrice > parseFloat(item.list_price) && (
@@ -1157,7 +1168,7 @@ const SalesHistoryPage = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredSales.map((sale) => (
+                {shownSales.map((sale) => (
                   <React.Fragment key={sale.id}>
                     <tr
                       className={`hover:bg-red-50 transition cursor-pointer ${
@@ -1455,6 +1466,21 @@ const SalesHistoryPage = () => {
               </tbody>
             </table>
           </div>
+
+          {shownCount < filteredSales.length && (
+            <div className="mt-5 flex flex-col items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setShownCount((n) => n + PAGE_SIZE)}
+                className="w-full md:w-auto px-6 py-3 md:py-2.5 bg-white border border-gray-300 rounded-xl text-sm font-bold text-gray-700 hover:bg-gray-50 shadow-sm"
+              >
+                Show more
+              </button>
+              <span className="text-xs text-gray-400">
+                Showing {shownSales.length} of {filteredSales.length}
+              </span>
+            </div>
+          )}
         </>
       )}
     </div>

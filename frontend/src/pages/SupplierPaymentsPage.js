@@ -25,6 +25,7 @@ import {
   BookOpen,
   ChevronUp,
   Check,
+  Banknote,
 } from "lucide-react";
 import {
   fetchSuppliers,
@@ -33,6 +34,7 @@ import {
   createSupplierInvoice,
   updateSupplierInvoice,
   deleteSupplierInvoice,
+  paySupplierInvoiceCash,
   fetchSupplierCheques,
   createSupplierCheque,
   createSupplierChequesBulk,
@@ -475,22 +477,34 @@ const ChequeCalendar = ({
                   : "No cheques"
               }
               className={`relative rounded-lg border text-left transition-colors hover:border-gray-500 ${shade} ${dr ? "border-2 border-red-500" : "border-gray-200"
-                } ${selected ? "ring-2 ring-gray-900 ring-offset-1" : ""} ${large ? "min-h-[76px] p-1.5" : "min-h-[46px] p-1"}`}
+                } ${selected ? "ring-2 ring-gray-900 ring-offset-1" : ""} ${large ? "min-h-[58px] sm:min-h-[76px] p-1 sm:p-1.5" : "min-h-[46px] p-1"} overflow-hidden min-w-0`}
             >
               <span className={`block text-[11px] leading-none ${day === today ? "font-black text-red-700" : "font-semibold text-gray-600"}`}>
                 {Number(day.slice(8))}
               </span>
               {count > 0 && (
                 <span className="block mt-1 leading-tight">
-                  <span className={`block font-black text-gray-900 ${large ? "text-sm" : "text-[11px]"}`}>
-                    {count}{large ? ` cheque${count === 1 ? "" : "s"}` : "×"}
+                  <span className={`block font-black text-gray-900 ${large ? "text-[11px] sm:text-sm" : "text-[11px]"}`}>
+                    {count}
+                    {large ? (
+                      <>
+                        <span className="sm:hidden">×</span>
+                        <span className="hidden sm:inline">{` cheque${count === 1 ? "" : "s"}`}</span>
+                      </>
+                    ) : "×"}
                   </span>
-                  <span className={`block text-gray-700 ${large ? "text-xs" : "text-[10px]"}`}>
-                    {large ? formatLKR(fromCents(total)) : shortAmount(total)}
+                  <span className={`block text-gray-700 truncate ${large ? "text-[10px] sm:text-xs" : "text-[10px]"}`}>
+                    {large ? (
+                      <>
+                        <span className="sm:hidden">{shortAmount(total)}</span>
+                        <span className="hidden sm:inline">{formatLKR(fromCents(total))}</span>
+                      </>
+                    ) : shortAmount(total)}
                   </span>
                   {large && (allCleared || someCleared) && (
-                    <span className="block text-[10px] font-bold text-green-700">
-                      {allCleared ? "✓ cleared" : `✓ ${s.cleared} cleared`}
+                    <span className="block text-[10px] font-bold text-green-700 truncate">
+                      <span className="sm:hidden">✓</span>
+                      <span className="hidden sm:inline">{allCleared ? "✓ cleared" : `✓ ${s.cleared} cleared`}</span>
                     </span>
                   )}
                 </span>
@@ -751,6 +765,96 @@ const InvoiceModal = ({ invoice, suppliers, defaultSupplier, onClose, onSaved, o
 };
 
 // --- Cheque modal (one cheque split across the supplier's open invoices) ---
+
+// Record an invoice paid straight in cash (no cheque). Defaults to paying
+// everything still owed, today.
+const CashPaymentModal = ({ invoice, onClose, onSaved, onError }) => {
+  const today = localISO();
+  const [amount, setAmount] = useState(String(parseFloat(invoice.outstanding) || ""));
+  const [date, setDate] = useState(today);
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const owed = parseFloat(invoice.outstanding) || 0;
+  const value = parseFloat(amount) || 0;
+  const tooMuch = value > owed + 0.001;
+  const valid = value > 0 && !tooMuch && date && date <= today;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await paySupplierInvoiceCash(invoice.id, { amount: value.toFixed(2), date, notes });
+      onSaved(
+        value + 0.001 >= owed
+          ? `Invoice ${invoice.invoice_number} marked as paid in cash.`
+          : `Cash payment of ${formatLKR(value)} recorded on ${invoice.invoice_number}.`
+      );
+    } catch (err) {
+      onError(errorText(err, "Could not record the cash payment."));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      title={`Pay ${invoice.invoice_number} in cash`}
+      icon={Banknote}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 font-semibold hover:bg-gray-100">
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={!valid || saving}
+            className="px-5 py-2 rounded-xl bg-emerald-700 text-white font-bold hover:bg-emerald-800 disabled:opacity-50 flex items-center gap-2"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Banknote size={16} />} Record cash payment
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          {invoice.supplier_name} · still owed <span className="font-bold text-gray-900">{formatLKR(invoice.outstanding)}</span>
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className={labelCls}>Amount paid</label>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className={`${inputCls} ${tooMuch ? "border-red-400 bg-red-50" : ""}`}
+            />
+            {tooMuch ? (
+              <p className="text-xs text-red-600 mt-1">More than the {formatLKR(owed)} still owed.</p>
+            ) : (
+              value > 0 && value + 0.001 < owed && (
+                <p className="text-xs text-gray-500 mt-1">Part payment, {formatLKR(owed - value)} will still be owed.</p>
+              )
+            )}
+          </div>
+          <div>
+            <label className={labelCls}>Paid on</label>
+            <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+          </div>
+        </div>
+        <div>
+          <label className={labelCls}>Notes <span className="normal-case font-normal">(optional)</span></label>
+          <input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g. Paid to the sales rep"
+            className={inputCls}
+          />
+        </div>
+      </div>
+    </ModalShell>
+  );
+};
 
 const ChequeModal = ({ cheque, suppliers, banks, books, invoices, allCheques, defaultSupplier, onClose, onSaved, onError }) => {
   const [form, setForm] = useState(() => ({
@@ -1731,21 +1835,22 @@ const ChequeBookModal = ({ book, banks, onClose, onSaved, onError }) => {
 // --- Page ---
 
 const Tile = ({ label, value, sub, tone, icon: Icon }) => (
-  <div className={`rounded-2xl border p-4 ${tone}`}>
-    <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider opacity-80">
-      <Icon size={14} /> {label}
+  <div className={`rounded-2xl border p-3 sm:p-4 min-w-0 ${tone}`}>
+    <div className="flex items-start gap-1.5 sm:gap-2 text-[10px] sm:text-[11px] font-bold uppercase tracking-wider opacity-80 leading-tight">
+      <Icon size={14} className="shrink-0" /> {label}
     </div>
-    <p className="text-xl md:text-2xl font-black mt-1">{value}</p>
+    <p className="text-base min-[400px]:text-lg sm:text-xl md:text-2xl font-black mt-1 whitespace-nowrap">{value}</p>
     {sub && <p className="text-xs mt-1 opacity-80">{sub}</p>}
   </div>
 );
 
 const TABS = [
-  { id: "owed", label: "Owed by supplier" },
-  { id: "invoices", label: "Invoices" },
-  { id: "cheques", label: "Cheques" },
-  { id: "calendar", label: "Calendar" },
-  { id: "books", label: "Cheque books" },
+  // `short` is the phone label, so all five tabs fit on one row.
+  { id: "owed", label: "Owed by supplier", short: "Owed" },
+  { id: "invoices", label: "Invoices", short: "Invoices" },
+  { id: "cheques", label: "Cheques", short: "Cheques" },
+  { id: "calendar", label: "Calendar", short: "Calendar" },
+  { id: "books", label: "Cheque books", short: "Books" },
 ];
 
 const SupplierPaymentsPage = () => {
@@ -1768,6 +1873,7 @@ const SupplierPaymentsPage = () => {
   const [expanded, setExpanded] = useState({});
   const [invoiceModal, setInvoiceModal] = useState(null); // { invoice } | null
   const [chequeModal, setChequeModal] = useState(null); // { cheque } to edit, or { invoiceId, supplier, date } for new
+  const [cashInvoice, setCashInvoice] = useState(null); // invoice being paid in cash
   const [calMonth, setCalMonth] = useState(() => localISO().slice(0, 7));
   const [calDay, setCalDay] = useState(() => localISO());
   const [confirm, setConfirm] = useState(null); // { title, message, action, label }
@@ -1809,6 +1915,7 @@ const SupplierPaymentsPage = () => {
   const afterSave = (message) => {
     setInvoiceModal(null);
     setChequeModal(null);
+    setCashInvoice(null);
     setBookModal(null);
     setAlertInfo({ type: "success", message });
     load();
@@ -1909,6 +2016,14 @@ const SupplierPaymentsPage = () => {
           onError={showError}
         />
       )}
+      {cashInvoice && (
+        <CashPaymentModal
+          invoice={cashInvoice}
+          onClose={() => setCashInvoice(null)}
+          onSaved={afterSave}
+          onError={showError}
+        />
+      )}
       {bookModal && (
         <ChequeBookModal
           book={bookModal.book}
@@ -1956,16 +2071,16 @@ const SupplierPaymentsPage = () => {
             </h1>
             <p className="text-gray-500 text-sm">Invoices bought on credit, cheques given, and what we still owe.</p>
           </div>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 sm:flex gap-2 w-full sm:w-auto">
             <button
               onClick={() => setInvoiceModal({ invoice: null })}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border-2 border-red-700 text-red-700 font-bold hover:bg-red-50"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white border-2 border-red-700 text-red-700 font-bold hover:bg-red-50"
             >
               <Plus size={18} /> Invoice
             </button>
             <button
               onClick={() => setChequeModal({})}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-700 text-white font-bold hover:bg-red-800 shadow"
+              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-700 text-white font-bold hover:bg-red-800 shadow"
             >
               <Plus size={18} /> Cheque
             </button>
@@ -2000,14 +2115,15 @@ const SupplierPaymentsPage = () => {
 
         {/* Tabs & filters */}
         <div className="flex flex-col lg:flex-row lg:items-center gap-3 mb-4">
-          <div className="flex bg-white rounded-xl border border-gray-200 p-1 w-fit">
+          <div className="grid grid-cols-5 sm:flex bg-white rounded-xl border border-gray-200 p-1 w-full lg:w-fit overflow-x-auto no-scrollbar">
             {TABS.map((t) => (
               <button
                 key={t.id}
                 onClick={() => setParam({ tab: t.id === "owed" ? "" : t.id })}
-                className={`px-4 py-2 rounded-lg text-sm font-semibold ${tab === t.id ? "bg-red-700 text-white" : "text-gray-600 hover:bg-gray-100"}`}
+                className={`shrink-0 whitespace-nowrap px-1 sm:px-4 py-2 rounded-lg text-xs min-[400px]:text-[13px] sm:text-sm font-semibold ${tab === t.id ? "bg-red-700 text-white" : "text-gray-600 hover:bg-gray-100"}`}
               >
-                {t.label}
+                <span className="sm:hidden">{t.short}</span>
+                <span className="hidden sm:inline">{t.label}</span>
               </button>
             ))}
           </div>
@@ -2064,7 +2180,7 @@ const SupplierPaymentsPage = () => {
           <div className="flex justify-center py-20 text-gray-400"><Loader2 className="animate-spin" size={32} /></div>
         ) : tab === "owed" ? (
           <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm mcards">
               <thead className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-500">
                 <tr>
                   <th className="p-3 text-left">Supplier</th>
@@ -2087,18 +2203,18 @@ const SupplierPaymentsPage = () => {
                     className="border-t border-gray-100 hover:bg-red-50/40 cursor-pointer"
                     title="Show this supplier's invoices"
                   >
-                    <td className="p-3 font-semibold text-gray-900">
+                    <td className="p-3 font-semibold text-gray-900 m-title">
                       {b.supplier_name}
                       <span className="block text-xs font-normal text-gray-500">{b.open_invoices} open invoice{b.open_invoices === 1 ? "" : "s"}</span>
                     </td>
-                    <td className="p-3 text-right whitespace-nowrap">{formatLKR(b.total_invoiced)}</td>
-                    <td className="p-3 text-right whitespace-nowrap text-gray-600">{formatLKR(b.total_paid)}</td>
-                    <td className="p-3 text-right whitespace-nowrap font-black text-gray-900">{formatLKR(b.outstanding)}</td>
-                    <td className={`p-3 text-right whitespace-nowrap ${cents(b.overdue_amount) > 0 ? "text-red-600 font-bold" : "text-gray-400"}`}>
+                    <td data-label="Invoiced" className="p-3 text-right whitespace-nowrap">{formatLKR(b.total_invoiced)}</td>
+                    <td data-label="Paid" className="p-3 text-right whitespace-nowrap text-gray-600">{formatLKR(b.total_paid)}</td>
+                    <td data-label="Owed" className="p-3 text-right whitespace-nowrap font-black text-gray-900">{formatLKR(b.outstanding)}</td>
+                    <td data-label="Overdue" className={`p-3 text-right whitespace-nowrap ${cents(b.overdue_amount) > 0 ? "text-red-600 font-bold" : "text-gray-400"}`}>
                       {cents(b.overdue_amount) > 0 ? formatLKR(b.overdue_amount) : "—"}
                     </td>
-                    <td className="p-3 whitespace-nowrap">{b.next_due_date ? formatDate(b.next_due_date) : "—"}</td>
-                    <td className="p-3 text-right whitespace-nowrap text-blue-700">
+                    <td data-label="Next due" className="p-3 whitespace-nowrap">{b.next_due_date ? formatDate(b.next_due_date) : "—"}</td>
+                    <td data-label="Pending cheques" className="p-3 text-right whitespace-nowrap text-blue-700">
                       {cents(b.pending_cheques_amount) > 0 ? formatLKR(b.pending_cheques_amount) : "—"}
                     </td>
                   </tr>
@@ -2156,7 +2272,7 @@ const SupplierPaymentsPage = () => {
                         <p className="p-6 text-center text-sm text-gray-400">No cheque books for this account yet.</p>
                       ) : (
                         <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
+                          <table className="w-full text-sm mcards">
                             <thead className="text-[11px] uppercase tracking-wider text-gray-500">
                               <tr>
                                 <th className="p-3 text-left">Leaves</th>
@@ -2172,21 +2288,21 @@ const SupplierPaymentsPage = () => {
                             <tbody>
                               {mine.map((b) => (
                                 <tr key={b.id} className="border-t border-gray-100 hover:bg-gray-50">
-                                  <td className="p-3 font-semibold text-gray-900 whitespace-nowrap">
+                                  <td className="p-3 font-semibold text-gray-900 whitespace-nowrap m-title">
                                     {b.first_leaf} – {b.last_leaf}
                                     {b.notes && <span className="block text-[11px] font-normal text-gray-500">{b.notes}</span>}
                                   </td>
-                                  <td className="p-3 whitespace-nowrap">{formatDate(b.received_date)}</td>
-                                  <td className="p-3 text-right whitespace-nowrap">{b.used} / {b.total_leaves}</td>
-                                  <td className="p-3 text-right font-bold">{b.remaining}</td>
-                                  <td className="p-3">{b.next_leaf || "—"}</td>
-                                  <td className="p-3 whitespace-nowrap">
+                                  <td data-label="Received" className="p-3 whitespace-nowrap">{formatDate(b.received_date)}</td>
+                                  <td data-label="Used" className="p-3 text-right whitespace-nowrap">{b.used} / {b.total_leaves}</td>
+                                  <td data-label="Left" className="p-3 text-right font-bold">{b.remaining}</td>
+                                  <td data-label="Next leaf" className="p-3">{b.next_leaf || "—"}</td>
+                                  <td data-label="Finished" className="p-3 whitespace-nowrap">
                                     {b.finished_date ? formatDate(b.finished_date) : "—"}
                                     {b.status === "REPLACED" && b.last_used_date && (
                                       <span className="block text-[11px] text-gray-500">Last used {formatDate(b.last_used_date)}</span>
                                     )}
                                   </td>
-                                  <td className="p-3">
+                                  <td data-label="Status" className="p-3">
                                     <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase ${BOOK_BADGE[b.status].cls}`}>
                                       {BOOK_BADGE[b.status].label}
                                     </span>
@@ -2196,7 +2312,7 @@ const SupplierPaymentsPage = () => {
                                       </span>
                                     )}
                                   </td>
-                                  <td className="p-3">
+                                  <td className="p-3 m-actions">
                                     <div className="flex justify-end gap-1">
                                       <button onClick={() => setBookModal({ book: b })} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100" title="Edit">
                                         <Edit2 size={15} />
@@ -2302,7 +2418,7 @@ const SupplierPaymentsPage = () => {
           })()
         ) : tab === "invoices" ? (
           <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm mcards">
               <thead className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-500">
                 <tr>
                   <th className="p-3 w-8" />
@@ -2325,25 +2441,28 @@ const SupplierPaymentsPage = () => {
                   return (
                     <React.Fragment key={inv.id}>
                       <tr className="border-t border-gray-100 hover:bg-gray-50">
-                        <td className="p-3">
+                        <td data-label="Payments" className="p-3 m-last">
                           {inv.payments.length > 0 && (
-                            <button onClick={() => setExpanded((e) => ({ ...e, [inv.id]: !open }))} className="text-gray-400 hover:text-gray-700" title="Show cheques">
+                            <button onClick={() => setExpanded((e) => ({ ...e, [inv.id]: !open }))} className="text-gray-400 hover:text-gray-700" title="Show payments">
                               {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                             </button>
                           )}
                         </td>
-                        <td className="p-3 font-semibold text-gray-900">{inv.invoice_number}</td>
-                        <td className="p-3 text-gray-700">{inv.supplier_name}</td>
-                        <td className="p-3 whitespace-nowrap">{formatDate(inv.invoice_date)}</td>
-                        <td className={`p-3 whitespace-nowrap ${inv.is_overdue ? "text-red-600 font-bold" : ""}`}>
+                        <td className="p-3 font-semibold text-gray-900 m-title">
+                          {inv.invoice_number}
+                          <span className="md:hidden block text-xs font-normal text-gray-500">{inv.supplier_name}</span>
+                        </td>
+                        <td className="p-3 text-gray-700 m-hide">{inv.supplier_name}</td>
+                        <td data-label="Date" className="p-3 whitespace-nowrap">{formatDate(inv.invoice_date)}</td>
+                        <td data-label="Due" className={`p-3 whitespace-nowrap ${inv.is_overdue ? "text-red-600 font-bold" : ""}`}>
                           {formatDate(inv.due_date)}
                           <span className="block text-[11px] font-normal text-gray-500">
                             {inv.credit_days ? `${inv.credit_days}-day credit` : "No credit"}
                           </span>
                         </td>
-                        <td className="p-3 text-right whitespace-nowrap">{formatLKR(inv.amount)}</td>
-                        <td className="p-3 text-right whitespace-nowrap font-bold">{cents(inv.outstanding) > 0 ? formatLKR(inv.outstanding) : "—"}</td>
-                        <td className="p-3">
+                        <td data-label="Amount" className="p-3 text-right whitespace-nowrap">{formatLKR(inv.amount)}</td>
+                        <td data-label="Owed" className="p-3 text-right whitespace-nowrap font-bold">{cents(inv.outstanding) > 0 ? formatLKR(inv.outstanding) : "—"}</td>
+                        <td data-label="Status" className="p-3">
                           <div className="flex flex-wrap gap-1">
                             <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase ${INVOICE_BADGE[inv.payment_status]}`}>
                               {inv.payment_status === "PARTIAL" ? "Part paid" : inv.payment_status.toLowerCase()}
@@ -2351,18 +2470,32 @@ const SupplierPaymentsPage = () => {
                             {inv.is_overdue && (
                               <span className="px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase bg-red-100 text-red-700 border-red-200">Overdue</span>
                             )}
+                            {inv.payments.some((p) => p.method === "CASH") && (
+                              <span className="px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 border-emerald-200">
+                                {inv.payments.every((p) => p.method === "CASH") ? "Cash" : "Part cash"}
+                              </span>
+                            )}
                           </div>
                         </td>
-                        <td className="p-3">
+                        <td className="p-3 m-actions">
                           <div className="flex justify-end gap-1">
                             {inv.payment_status !== "PAID" && (
-                              <button
-                                onClick={() => setChequeModal({ supplier: String(inv.supplier), invoiceId: inv.id })}
-                                className="px-2 py-1 rounded-lg text-xs font-bold text-red-700 hover:bg-red-50 whitespace-nowrap"
-                                title="Pay with a cheque"
-                              >
-                                Pay
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => setChequeModal({ supplier: String(inv.supplier), invoiceId: inv.id })}
+                                  className="px-2 py-1 rounded-lg text-xs font-bold text-red-700 hover:bg-red-50 whitespace-nowrap"
+                                  title="Pay with a cheque"
+                                >
+                                  Pay
+                                </button>
+                                <button
+                                  onClick={() => setCashInvoice(inv)}
+                                  className="px-2 py-1 rounded-lg text-xs font-bold text-emerald-700 hover:bg-emerald-50 whitespace-nowrap flex items-center gap-1"
+                                  title="Paid in cash, no cheque"
+                                >
+                                  <Banknote size={13} /> Cash
+                                </button>
+                              </>
                             )}
                             <button onClick={() => setInvoiceModal({ invoice: inv })} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100" title="Edit">
                               <Edit2 size={15} />
@@ -2388,13 +2521,34 @@ const SupplierPaymentsPage = () => {
                       {open && (
                         <tr className="bg-gray-50/60">
                           <td />
-                          <td colSpan={8} className="px-3 pb-3">
+                          <td colSpan={8} className="px-3 pb-3 m-full">
                             <div className="flex flex-wrap gap-2">
-                              {inv.payments.map((p) => (
-                                <span key={p.cheque} className={`px-3 py-1.5 rounded-lg border text-xs ${CHEQUE_BADGE[p.cheque_status]}`}>
-                                  Cheque {p.cheque_number} · {formatDate(p.cheque_date)} · <span className="font-bold">{formatLKR(p.amount)}</span>
-                                </span>
-                              ))}
+                              {inv.payments.map((p) =>
+                                p.method === "CASH" ? (
+                                  <span key={p.cheque} className="px-3 py-1.5 rounded-lg border text-xs bg-emerald-50 text-emerald-800 border-emerald-200 flex items-center gap-1.5">
+                                    <Banknote size={13} /> Cash · {formatDate(p.cheque_date)} · <span className="font-bold">{formatLKR(p.amount)}</span>
+                                    <button
+                                      onClick={() =>
+                                        setConfirm({
+                                          title: "Remove this cash payment?",
+                                          message: `${formatLKR(p.amount)} paid on ${formatDate(p.cheque_date)} will be removed and ${inv.invoice_number} will show it as owed again.`,
+                                          label: "Remove",
+                                          action: () => deleteSupplierCheque(p.cheque),
+                                          success: "Cash payment removed.",
+                                        })
+                                      }
+                                      className="ml-1 text-emerald-600 hover:text-red-600"
+                                      title="Remove this cash payment"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <span key={p.cheque} className={`px-3 py-1.5 rounded-lg border text-xs ${CHEQUE_BADGE[p.cheque_status]}`}>
+                                    Cheque {p.cheque_number} · {formatDate(p.cheque_date)} · <span className="font-bold">{formatLKR(p.amount)}</span>
+                                  </span>
+                                )
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -2407,7 +2561,7 @@ const SupplierPaymentsPage = () => {
           </div>
         ) : (
           <div className="bg-white rounded-2xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm mcards">
               <thead className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-500">
                 <tr>
                   <th className="p-3 text-left">Cheque date</th>
@@ -2425,20 +2579,20 @@ const SupplierPaymentsPage = () => {
                 )}
                 {visibleCheques.map((c) => (
                   <tr key={c.id} className={`border-t border-gray-100 hover:bg-gray-50 ${c.status === "CANCELLED" ? "opacity-60" : ""}`}>
-                    <td className="p-3 whitespace-nowrap font-semibold">
+                    <td data-label="Cheque date" className="p-3 whitespace-nowrap font-semibold">
                       {formatDate(c.cheque_date)}
                       <span className="block text-[11px] font-normal text-gray-500">Issued {formatDate(c.issued_date)}</span>
                     </td>
-                    <td className="p-3">
+                    <td data-label="Cheque" className="p-3">
                       <span className="font-semibold text-gray-900">{c.cheque_number}</span>
                       {c.bank && <span className="block text-xs text-gray-500">{c.bank}</span>}
                     </td>
-                    <td className="p-3 text-gray-700">
+                    <td className="p-3 text-gray-700 m-title">
                       {c.supplier_name}
                       {!c.supplier && <span className="block text-[11px] text-gray-400">Not a supplier</span>}
                     </td>
-                    <td className="p-3">
-                      <div className="flex flex-wrap gap-1">
+                    <td data-label="Pays invoices" className="p-3">
+                      <div className="flex flex-wrap gap-1 justify-end md:justify-start">
                         {c.allocations.length === 0 && <span className="text-xs text-gray-400">No invoice</span>}
                         {c.allocations.map((a) => (
                           <span key={a.id} className="px-2 py-0.5 rounded-md bg-gray-100 text-xs text-gray-700 whitespace-nowrap">
@@ -2447,11 +2601,11 @@ const SupplierPaymentsPage = () => {
                         ))}
                       </div>
                     </td>
-                    <td className="p-3 text-right whitespace-nowrap font-bold">{formatLKR(c.amount)}</td>
-                    <td className="p-3">
+                    <td data-label="Amount" className="p-3 text-right whitespace-nowrap font-bold">{formatLKR(c.amount)}</td>
+                    <td data-label="Status" className="p-3">
                       <ChequeBadge cheque={c} />
                     </td>
-                    <td className="p-3">
+                    <td className="p-3 m-actions">
                       <div className="flex justify-end gap-1">
                         {c.status === "PENDING" && (
                           <button onClick={() => chequeAction(c, "CLEARED", "Mark cleared")} className="p-1.5 rounded-lg text-green-600 hover:bg-green-50" title="Mark cleared">

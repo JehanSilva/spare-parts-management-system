@@ -4003,6 +4003,37 @@ class SupplierInvoiceChequeAPITest(TestCase):
         rows = self.client.get(reverse('get_supplier_invoices'), {"supplier": self.supplier.pk}).data
         return next(r for r in rows if r["id"] == inv["id"])
 
+    def _pay_cash(self, inv, amount, date="2026-11-12", expect=201):
+        response = self.client.post(reverse('pay_supplier_invoice_cash', args=[inv["id"]]),
+                                    {"amount": str(amount), "date": date}, format='json')
+        self.assertEqual(response.status_code, expect, response.data)
+        return response.data
+
+    def test_cash_payment_pays_invoice_and_stays_out_of_cheque_list(self):
+        inv = self._invoice("INV-C", 5000)
+        self._cheque("C1", 2000, [(inv, 2000)], cheque_date="2026-12-10")
+        data = self._pay_cash(inv, 3000)
+        self.assertEqual(data["payment_status"], "PAID")
+        cash = next(p for p in data["payments"] if p["method"] == "CASH")
+        self.assertEqual(cash["cheque_status"], "CLEARED")
+        cheques = self.client.get(reverse('get_supplier_cheques')).data
+        self.assertEqual([c["cheque_number"] for c in cheques], ["C1"])
+
+    def test_cash_payment_cannot_overpay_or_be_future_dated(self):
+        inv = self._invoice("INV-C", 5000)
+        self._pay_cash(inv, 5000.01, expect=400)
+        tomorrow = (timezone.localdate() + timedelta(days=1)).isoformat()
+        self._pay_cash(inv, 100, date=tomorrow, expect=400)
+        self._pay_cash(inv, 5000)
+        self._pay_cash(inv, 1, expect=400)   # nothing left
+
+    def test_removing_cash_payment_reopens_invoice(self):
+        inv = self._invoice("INV-C", 5000)
+        cash = self._pay_cash(inv, 5000)["payments"][0]
+        self.assertEqual(self.client.put(reverse('update_supplier_cheque', args=[cash["cheque"]]), {"amount": "1"}, format='json').status_code, 400)
+        self.client.delete(reverse('delete_supplier_cheque', args=[cash["cheque"]]))
+        self.assertEqual(self._get_invoice(inv)["payment_status"], "UNPAID")
+
     def test_due_date_with_and_without_credit_period(self):
         a = self._invoice("INV-1", 1000, credit_days=60)
         b = self._invoice("INV-2", 1000)
@@ -4171,6 +4202,15 @@ class SupplierInvoiceChequeAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         return response.data
 
+    def test_monthly_report_counts_cash_payments(self):
+        self._month_with_sale()
+        inv = self._invoice("INV-1", 50000)
+        self._cheque("C1", 2500, [(inv, 2500)], cheque_date="2026-11-20")
+        self._pay_cash(inv, 1000, date="2026-11-05")
+        data = self._monthly()
+        self.assertEqual(data["cheque_cost"], Decimal("3500"))
+        self.assertEqual(sorted(r["method"] for r in data["cheque_breakdown"]), ["CASH", "CHEQUE"])
+
     def test_monthly_report_cheques_within_parts_cost(self):
         self._month_with_sale()
         inv = self._invoice("INV-1", 50000)
@@ -4181,6 +4221,7 @@ class SupplierInvoiceChequeAPITest(TestCase):
         data = self._monthly()
         self.assertEqual(data["cheque_cost"], Decimal("2500"))
         self.assertEqual(data["cheque_count"], 1)
+
         self.assertEqual(data["cheques_from_parts_cost"], Decimal("2500"))
         self.assertEqual(data["cheques_from_profit"], Decimal("0"))
         self.assertEqual(data["parts_cost_remaining"], Decimal("3500"))

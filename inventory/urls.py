@@ -24,6 +24,7 @@ urlpatterns = [
     path('supplier-invoices/add/', views.add_supplier_invoice, name='add_supplier_invoice'),
     path('supplier-invoices/<int:pk>/update/', views.update_supplier_invoice, name='update_supplier_invoice'),
     path('supplier-invoices/<int:pk>/delete/', views.delete_supplier_invoice, name='delete_supplier_invoice'),
+    path('supplier-invoices/<int:pk>/pay-cash/', views.pay_supplier_invoice_cash, name='pay_supplier_invoice_cash'),
     path('supplier-cheques/', views.get_supplier_cheques, name='get_supplier_cheques'),
     path('supplier-cheques/add/', views.add_supplier_cheque, name='add_supplier_cheque'),
     path('supplier-cheques/bulk-add/', views.add_supplier_cheques_bulk, name='add_supplier_cheques_bulk'),

@@ -149,7 +149,7 @@ const EstimateListPage = () => {
                 Saved Estimates
               </h1>
               <p className="text-gray-500 mt-0.5">
-                Every insurance claim estimate you've created, ready to reopen, edit or reprint.
+                Every estimate you've created, for insurers or customers, ready to reopen, edit or reprint.
               </p>
             </div>
           </div>

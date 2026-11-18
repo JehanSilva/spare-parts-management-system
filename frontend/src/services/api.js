@@ -121,6 +121,9 @@ export const updateSupplierInvoice = async (id, data) =>
   (await API.put(`/supplier-invoices/${id}/update/`, data)).data;
 export const deleteSupplierInvoice = async (id) =>
   await API.delete(`/supplier-invoices/${id}/delete/`);
+// data: { amount, date: "YYYY-MM-DD", notes }. Remove it with deleteSupplierCheque(payment id).
+export const paySupplierInvoiceCash = async (id, data) =>
+  (await API.post(`/supplier-invoices/${id}/pay-cash/`, data)).data;
 // params: { supplier, status, month, year }
 export const fetchSupplierCheques = async (params = {}) =>
   (await API.get("/supplier-cheques/", { params })).data;

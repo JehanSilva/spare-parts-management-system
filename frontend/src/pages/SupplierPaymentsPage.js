@@ -25,6 +25,7 @@ import {
   BookOpen,
   ChevronUp,
   Check,
+  Banknote,
 } from "lucide-react";
 import {
   fetchSuppliers,
@@ -33,6 +34,7 @@ import {
   createSupplierInvoice,
   updateSupplierInvoice,
   deleteSupplierInvoice,
+  paySupplierInvoiceCash,
   fetchSupplierCheques,
   createSupplierCheque,
   createSupplierChequesBulk,
@@ -751,6 +753,96 @@ const InvoiceModal = ({ invoice, suppliers, defaultSupplier, onClose, onSaved, o
 };
 
 // --- Cheque modal (one cheque split across the supplier's open invoices) ---
+
+// Record an invoice paid straight in cash (no cheque). Defaults to paying
+// everything still owed, today.
+const CashPaymentModal = ({ invoice, onClose, onSaved, onError }) => {
+  const today = localISO();
+  const [amount, setAmount] = useState(String(parseFloat(invoice.outstanding) || ""));
+  const [date, setDate] = useState(today);
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const owed = parseFloat(invoice.outstanding) || 0;
+  const value = parseFloat(amount) || 0;
+  const tooMuch = value > owed + 0.001;
+  const valid = value > 0 && !tooMuch && date && date <= today;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await paySupplierInvoiceCash(invoice.id, { amount: value.toFixed(2), date, notes });
+      onSaved(
+        value + 0.001 >= owed
+          ? `Invoice ${invoice.invoice_number} marked as paid in cash.`
+          : `Cash payment of ${formatLKR(value)} recorded on ${invoice.invoice_number}.`
+      );
+    } catch (err) {
+      onError(errorText(err, "Could not record the cash payment."));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      title={`Pay ${invoice.invoice_number} in cash`}
+      icon={Banknote}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 rounded-xl border border-gray-300 text-gray-700 font-semibold hover:bg-gray-100">
+            Cancel
+          </button>
+          <button
+            onClick={save}
+            disabled={!valid || saving}
+            className="px-5 py-2 rounded-xl bg-emerald-700 text-white font-bold hover:bg-emerald-800 disabled:opacity-50 flex items-center gap-2"
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <Banknote size={16} />} Record cash payment
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600">
+          {invoice.supplier_name} · still owed <span className="font-bold text-gray-900">{formatLKR(invoice.outstanding)}</span>
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className={labelCls}>Amount paid</label>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className={`${inputCls} ${tooMuch ? "border-red-400 bg-red-50" : ""}`}
+            />
+            {tooMuch ? (
+              <p className="text-xs text-red-600 mt-1">More than the {formatLKR(owed)} still owed.</p>
+            ) : (
+              value > 0 && value + 0.001 < owed && (
+                <p className="text-xs text-gray-500 mt-1">Part payment, {formatLKR(owed - value)} will still be owed.</p>
+              )
+            )}
+          </div>
+          <div>
+            <label className={labelCls}>Paid on</label>
+            <input type="date" value={date} max={today} onChange={(e) => setDate(e.target.value)} className={inputCls} />
+          </div>
+        </div>
+        <div>
+          <label className={labelCls}>Notes <span className="normal-case font-normal">(optional)</span></label>
+          <input
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="e.g. Paid to the sales rep"
+            className={inputCls}
+          />
+        </div>
+      </div>
+    </ModalShell>
+  );
+};
 
 const ChequeModal = ({ cheque, suppliers, banks, books, invoices, allCheques, defaultSupplier, onClose, onSaved, onError }) => {
   const [form, setForm] = useState(() => ({
@@ -1768,6 +1860,7 @@ const SupplierPaymentsPage = () => {
   const [expanded, setExpanded] = useState({});
   const [invoiceModal, setInvoiceModal] = useState(null); // { invoice } | null
   const [chequeModal, setChequeModal] = useState(null); // { cheque } to edit, or { invoiceId, supplier, date } for new
+  const [cashInvoice, setCashInvoice] = useState(null); // invoice being paid in cash
   const [calMonth, setCalMonth] = useState(() => localISO().slice(0, 7));
   const [calDay, setCalDay] = useState(() => localISO());
   const [confirm, setConfirm] = useState(null); // { title, message, action, label }
@@ -1809,6 +1902,7 @@ const SupplierPaymentsPage = () => {
   const afterSave = (message) => {
     setInvoiceModal(null);
     setChequeModal(null);
+    setCashInvoice(null);
     setBookModal(null);
     setAlertInfo({ type: "success", message });
     load();
@@ -1906,6 +2000,14 @@ const SupplierPaymentsPage = () => {
           defaultSupplier={supplierFilter}
           onClose={() => setInvoiceModal(null)}
           onSaved={(_, msg) => afterSave(msg)}
+          onError={showError}
+        />
+      )}
+      {cashInvoice && (
+        <CashPaymentModal
+          invoice={cashInvoice}
+          onClose={() => setCashInvoice(null)}
+          onSaved={afterSave}
           onError={showError}
         />
       )}
@@ -2327,7 +2429,7 @@ const SupplierPaymentsPage = () => {
                       <tr className="border-t border-gray-100 hover:bg-gray-50">
                         <td className="p-3">
                           {inv.payments.length > 0 && (
-                            <button onClick={() => setExpanded((e) => ({ ...e, [inv.id]: !open }))} className="text-gray-400 hover:text-gray-700" title="Show cheques">
+                            <button onClick={() => setExpanded((e) => ({ ...e, [inv.id]: !open }))} className="text-gray-400 hover:text-gray-700" title="Show payments">
                               {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                             </button>
                           )}
@@ -2351,18 +2453,32 @@ const SupplierPaymentsPage = () => {
                             {inv.is_overdue && (
                               <span className="px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase bg-red-100 text-red-700 border-red-200">Overdue</span>
                             )}
+                            {inv.payments.some((p) => p.method === "CASH") && (
+                              <span className="px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 border-emerald-200">
+                                {inv.payments.every((p) => p.method === "CASH") ? "Cash" : "Part cash"}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="p-3">
                           <div className="flex justify-end gap-1">
                             {inv.payment_status !== "PAID" && (
-                              <button
-                                onClick={() => setChequeModal({ supplier: String(inv.supplier), invoiceId: inv.id })}
-                                className="px-2 py-1 rounded-lg text-xs font-bold text-red-700 hover:bg-red-50 whitespace-nowrap"
-                                title="Pay with a cheque"
-                              >
-                                Pay
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => setChequeModal({ supplier: String(inv.supplier), invoiceId: inv.id })}
+                                  className="px-2 py-1 rounded-lg text-xs font-bold text-red-700 hover:bg-red-50 whitespace-nowrap"
+                                  title="Pay with a cheque"
+                                >
+                                  Pay
+                                </button>
+                                <button
+                                  onClick={() => setCashInvoice(inv)}
+                                  className="px-2 py-1 rounded-lg text-xs font-bold text-emerald-700 hover:bg-emerald-50 whitespace-nowrap flex items-center gap-1"
+                                  title="Paid in cash, no cheque"
+                                >
+                                  <Banknote size={13} /> Cash
+                                </button>
+                              </>
                             )}
                             <button onClick={() => setInvoiceModal({ invoice: inv })} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100" title="Edit">
                               <Edit2 size={15} />
@@ -2390,11 +2506,32 @@ const SupplierPaymentsPage = () => {
                           <td />
                           <td colSpan={8} className="px-3 pb-3">
                             <div className="flex flex-wrap gap-2">
-                              {inv.payments.map((p) => (
-                                <span key={p.cheque} className={`px-3 py-1.5 rounded-lg border text-xs ${CHEQUE_BADGE[p.cheque_status]}`}>
-                                  Cheque {p.cheque_number} · {formatDate(p.cheque_date)} · <span className="font-bold">{formatLKR(p.amount)}</span>
-                                </span>
-                              ))}
+                              {inv.payments.map((p) =>
+                                p.method === "CASH" ? (
+                                  <span key={p.cheque} className="px-3 py-1.5 rounded-lg border text-xs bg-emerald-50 text-emerald-800 border-emerald-200 flex items-center gap-1.5">
+                                    <Banknote size={13} /> Cash · {formatDate(p.cheque_date)} · <span className="font-bold">{formatLKR(p.amount)}</span>
+                                    <button
+                                      onClick={() =>
+                                        setConfirm({
+                                          title: "Remove this cash payment?",
+                                          message: `${formatLKR(p.amount)} paid on ${formatDate(p.cheque_date)} will be removed and ${inv.invoice_number} will show it as owed again.`,
+                                          label: "Remove",
+                                          action: () => deleteSupplierCheque(p.cheque),
+                                          success: "Cash payment removed.",
+                                        })
+                                      }
+                                      className="ml-1 text-emerald-600 hover:text-red-600"
+                                      title="Remove this cash payment"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <span key={p.cheque} className={`px-3 py-1.5 rounded-lg border text-xs ${CHEQUE_BADGE[p.cheque_status]}`}>
+                                    Cheque {p.cheque_number} · {formatDate(p.cheque_date)} · <span className="font-bold">{formatLKR(p.amount)}</span>
+                                  </span>
+                                )
+                              )}
                             </div>
                           </td>
                         </tr>

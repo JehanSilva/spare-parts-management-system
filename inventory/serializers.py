@@ -639,6 +639,7 @@ class SupplierInvoiceSerializer(serializers.ModelSerializer):
         return [
             {
                 "cheque": a.cheque_id,
+                "method": a.cheque.method,
                 "cheque_number": a.cheque.cheque_number,
                 "cheque_date": a.cheque.cheque_date,
                 "cheque_status": a.cheque.status,
@@ -691,7 +692,7 @@ class SupplierChequeSerializer(serializers.ModelSerializer):
     class Meta:
         model = SupplierCheque
         fields = [
-            'id', 'supplier', 'payee', 'supplier_name', 'cheque_number', 'cheque_bank', 'bank', 'cheque_date', 'issued_date',
+            'id', 'supplier', 'method', 'payee', 'supplier_name', 'cheque_number', 'cheque_bank', 'bank', 'cheque_date', 'issued_date',
             'amount', 'status', 'hold_pending', 'notes', 'allocations', 'created_at', 'updated_at',
         ]
 

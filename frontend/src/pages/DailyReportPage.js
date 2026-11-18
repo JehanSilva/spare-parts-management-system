@@ -595,7 +595,7 @@ const ChequeSection = ({ r }) => {
           <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="text-sm font-bold text-gray-700">
-                {r.cheque_count} cheque{r.cheque_count === 1 ? "" : "s"} due
+                {r.cheque_count} {rows.some((c) => c.method === "CASH") ? "supplier payment" : "cheque"}{r.cheque_count === 1 ? "" : "s"} due
               </span>
               <span className="text-xl font-black text-gray-900">{formatLKR(total)}</span>
             </div>
@@ -652,7 +652,7 @@ const ChequeSection = ({ r }) => {
                 <div className="min-w-0">
                   <p className="font-semibold text-gray-800 truncate">{c.supplier_name}</p>
                   <p className="text-[11px] text-gray-500 truncate">
-                    #{c.cheque_number} · {c.cheque_date}
+                    {c.method === "CASH" ? "Paid in cash" : `#${c.cheque_number}`} · {c.cheque_date}
                     {c.invoice_numbers.length > 0 && ` · ${c.invoice_numbers.join(", ")}`}
                   </p>
                 </div>

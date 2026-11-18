@@ -2315,6 +2315,7 @@ def _month_cheque_cost(year, month, parts_cost, profit_after_salaries, revenue):
                 "id": c.id,
                 "supplier": c.supplier_id,
                 "supplier_name": c.payee_name,
+                "method": c.method,
                 "cheque_number": c.cheque_number,
                 "bank": c.bank,
                 "cheque_date": c.cheque_date,
@@ -3866,7 +3867,7 @@ def delete_supplier_invoice(request, pk):
     invoice = get_object_or_404(SupplierInvoice, pk=pk)
     if invoice.allocations.exists():
         return Response(
-            {"error": "Cheques have been assigned to this invoice. Remove them from the cheques first."},
+            {"error": "Payments (cheques or cash) have been recorded against this invoice. Remove them first."},
             status=status.HTTP_400_BAD_REQUEST,
         )
     invoice.delete()
@@ -3875,9 +3876,10 @@ def delete_supplier_invoice(request, pk):
 
 @api_view(['GET'])
 def get_supplier_cheques(request):
-    """?supplier=<id>&status=PENDING|CLEARED|CANCELLED&month=&year= (by cheque date)"""
+    """?supplier=<id>&status=PENDING|CLEARED|CANCELLED&month=&year= (by cheque date).
+    Cash payments aren't cheques, so they're left out; they show on their invoice."""
     SupplierCheque.auto_clear()
-    qs = _cheque_queryset()
+    qs = _cheque_queryset().filter(method=SupplierCheque.METHOD_CHEQUE)
     params = request.query_params
     if params.get('supplier'):
         qs = qs.filter(supplier_id=params['supplier'])
@@ -4072,10 +4074,58 @@ def add_supplier_cheques_bulk(request):
     )
 
 
+@api_view(['POST'])
+def pay_supplier_invoice_cash(request, pk):
+    """
+    Record an invoice paid in cash. Payload: { amount, date (default today,
+    not in the future), notes }. The amount can't exceed what's still owed.
+    Undo by deleting the payment (supplier-cheques/<id>/delete/).
+    """
+    with transaction.atomic():
+        invoice = get_object_or_404(SupplierInvoice.objects.select_for_update(), pk=pk)
+        amount = _money(request.data.get('amount'))
+        if amount is None:
+            return Response({"amount": "Amount must be greater than zero."}, status=status.HTTP_400_BAD_REQUEST)
+        raw_date = request.data.get('date')
+        paid_on = parse_date(str(raw_date)) if raw_date else timezone.localdate()
+        if paid_on is None:
+            return Response({"date": "Invalid date."}, status=status.HTTP_400_BAD_REQUEST)
+        if paid_on > timezone.localdate():
+            return Response({"date": "The payment date can't be in the future."}, status=status.HTTP_400_BAD_REQUEST)
+        paid = (
+            ChequeAllocation.objects.filter(invoice=invoice)
+            .exclude(cheque__status=SupplierCheque.STATUS_CANCELLED)
+            .aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        )
+        outstanding = invoice.amount - paid
+        if amount > outstanding:
+            return Response(
+                {"amount": f"Only {outstanding} is left to pay on this invoice."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        payment = SupplierCheque.objects.create(
+            method=SupplierCheque.METHOD_CASH,
+            supplier=invoice.supplier,
+            cheque_number='',
+            cheque_date=paid_on,
+            issued_date=paid_on,
+            amount=amount,
+            status=SupplierCheque.STATUS_CLEARED,
+            notes=str(request.data.get('notes') or '').strip(),
+        )
+        ChequeAllocation.objects.create(cheque=payment, invoice=invoice, amount=amount)
+    return Response(SupplierInvoiceSerializer(_invoice_queryset().get(pk=pk)).data, status=status.HTTP_201_CREATED)
+
+
 @api_view(['PUT'])
 def update_supplier_cheque(request, pk):
     with transaction.atomic():
         cheque = get_object_or_404(SupplierCheque.objects.select_for_update(), pk=pk)
+        if cheque.method == SupplierCheque.METHOD_CASH:
+            return Response(
+                {"error": "This is a cash payment. Remove it from the invoice and record it again instead."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if cheque.status == SupplierCheque.STATUS_CANCELLED:
             return Response(
                 {"error": "This cheque is cancelled. Set it back to pending before editing."},
@@ -4095,6 +4145,8 @@ def set_supplier_cheque_status(request, pk):
         return Response({"error": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
     with transaction.atomic():
         cheque = get_object_or_404(SupplierCheque.objects.select_for_update(), pk=pk)
+        if cheque.method == SupplierCheque.METHOD_CASH:
+            return Response({"error": "A cash payment has no cheque status."}, status=status.HTTP_400_BAD_REQUEST)
         if cheque.status == SupplierCheque.STATUS_CANCELLED and new_status != SupplierCheque.STATUS_CANCELLED:
             # Bringing a cancelled cheque back pays its invoices again — make
             # sure that doesn't overpay one paid by another cheque meanwhile.

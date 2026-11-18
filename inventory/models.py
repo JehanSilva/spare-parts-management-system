@@ -808,7 +808,15 @@ class SupplierCheque(models.Model):
     be banked) and decides which month it counts against in reports. It is
     made out to a supplier (and may be split across several of that
     supplier's invoices, or pay none) or, with no supplier, to `payee`.
+
+    A CASH record is an invoice paid in cash: no cheque number, cleared on
+    the day, and kept out of the cheque lists and calendar. It shares the
+    allocation maths, so invoice balances and the monthly report count it.
     """
+    METHOD_CHEQUE = 'CHEQUE'
+    METHOD_CASH = 'CASH'
+    METHOD_CHOICES = [(METHOD_CHEQUE, 'Cheque'), (METHOD_CASH, 'Cash')]
+
     STATUS_PENDING = 'PENDING'
     STATUS_CLEARED = 'CLEARED'
     STATUS_CANCELLED = 'CANCELLED'
@@ -819,12 +827,13 @@ class SupplierCheque(models.Model):
     ]
 
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name='cheques', null=True, blank=True)
+    method = models.CharField(max_length=10, choices=METHOD_CHOICES, default=METHOD_CHEQUE)
     payee = models.CharField(max_length=150, blank=True, help_text="Who the cheque is for when it isn't a supplier")
     cheque_bank = models.ForeignKey(
         ChequeBank, on_delete=models.SET_NULL, null=True, blank=True, related_name='cheques',
         help_text="Account the cheque is written from; `bank` keeps its label as text",
     )
-    cheque_number = models.CharField(max_length=50)
+    cheque_number = models.CharField(max_length=50, blank=True)
     bank = models.CharField(max_length=100, blank=True)
     cheque_date = models.DateField(help_text="Date written on the cheque")
     issued_date = models.DateField(default=timezone.localdate, help_text="Day the cheque was handed over")

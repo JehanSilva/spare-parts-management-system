@@ -38,6 +38,9 @@ import {
   StickyNote,
   Landmark,
   User,
+  GripVertical,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react";
 
 const formatAmount = (amount) =>
@@ -81,21 +84,37 @@ const SectionEditor = ({ section, rows, onChange }) => {
       )
     );
 
+  // Reordering: arrows move a row one place; the grip drags it anywhere in
+  // its section. The printed estimate lists rows in this order.
+  const [dragFrom, setDragFrom] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+  const moveRow = (from, to) => {
+    if (to < 0 || to >= rows.length || from === to) return;
+    const next = [...rows];
+    const [row] = next.splice(from, 1);
+    next.splice(to, 0, row);
+    onChange(next);
+  };
+  const endDrag = () => {
+    setDragFrom(null);
+    setDragOver(null);
+  };
+
   const addRow = () => onChange([...rows, emptyRow()]);
   const removeRow = (index) =>
     onChange(rows.length === 1 ? [emptyRow()] : rows.filter((_, i) => i !== index));
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-5">
-      <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-gray-100">
-        <h3 className="font-bold text-gray-800 uppercase tracking-wide text-sm">{section.title}</h3>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-4 sm:px-5 py-3 bg-gray-50 border-b border-gray-100">
+        <h3 className="font-bold text-gray-800 uppercase tracking-wide text-sm whitespace-nowrap">{section.title}</h3>
+        <div className="flex items-center gap-2 ml-auto">
           {rows.some(isPendingQuotation) && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-wide">
               <Clock size={10} /> Quotation pending
             </span>
           )}
-          <span className="text-sm font-bold text-gray-700">
+          <span className="text-sm font-bold text-gray-700 whitespace-nowrap">
             LKR {formatAmount(sectionTotal(rows))}
           </span>
         </div>
@@ -104,6 +123,7 @@ const SectionEditor = ({ section, rows, onChange }) => {
       <div className="p-4">
         {/* Column captions — mirrored by the printed document */}
         <div className="hidden lg:flex gap-2 pb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+          {rows.length > 1 && <span className="w-6 -mr-1" />}
           <span className="flex-1">{isQty ? "Item" : "Task"} Description</span>
           <span className="w-20 text-right">{section.unitLabel}</span>
           <span className="w-28 text-right">Rate</span>
@@ -112,7 +132,60 @@ const SectionEditor = ({ section, rows, onChange }) => {
         </div>
 
         {rows.map((row, index) => (
-          <div key={index} className="flex flex-col lg:flex-row lg:items-start gap-2 mb-4 lg:mb-2 border-b lg:border-0 border-gray-100 pb-3 lg:pb-0 last:border-0 last:pb-0">
+          <div
+            key={index}
+            data-task-row
+            onDragOver={(e) => {
+              if (dragFrom === null) return;
+              e.preventDefault();
+              if (dragOver !== index) setDragOver(index);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragFrom !== null) moveRow(dragFrom, index);
+              endDrag();
+            }}
+            className={`flex gap-2 mb-4 lg:mb-2 border-b lg:border-0 border-gray-100 pb-3 lg:pb-0 last:border-0 last:pb-0 rounded-lg transition-colors ${
+              dragFrom === index ? "opacity-40" : ""
+            } ${dragOver === index && dragFrom !== null && dragFrom !== index ? "bg-red-50 ring-2 ring-red-200" : ""}`}
+          >
+            {rows.length > 1 && (
+              <div className="w-6 -mr-1 hidden lg:flex flex-col items-center shrink-0 text-gray-300">
+                <button
+                  type="button"
+                  onClick={() => moveRow(index, index - 1)}
+                  disabled={index === 0}
+                  className="p-0.5 hover:text-gray-700 disabled:opacity-0"
+                  title="Move up"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <span
+                  draggable
+                  onDragStart={(e) => {
+                    setDragFrom(index);
+                    e.dataTransfer.effectAllowed = "move";
+                    const rowEl = e.currentTarget.closest("[data-task-row]");
+                    if (rowEl) e.dataTransfer.setDragImage(rowEl, 16, 16);
+                  }}
+                  onDragEnd={endDrag}
+                  className="cursor-grab active:cursor-grabbing hover:text-gray-600"
+                  title="Drag to reorder"
+                >
+                  <GripVertical size={14} />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => moveRow(index, index + 1)}
+                  disabled={index === rows.length - 1}
+                  className="p-0.5 hover:text-gray-700 disabled:opacity-0"
+                  title="Move down"
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
+            )}
+          <div className="flex-1 min-w-0 flex flex-col lg:flex-row lg:items-start gap-2">
             <div className="flex-1">
               <span className="text-[10px] font-bold uppercase text-gray-400 block lg:hidden mb-1">
                 {isQty ? "Item" : "Task"} Description
@@ -148,6 +221,8 @@ const SectionEditor = ({ section, rows, onChange }) => {
                 a grid here would space the fields evenly and slide every
                 caption off its own field. */}
             <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-end w-full lg:flex lg:w-auto">
+              {/* Phones: the reorder arrows live in this row; from lg they're
+                  in the column on the left with the drag grip. */}
               <div className="lg:w-20">
                 <span className="text-[10px] font-bold uppercase text-gray-400 block lg:hidden mb-1 truncate">
                   {section.unitLabel}
@@ -204,7 +279,29 @@ const SectionEditor = ({ section, rows, onChange }) => {
                   {isPendingQuotation(row) ? "Pending" : formatAmount(rowTotal(row))}
                 </div>
               </div>
-              <div className="lg:w-8 flex justify-center pb-1">
+              <div className="lg:w-8 flex justify-center items-center pb-1">
+                {rows.length > 1 && (
+                  <div className="flex lg:hidden items-center text-gray-400">
+                    <button
+                      type="button"
+                      onClick={() => moveRow(index, index - 1)}
+                      disabled={index === 0}
+                      className="p-1.5 hover:text-gray-700 disabled:opacity-25"
+                      title="Move up"
+                    >
+                      <ChevronUp size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveRow(index, index + 1)}
+                      disabled={index === rows.length - 1}
+                      className="p-1.5 hover:text-gray-700 disabled:opacity-25"
+                      title="Move down"
+                    >
+                      <ChevronDown size={16} />
+                    </button>
+                  </div>
+                )}
                 <button
                   onClick={() => removeRow(index)}
                   className="p-2 text-gray-400 hover:text-red-600 transition-colors"
@@ -214,6 +311,7 @@ const SectionEditor = ({ section, rows, onChange }) => {
                 </button>
               </div>
             </div>
+          </div>
           </div>
         ))}
 
@@ -304,6 +402,23 @@ const EstimatePage = () => {
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
   const [showPreview, setShowPreview] = useState(true);
+  // The preview sheet (794px A4) shrinks to fit its box — 0.62 on a desktop,
+  // smaller on a phone so the whole page width stays visible.
+  const previewBoxRef = useRef(null);
+  const [previewZoom, setPreviewZoom] = useState(0.62);
+  useEffect(() => {
+    const box = previewBoxRef.current;
+    if (!box || typeof ResizeObserver === "undefined") return undefined;
+    const fit = () => {
+      const style = getComputedStyle(box);
+      const inner = box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      setPreviewZoom(Math.min(0.62, Math.max(0.2, inner / 794)));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [showPreview, loading]);
   const [confirmClear, setConfirmClear] = useState(false);
   const [alertInfo, setAlertInfo] = useState({ type: "", message: "" });
   const documentRef = useRef(null);
@@ -711,9 +826,9 @@ const EstimatePage = () => {
               </div>
 
               <div>
-                <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-2 mb-1.5 sm:mb-1">
                   <label className="block text-sm font-semibold text-gray-700">Address to</label>
-                  <div className="inline-flex rounded-lg border border-gray-300 bg-gray-50 p-0.5 text-xs font-bold">
+                  <div className="grid grid-cols-2 sm:inline-flex rounded-lg border border-gray-300 bg-gray-50 p-0.5 text-xs font-bold">
                     {[
                       ["INSURANCE", "Insurance company", Building2],
                       ["CUSTOMER", "Customer", User],
@@ -722,7 +837,7 @@ const EstimatePage = () => {
                         key={mode}
                         type="button"
                         onClick={() => setAddressedTo(mode)}
-                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition ${
+                        className={`flex items-center justify-center gap-1 px-2.5 py-1.5 sm:py-1 rounded-md whitespace-nowrap transition ${
                           estimate.addressedTo === mode
                             ? "bg-white text-red-700 shadow-sm"
                             : "text-gray-500 hover:text-gray-700"
@@ -936,9 +1051,9 @@ const EstimatePage = () => {
           {/* Pending items carry no price, so the figure is only the repairs
               quoted so far — say so here and on the printed estimate rather
               than letting it read as the final bill. */}
-          <div className="bg-gray-900 text-white rounded-2xl px-6 py-5 mb-8">
-            <div className="flex items-center justify-between gap-4">
-              <span className="font-bold uppercase tracking-wide">
+          <div className="bg-gray-900 text-white rounded-2xl px-5 sm:px-6 py-5 mb-8">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-4">
+              <span className="font-bold uppercase tracking-wide text-sm sm:text-base text-white/80 sm:text-white">
                 {pendingQuotation ? "Estimate Total (priced work)" : "Estimate Total"}
               </span>
               <span className="text-2xl font-black whitespace-nowrap">
@@ -984,11 +1099,11 @@ const EstimatePage = () => {
               <h2 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
                 <Eye size={18} className="text-red-700" /> Preview
               </h2>
-              <div className="bg-gray-200 rounded-2xl p-4 overflow-x-auto">
+              <div ref={previewBoxRef} className="bg-gray-200 rounded-2xl p-3 sm:p-4 overflow-x-auto">
                 {/* The A4 sheet is 794px wide. `zoom` rather than a transform
                     so the shrunken sheet still occupies its real height in the
                     layout — an estimate can run past one page. */}
-                <div className="mx-auto shadow-xl bg-white w-fit" style={{ zoom: 0.62 }}>
+                <div className="mx-auto shadow-xl bg-white w-fit" style={{ zoom: previewZoom }}>
                   <EstimateDocument estimate={printableEstimate} />
                 </div>
               </div>

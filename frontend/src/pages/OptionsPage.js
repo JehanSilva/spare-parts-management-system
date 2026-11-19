@@ -126,6 +126,7 @@ const accountDetails = (b) =>
   ].filter(Boolean).join(" · ");
 
 const BankAccounts = () => {
+  const { refreshInvoiceAccounts } = useSettings();
   const [banks, setBanks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
@@ -137,14 +138,29 @@ const BankAccounts = () => {
   const load = useCallback(async () => {
     try {
       setBanks(await fetchChequeBanks());
+      // Invoices and estimates read the chosen accounts from settings.
+      refreshInvoiceAccounts();
     } catch (err) {
       setError(apiErrorMessage(err, "Could not load the bank accounts."));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshInvoiceAccounts]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Any number of accounts can be on invoices; each prints on its own line.
+  const toggleInvoice = async (bank) => {
+    setError("");
+    setBanks((list) => list.map((b) => (b.id === bank.id ? { ...b, show_on_invoice: !bank.show_on_invoice } : b)));
+    try {
+      await updateChequeBank(bank.id, { show_on_invoice: !bank.show_on_invoice });
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, "Could not change the invoice setting."));
+      await load();
+    }
+  };
 
   // Returns true when saved, so the form knows to clear.
   const save = async (form, id) => {
@@ -216,6 +232,24 @@ const BankAccounts = () => {
                     {b.book_count > 0 && ` · ${b.leaves_left} lea${b.leaves_left === 1 ? "f" : "ves"} left`}
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => toggleInvoice(b)}
+                  role="switch"
+                  aria-checked={b.show_on_invoice}
+                  className={`shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-colors ${
+                    b.show_on_invoice
+                      ? "bg-emerald-50 border-emerald-300 text-emerald-700"
+                      : "bg-white border-gray-200 text-gray-500 hover:bg-gray-50"
+                  }`}
+                  title={b.show_on_invoice ? "Printed on invoices and estimates. Click to stop." : "Print this account on invoices and estimates"}
+                >
+                  <span className={`relative inline-block w-7 h-4 rounded-full transition-colors ${b.show_on_invoice ? "bg-emerald-500" : "bg-gray-300"}`}>
+                    <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${b.show_on_invoice ? "left-3.5" : "left-0.5"}`} />
+                  </span>
+                  <span className="hidden sm:inline">On invoices</span>
+                  <span className="sm:hidden">Invoice</span>
+                </button>
                 <button onClick={() => setEditingId(b.id)} className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100" title="Edit">
                   <Edit2 size={15} />
                 </button>
@@ -296,7 +330,7 @@ const OptionsPage = () => {
         {/* --- Bank accounts --- */}
         <SettingGroup
           title="Bank Accounts"
-          desc="The accounts you write cheques from. They're the choices for a cheque's bank in Supplier Payments (with only one, it's picked automatically), and cheque books are tracked against them there. Saved for everyone using the system."
+          desc="Your business bank accounts. Switch on “On invoices” for the account(s) customers should pay into — each one switched on is printed on invoices and on estimates that include bank details. They're also the choices for a cheque's bank in Supplier Payments, where cheque books are tracked against them. Saved for everyone using the system."
         >
           <BankAccounts />
         </SettingGroup>

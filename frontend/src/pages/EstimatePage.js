@@ -11,7 +11,8 @@ import EstimateDocument, {
   fromEstimateRecord,
 } from "../components/EstimateDocument";
 import AlertComponent from "../components/AlertComponent";
-import { BANK_DETAILS } from "../components/bankDetails";
+import { invoiceBankRows } from "../components/bankDetails";
+import { useSettings } from "../context/SettingsContext";
 import LeavePrompt from "../components/LeavePrompt";
 import ConfirmModal from "../components/ConfirmModal";
 import { caseOnChange, sentenceCase, titleCaseName } from "../components/titleCase";
@@ -364,6 +365,8 @@ const VehicleLookupStatus = ({ lookup }) => {
 };
 
 const EstimatePage = () => {
+  const { invoiceAccounts } = useSettings();
+  const bankAccounts = invoiceBankRows(invoiceAccounts);
   // Present on /estimates/:id (editing a saved estimate), absent on
   // /estimates/new (building a fresh one).
   const { id } = useParams();
@@ -1041,9 +1044,13 @@ const EstimatePage = () => {
               Add bank account details for payment
             </label>
             {estimate.showBankDetails && (
-              <p className="mt-1 ml-6 text-xs text-gray-400">
-                {BANK_DETAILS.map(([, value]) => value).join(" · ")}
-              </p>
+              <div className="mt-1 ml-6 text-xs text-gray-400 space-y-0.5">
+                {bankAccounts.length ? (
+                  bankAccounts.map((rows, a) => <p key={a}>{rows.map(([, value]) => value).join(" · ")}</p>)
+                ) : (
+                  <p className="text-amber-600">No account is set to show. Choose one in Options → Bank Accounts.</p>
+                )}
+              </div>
             )}
           </div>
 

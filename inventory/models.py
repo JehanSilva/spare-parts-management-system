@@ -756,6 +756,9 @@ class ChequeBank(models.Model):
     A bank account the business writes cheques from. Only the bank name is
     required. Cheques link to it and also keep its label as text, so renaming
     one here doesn't change how cheques already written read.
+
+    `show_on_invoice` accounts are printed as the "pay to" details on
+    invoices and estimates; any number can be switched on.
     """
     name = models.CharField(max_length=100, help_text="Bank name")
     bank_code = models.CharField(max_length=10, blank=True)
@@ -764,6 +767,7 @@ class ChequeBank(models.Model):
     account_name = models.CharField(max_length=150, blank=True)
     account_number = models.CharField(max_length=30, blank=True)
     notes = models.TextField(blank=True)
+    show_on_invoice = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

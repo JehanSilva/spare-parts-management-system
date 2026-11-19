@@ -708,7 +708,7 @@ class ChequeBankSerializer(serializers.ModelSerializer):
         model = ChequeBank
         fields = [
             'id', 'name', 'bank_code', 'branch', 'branch_code', 'account_name', 'account_number',
-            'notes', 'label', 'created_at',
+            'notes', 'show_on_invoice', 'label', 'created_at',
         ]
 
     def validate(self, attrs):

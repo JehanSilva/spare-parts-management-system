@@ -1,5 +1,6 @@
 import React, { forwardRef } from "react";
-import { BANK_DETAILS } from "./bankDetails";
+import { invoiceBankRows } from "./bankDetails";
+import { useSettings } from "../context/SettingsContext";
 import logo from "../assets/logo.png";
 import signature from "../assets/signature.png";
 
@@ -201,6 +202,8 @@ const Fact = ({ label, value }) => (
  * applied automatically.
  */
 const EstimateDocument = forwardRef(({ estimate }, ref) => {
+  const { invoiceAccounts } = useSettings();
+  const bankAccounts = invoiceBankRows(invoiceAccounts);
   const {
     date,
     insuranceCompany: typedInsurer,
@@ -436,21 +439,27 @@ const EstimateDocument = forwardRef(({ estimate }, ref) => {
       )}
 
       {/* ── BANK DETAILS (only on estimates that ask for payment) ──────── */}
-      {showBankDetails && (
-        // One line, like the invoice. The account number is what gets copied
-        // into a banking app, so it's set in bold.
-        <p className="mt-3 break-inside-avoid text-[10.5px] leading-snug text-gray-800">
-          <span className="font-bold text-gray-900">Bank details: </span>
-          {BANK_DETAILS.map(([label, value], i) => (
-            <React.Fragment key={label}>
-              {i > 0 && " · "}
-              <span className="text-gray-500">{label} </span>
-              <span className={label === "Account No." ? "font-bold text-gray-900 tracking-wider" : "text-gray-900"}>
-                {value}
+      {showBankDetails && bankAccounts.length > 0 && (
+        // One line per account (chosen in Options), like the invoice. The
+        // account number is what gets copied into a banking app, so it's bold.
+        <div className="mt-3 break-inside-avoid text-[10.5px] leading-snug text-gray-800">
+          {bankAccounts.map((rows, a) => (
+            <p key={a}>
+              <span className="font-bold text-gray-900">
+                {a === 0 ? (bankAccounts.length > 1 ? "Bank details (any of): " : "Bank details: ") : ""}
               </span>
-            </React.Fragment>
+              {rows.map(([label, value], i) => (
+                <React.Fragment key={label}>
+                  {i > 0 && " · "}
+                  <span className="text-gray-500">{label} </span>
+                  <span className={label === "Account No." ? "font-bold text-gray-900 tracking-wider" : "text-gray-900"}>
+                    {value}
+                  </span>
+                </React.Fragment>
+              ))}
+            </p>
           ))}
-        </p>
+        </div>
       )}
 
       {/* ── SIGNATURE (applied automatically) ───────────────────────────── */}

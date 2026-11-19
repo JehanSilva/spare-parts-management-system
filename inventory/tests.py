@@ -4352,6 +4352,15 @@ class ChequeBankAPITest(TestCase):
     def _books(self):
         return {b["id"]: b for b in self.client.get(reverse('get_cheque_books')).data}
 
+
+    def test_show_on_invoice_toggle(self):
+        from .models import ChequeBank
+        bank = ChequeBank.objects.create(name="HNB", account_number="555")
+        response = self.client.put(reverse('update_cheque_bank', args=[bank.id]), {"show_on_invoice": True}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.assertTrue(response.data["show_on_invoice"])
+        bank.refresh_from_db()
+        self.assertTrue(bank.show_on_invoice)
     def test_bank_account_fields_and_label(self):
         full = self._bank(
             name=" Commercial  Bank ", bank_code="7056", branch="Ja-Ela", branch_code="123",
